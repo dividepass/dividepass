@@ -1,0 +1,593 @@
+.pesquisa-container {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #0a0a1a;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* ==================== PROGRESS ==================== */
+
+.pesquisa-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(10, 10, 26, 0.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.progress-bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4F46E5, #818cf8);
+  border-radius: 2px;
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.progress-label {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==================== STEP CONTENT ==================== */
+
+.pesquisa-step {
+  flex: 1;
+  padding: 4rem 1.25rem 6rem;
+  display: flex;
+  flex-direction: column;
+  animation: stepSlideIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.pesquisa-step.backward {
+  animation: stepSlideBack 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes stepSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes stepSlideBack {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.step-content {
+  max-width: 480px;
+  margin: 0 auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.step-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.75rem;
+}
+
+.step-icon {
+  color: #818cf8;
+  margin-bottom: 0.25rem;
+}
+
+.step-header h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.step-description {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.step-image {
+  width: 220px;
+  height: 220px;
+  object-fit: cover;
+  border-radius: 0.75rem;
+  display: block;
+  margin: 0 auto;
+}
+
+.step-text-content {
+  text-align: center;
+}
+
+.step-text-content p {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.75);
+  margin: 0 0 0.75rem;
+  line-height: 1.6;
+}
+
+/* ==================== FORM INPUTS ==================== */
+
+.step-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.input-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+}
+
+.input-group input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.6rem;
+  padding: 0.85rem 1rem;
+  color: #ffffff;
+  font-size: 1rem;
+  font-family: inherit;
+  transition: all 0.2s;
+  -webkit-appearance: none;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: #4F46E5;
+  background: rgba(79, 70, 229, 0.05);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+
+.input-group input::placeholder {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.input-group.error input {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.error-text {
+  font-size: 0.75rem;
+  color: #fca5a5;
+}
+
+/* ==================== OPTIONS ==================== */
+
+.step-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.option-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 1rem 1.25rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.75rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 1rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.option-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.option-btn:active {
+  transform: scale(0.98);
+}
+
+.option-btn.selected {
+  background: rgba(79, 70, 229, 0.12);
+  border-color: rgba(79, 70, 229, 0.4);
+  color: #ffffff;
+}
+
+/* Radio / Checkbox */
+.radio {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.selected .radio {
+  border-color: #818cf8;
+}
+
+.radio-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #818cf8;
+}
+
+.checkbox {
+  width: 20px;
+  height: 20px;
+  border-radius: 0.3rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.checkbox.checked {
+  background: #4F46E5;
+  border-color: #4F46E5;
+  color: white;
+}
+
+/* Text Input */
+.text-input-step {
+  width: 100%;
+}
+
+.survey-text-input {
+  width: 100%;
+  background: var(--input-bg, rgba(255,255,255,0.05));
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  color: var(--text);
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 100px;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.survey-text-input:focus {
+  outline: none;
+  border-color: #4F46E5;
+}
+
+.survey-text-input::placeholder {
+  color: var(--text-secondary, #9ca3af);
+}
+
+/* Rating Stars */
+.rating-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 0;
+}
+
+.rating-stars {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.star-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  transition: transform 0.15s;
+}
+
+.star-btn:hover {
+  transform: scale(1.15);
+}
+
+.star-btn.active {
+  animation: starPop 0.2s ease;
+}
+
+@keyframes starPop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+
+.rating-label {
+  color: #FBBF24;
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+/* Yes/No */
+.yes-no-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.yes-btn.selected {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.yes-btn.selected svg {
+  color: #10b981;
+}
+
+.no-btn.selected {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.no-btn.selected svg {
+  color: #ef4444;
+}
+
+/* Platforms */
+.platforms-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+}
+
+@media (max-width: 480px) {
+  .platforms-options {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.platform-btn {
+  padding: 0.65rem 0.4rem;
+  flex-direction: column;
+  gap: 0.35rem;
+  text-align: center;
+  font-size: 0.72rem;
+}
+
+.platform-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 0;
+  background: transparent !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.platform-icon img {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.platform-icon span {
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+/* ==================== NAVIGATION ==================== */
+
+.pesquisa-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  background: rgba(10, 10, 26, 0.95);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  z-index: 100;
+}
+
+.nav-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem;
+  border-radius: 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.nav-btn.back {
+  flex: 0.4;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.nav-btn.back:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.nav-btn.next {
+  background: #4F46E5;
+  color: white;
+  box-shadow: 0 4px 15px rgba(79, 70, 229, 0.3);
+}
+
+.nav-btn.next:hover {
+  background: #4338ca;
+  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.4);
+}
+
+.nav-btn.next:active {
+  transform: scale(0.98);
+}
+
+.nav-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ==================== STATES ==================== */
+
+.pesquisa-loading,
+.pesquisa-error,
+.pesquisa-success {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  gap: 1rem;
+}
+
+.pesquisa-loading {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pesquisa-error {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pesquisa-error h2 {
+  color: #ef4444;
+  margin: 0;
+}
+
+.pesquisa-error p {
+  margin: 0;
+}
+
+.pesquisa-success {
+  color: white;
+}
+
+.success-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #10b981;
+  margin-bottom: 0.5rem;
+  animation: successPop 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes successPop {
+  from {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.pesquisa-success h2 {
+  font-size: 1.75rem;
+  margin: 0;
+}
+
+.pesquisa-success p {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.success-subtitle {
+  font-size: 0.85rem !important;
+  color: rgba(255, 255, 255, 0.35) !important;
+}
+
+/* ==================== SPIN ANIMATION ==================== */
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* ==================== RESPONSIVE ==================== */
+
+@media (min-width: 768px) {
+  .pesquisa-container {
+    background: linear-gradient(135deg, #0a0a1a 0%, #1a1033 100%);
+  }
+
+  .step-header h1 {
+    font-size: 1.75rem;
+  }
+
+  .option-btn {
+    padding: 1.1rem 1.5rem;
+  }
+}

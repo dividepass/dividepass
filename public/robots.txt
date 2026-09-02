@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /dashboard/
+Disallow: /login
+Disallow: /register
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /checkout/
+Disallow: /payment/
+Disallow: /api/
+
+Sitemap: https://dividepass.com.br/sitemap.xml

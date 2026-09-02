@@ -1,0 +1,122 @@
+.notification-composer-card {
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border: 1px solid rgba(79, 70, 229, 0.22);
+  border-radius: 0.9rem;
+  background: linear-gradient(180deg, rgba(79, 70, 229, 0.08), rgba(79, 70, 229, 0.03));
+}
+
+.notification-composer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.notification-composer-header h3 {
+  font-size: 0.98rem;
+  margin: 0.35rem 0 0.25rem;
+  color: var(--secondary);
+}
+
+.notification-composer-badge,
+.notification-composer-meta {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.notification-composer-badge {
+  background: rgba(79, 70, 229, 0.12);
+  color: var(--primary);
+}
+
+.notification-composer-meta {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10B981;
+}
+
+.notification-composer-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.notification-composer-message textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.notification-composer-channels {
+  margin-top: 1rem;
+}
+
+.notification-composer-channels > label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.notification-composer-channel-toggle {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.channel-btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.channel-btn.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+.notification-composer-error {
+  margin-top: 0.9rem;
+  color: var(--error);
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 0.5rem;
+}
+
+.notification-composer-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+  .notification-composer-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .notification-composer-channel-toggle {
+    flex-direction: column;
+  }
+
+  .channel-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

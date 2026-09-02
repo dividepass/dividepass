@@ -1,0 +1,157 @@
+/* IOPay Card Form Styles */
+.iopay-card-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.card-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.card-form-row label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.card-form-row input {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  font-size: 0.95rem;
+  background: var(--background);
+  color: var(--text-main);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.card-form-row input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.card-form-row input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.card-form-row input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.card-form-row input.field-error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+}
+
+.field-error-msg {
+  font-size: 0.72rem;
+  color: #ef4444;
+  margin-top: -0.15rem;
+}
+
+.card-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+/* Submit button animations */
+.iopay-submit-btn {
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.iopay-submit-btn.processing {
+  background: var(--primary) !important;
+  opacity: 0.85;
+  cursor: wait;
+}
+
+.iopay-submit-btn.success {
+  background: #10b981 !important;
+  border-color: #10b981 !important;
+  color: white !important;
+}
+
+.iopay-submit-btn.error {
+  background: #ef4444 !important;
+  border-color: #ef4444 !important;
+  color: white !important;
+}
+
+/* Payment method selector for IOPay */
+.iopay-method-selector {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.iopay-method-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--background);
+  border: 2px solid var(--border);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: all 0.2s;
+}
+
+.iopay-method-btn:hover {
+  border-color: var(--primary);
+}
+
+.iopay-method-btn.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(79, 70, 229, 0.06);
+}
+
+/* PIX result display */
+.iopay-pix-result {
+  text-align: center;
+  padding: 1.5rem;
+}
+
+.iopay-pix-result .pix-qrcode {
+  max-width: 200px;
+  margin: 0 auto 1rem;
+  border-radius: 0.5rem;
+  background: #FFFFFF;
+  padding: 8px;
+}
+
+.iopay-pix-result .pix-copy-paste {
+  background: var(--background);
+  border: 1px dashed var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  word-break: break-all;
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--text-main);
+  margin-bottom: 1rem;
+  user-select: all;
+}
+
+.iopay-pix-result .pix-waiting {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}

@@ -1,0 +1,225 @@
+.group-chat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+}
+
+.group-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.group-chat-header h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.group-chat-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.group-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 120px;
+  max-height: 280px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.group-chat-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.group-chat-messages::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.group-chat-empty {
+  text-align: center;
+  padding: 1.5rem 0;
+}
+
+.group-chat-empty p {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.group-chat-msg {
+  display: flex;
+  gap: 0.5rem;
+  max-width: 85%;
+}
+
+.group-chat-msg.mine {
+  margin-left: auto;
+  flex-direction: row-reverse;
+}
+
+.group-chat-msg-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.15rem;
+}
+
+.group-chat-msg-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.group-chat-msg-avatar span {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.group-chat-msg-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.group-chat-msg-name {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding-left: 0.5rem;
+}
+
+.group-chat-msg.mine .group-chat-msg-name {
+  text-align: right;
+  padding-right: 0.5rem;
+  padding-left: 0;
+}
+
+.group-chat-msg-bubble {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.group-chat-msg.mine .group-chat-msg-bubble {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.group-chat-msg-bubble p {
+  font-size: 0.85rem;
+  color: var(--text-main);
+  margin: 0;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.group-chat-msg.mine .group-chat-msg-bubble p {
+  color: white;
+}
+
+.group-chat-msg-time {
+  font-size: 0.65rem;
+  color: var(--text-soft);
+  padding: 0 0.5rem;
+}
+
+.group-chat-msg.mine .group-chat-msg-time {
+  text-align: right;
+}
+
+.group-chat-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.group-chat-input input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 2rem;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.85rem;
+  background: var(--background);
+  color: var(--text-main);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.group-chat-input input:focus {
+  border-color: var(--primary);
+}
+
+.group-chat-input button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: filter 0.2s;
+  flex-shrink: 0;
+}
+
+.group-chat-input button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.group-chat-input button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.group-chat-error {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--danger, #EF4444);
+  background: rgba(239, 68, 68, 0.1);
+  border-top: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 768px) {
+  .group-chat {
+    max-height: 350px;
+  }
+
+  .group-chat-messages {
+    max-height: 220px;
+  }
+}

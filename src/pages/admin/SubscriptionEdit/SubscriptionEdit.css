@@ -1,0 +1,148 @@
+.subscription-edit-page {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.subscription-edit-page .back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+  margin-bottom: 1.5rem;
+}
+
+.subscription-edit-page .back-btn:hover { color: var(--primary); }
+
+.subscription-edit-page .page-header { margin-bottom: 1.5rem; }
+.subscription-edit-page .page-header h1 { font-size: 1.5rem; margin-bottom: 0.25rem; color: var(--secondary); }
+.subscription-edit-page .page-header p { color: var(--text-muted); font-size: 0.85rem; }
+
+.sub-edit-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+}
+
+.sub-edit-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+.sub-edit-info label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.sub-edit-info p {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sub-edit-info span {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.sub-edit-info .mono {
+  font-family: monospace;
+  font-size: 0.82rem;
+  font-weight: 400;
+  word-break: break-all;
+}
+
+.sub-edit-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 1.5rem 0;
+}
+
+.sub-edit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sub-edit-fields .form-group label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 0.35rem;
+}
+
+.sub-edit-fields input,
+.sub-edit-fields select {
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.sub-edit-fields input:focus,
+.sub-edit-fields select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.sub-edit-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.2);
+  border-radius: 8px;
+  margin-top: 1.25rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.sub-edit-note svg { color: #eab308; flex-shrink: 0; }
+
+.sub-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.success-banner {
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 600px) {
+  .sub-edit-card { padding: 1.25rem; }
+  .sub-edit-info-grid, .form-row-2 { grid-template-columns: 1fr; }
+  .sub-edit-actions { flex-direction: column-reverse; }
+  .sub-edit-actions .btn { width: 100%; }
+}

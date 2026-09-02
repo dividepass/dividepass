@@ -1,0 +1,77 @@
+# DividePass
+
+A DividePass e uma plataforma brasileira que facilita o compartilhamento e o rateio de assinaturas digitais, permitindo que usuarios economize ate 75% em servicos como streaming, musicas, inteligencia artificial, cursos e produtividade.
+
+## Documentacao
+
+- Site oficial: https://dividepass.com.br
+- Sobre: https://dividepass.com.br/sobre
+- FAQ: https://dividepass.com.br/faq
+- Catalogo de grupos: https://dividepass.com.br (login necessario)
+
+## Paginas de Plataformas
+
+- Netflix: https://dividepass.com.br/netflix
+- Disney+: https://dividepass.com.br/disney-plus
+- Spotify: https://dividepass.com.br/spotify
+- Amazon Prime Video: https://dividepass.com.br/prime-video
+- HBO Max: https://dividepass.com.br/hbo-max
+- ChatGPT Plus: https://dividepass.com.br/chatgpt-plus
+- YouTube Premium: https://dividepass.com.br/youtube-premium
+- Adobe Creative Cloud: https://dividepass.com.br/adobe-creative-cloud
+- Microsoft 365: https://dividepass.com.br/microsoft-365
+- Canva Pro: https://dividepass.com.br/canva-pro
+- Crunchyroll: https://dividepass.com.br/crunchyroll
+- Deezer: https://dividepass.com.br/deezer
+- Paramount+: https://dividepass.com.br/paramount-plus
+- Duolingo: https://dividepass.com.br/duolingo
+- GitHub Copilot: https://dividepass.com.br/github-copilot
+
+## Contato
+
+- Email: suporte@dividepass.com.br
+
+## Produtos e Servicos Disponiveis
+
+- Netflix
+- Disney+
+- Spotify
+- Amazon Prime Video
+- HBO Max
+- ChatGPT Plus
+- Adobe Creative Cloud
+- Microsoft 365
+- Paramount+
+- Crunchyroll
+- Deezer
+- YouTube Premium
+- Canva Pro
+- Duolingo Premium
+- GitHub Copilot
+
+## Como Funciona
+
+1. O usuario cria ou participa de um grupo de assinatura.
+2. O administrador do grupo compartilha as credenciais de acesso.
+3. Cada membro paga sua parte com seguranca atraves da plataforma.
+4. A DividePass gerencia cobrancas recorrentes, renovacoes e suporte.
+
+## Seguranca
+
+- Pagamentos processados por gateways seguros (Mercado Pago, Stripe, Asaas, IOPay, Pagar.me).
+- Credenciais protegidas e acessiveis apenas para membros ativos do grupo.
+- Sistema de verificacao por email e autenticacao segura.
+- Dados sensiveis criptografados e nao expostos publicamente.
+
+## Tipos de Planos
+
+- Grupos abertos: qualquer usuario pode participar.
+- Grupos com taxa de adesao: cobranca unica para entrar no grupo.
+- Assinaturas recorrentes: cobranca automatica mensal.
+- Planos personalizados: ciclos de cobranca configuraveis.
+
+## Publico-Alvo
+
+- Usuarios que desejam economizar em assinaturas digitais.
+- Criadores de grupos que querem gerenciar compartilhamentos com seguranca.
+- Qualquer pessoa no Brasil que utilize servicos de streaming, musicas ou ferramentas digitais.

@@ -1,0 +1,371 @@
+.billing-calendar-page {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.billing-calendar-page .admin-header {
+  margin-bottom: 0;
+}
+
+.billing-calendar-page .admin-header h1 {
+  font-size: 1.75rem;
+  color: var(--secondary);
+}
+
+.billing-calendar-page .admin-header p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-top: 0.25rem;
+}
+
+.calendar-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1.5rem;
+}
+
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.calendar-header h2 {
+  font-size: 1.25rem;
+  color: var(--secondary);
+  text-transform: capitalize;
+}
+
+.cal-nav-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  cursor: pointer;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.cal-nav-btn:hover {
+  background: var(--surface-hover);
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.cal-weekday {
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  padding: 0.5rem 0;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.25rem;
+}
+
+.cal-cell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  min-height: 90px;
+  cursor: default;
+  transition: all 0.15s;
+}
+
+.cal-cell.empty {
+  background: transparent;
+  border-color: transparent;
+}
+
+.cal-cell.has-data {
+  cursor: pointer;
+}
+
+.cal-cell.has-data:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.cal-cell.today {
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.03);
+}
+
+.cal-cell.selected {
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.08);
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.cal-day {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cal-summary {
+  margin-top: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.cal-amount {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--success);
+}
+
+.cal-count {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.cal-indicators {
+  display: flex;
+  gap: 0.2rem;
+  margin-top: 0.15rem;
+}
+
+.cal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.cal-dot.green { background: #10B981; }
+.cal-dot.red { background: #EF4444; }
+.cal-dot.yellow { background: #F59E0B; }
+
+.cal-loading {
+  text-align: center;
+  padding: 3rem;
+  color: var(--text-muted);
+}
+
+.day-panel-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 1000;
+}
+
+.day-panel {
+  width: 420px;
+  max-width: 90vw;
+  height: 100%;
+  background: var(--surface);
+  overflow-y: auto;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+}
+
+.day-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.day-panel-header h3 {
+  font-size: 1.1rem;
+  color: var(--secondary);
+  text-transform: capitalize;
+}
+
+.day-panel-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+}
+
+.day-panel-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.day-panel-summary {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.summary-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.summary-item.approved { color: #10B981; }
+.summary-item.failed { color: #EF4444; }
+.summary-item.pending { color: #F59E0B; }
+
+.day-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.day-charge-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  gap: 1rem;
+}
+
+.day-charge-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.day-charge-info strong {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.day-charge-service {
+  font-size: 0.8rem;
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.day-charge-group {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.day-charge-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.day-charge-amount {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.day-charge-error {
+  font-size: 0.7rem;
+  color: var(--error);
+  max-width: 150px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.day-charge-user-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.day-charge-email {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.day-charge-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.15rem;
+}
+
+.day-charge-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.day-charge-cycle {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(79, 70, 229, 0.1);
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.day-charge-attempt {
+  font-size: 0.7rem;
+  color: #f59e0b;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.empty-state svg {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+@media (max-width: 900px) {
+  .calendar-grid {
+    gap: 0.15rem;
+  }
+
+  .cal-cell {
+    min-height: 70px;
+    padding: 0.35rem;
+  }
+
+  .cal-amount {
+    font-size: 0.65rem;
+  }
+
+  .cal-count {
+    font-size: 0.6rem;
+  }
+}

@@ -1,0 +1,87 @@
+.register-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background-color: var(--background);
+  padding: 2rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.register-container::before {
+  content: '';
+  position: absolute;
+  top: -10%;
+  right: -10%;
+  width: 50vw;
+  height: 50vw;
+  background: radial-gradient(circle, rgba(79,70,229,0.08) 0%, rgba(79,70,229,0) 60%);
+  border-radius: 50%;
+  z-index: 0;
+}
+
+.register-card {
+  background: var(--surface);
+  width: 100%;
+  max-width: 420px;
+  border-radius: 1.5rem;
+  padding: 3rem 2.5rem;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+  position: relative;
+  z-index: 1;
+  backdrop-filter: blur(10px);
+  animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.register-header {
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+
+.register-logo {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.register-logo img {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
+
+.register-header h2 {
+  font-size: 1.875rem;
+  margin-bottom: 0.5rem;
+  color: var(--secondary);
+}
+
+.register-header p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.register-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.register-footer {
+  margin-top: 2.5rem;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.register-footer a {
+  color: var(--primary);
+  font-weight: 600;
+  transition: color 0.2s;
+}
+
+.register-footer a:hover {
+  color: #818CF8;
+  text-decoration: underline;
+}

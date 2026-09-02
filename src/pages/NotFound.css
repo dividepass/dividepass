@@ -1,0 +1,54 @@
+.not-found-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--background);
+  padding: 2rem;
+}
+
+.not-found-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1.5rem;
+  padding: 3rem 2.5rem;
+  text-align: center;
+  max-width: 420px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.not-found-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  margin-bottom: 0.5rem;
+}
+
+.not-found-card h1 {
+  font-size: 4rem;
+  font-weight: 800;
+  color: var(--primary);
+  margin: 0;
+  line-height: 1;
+}
+
+.not-found-card p {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.not-found-card span {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.not-found-card .btn {
+  margin-top: 0.75rem;
+}

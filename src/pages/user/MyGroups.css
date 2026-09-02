@@ -1,0 +1,406 @@
+.my-groups-page {
+  max-width: 900px;
+}
+
+.page-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.page-header-row h1 {
+  font-size: 1.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.page-header-row p {
+  color: var(--text-muted);
+}
+
+.empty-state {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+.empty-state svg {
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.empty-state h2 {
+  margin-bottom: 0.5rem;
+}
+
+.empty-state p {
+  color: var(--text-muted);
+  margin-bottom: 1.5rem;
+}
+
+.my-groups-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.my-group-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1.25rem;
+}
+
+/* Top Section */
+.mg-top {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.mg-photo {
+  width: 70px;
+  height: 70px;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 2px solid var(--border);
+}
+
+.mg-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mg-photo-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.mg-photo-placeholder img {
+  width: 60%;
+  height: 60%;
+  object-fit: contain;
+}
+
+.mg-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mg-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.mg-name-row h3 {
+  font-size: 1rem;
+  color: var(--text);
+  margin: 0;
+}
+
+.mg-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.gc-members {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.gc-vagas {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+  text-transform: uppercase;
+}
+
+.gc-vagas.full {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error);
+}
+
+.gc-ref {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(79, 70, 229, 0.1);
+  color: var(--primary);
+  font-family: monospace;
+}
+
+.gc-price-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--primary);
+  font-family: var(--font-title);
+}
+
+.gc-price-value small {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-left: 0.25rem;
+}
+
+/* Price */
+.mg-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+/* Actions */
+.mg-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.gc-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.75rem 0;
+}
+
+.btn-sm {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+.btn-danger-outline {
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #EF4444;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 0.375rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all 0.2s;
+  padding: 0.4rem 0.6rem;
+}
+
+.btn-danger-outline:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.mg-mobile-price {
+  display: none;
+}
+
+.desktop-only {
+  display: block;
+}
+@media (max-width: 640px) {
+  .my-groups-grid {
+    gap: 0.75rem;
+  }
+
+  .my-group-card {
+    padding: 0.875rem;
+    border-radius: 0.875rem;
+  }
+
+  .mg-top {
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .mg-photo {
+    width: 52px;
+    height: 52px;
+    border-radius: 0.6rem;
+  }
+
+  .mg-name-row h3 {
+    font-size: 0.9rem;
+  }
+
+  .mg-stats-row {
+    gap: 0.35rem;
+  }
+
+  .gc-ref,
+  .gc-members {
+    font-size: 0.72rem;
+  }
+
+  .gc-vagas {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.45rem;
+  }
+
+  .gc-divider:not(.desktop-only) {
+    display: none;
+  }
+
+  .desktop-only {
+    display: none !important;
+  }
+
+  .mg-mobile-price {
+    display: block;
+    margin-top: 0.4rem;
+  }
+
+  .mg-mobile-price .gc-price-value {
+    font-size: 1.1rem;
+  }
+
+  .mg-mobile-price .gc-price-value small {
+    font-size: 0.7rem;
+  }
+
+  .mg-price {
+    display: none;
+  }
+
+  .mg-actions {
+    justify-content: flex-end;
+  }
+
+  .btn-sm {
+    font-size: 0.78rem;
+    padding: 0.4rem 0.75rem;
+  }
+}
+
+/* Delete confirmation modal */
+.confirm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  backdrop-filter: blur(3px);
+}
+
+.confirm-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  padding: 2rem;
+  max-width: 380px;
+  width: 100%;
+  text-align: center;
+  position: relative;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  animation: slideUpFade 0.2s ease-out;
+}
+
+.confirm-modal-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.confirm-modal-close:hover {
+  color: var(--text);
+}
+
+.confirm-modal-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1rem;
+}
+
+.confirm-modal-icon.danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #EF4444;
+}
+
+.confirm-modal h3 {
+  font-size: 1.15rem;
+  color: var(--secondary);
+  margin: 0 0 0.5rem;
+}
+
+.confirm-modal p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0 0 1.5rem;
+}
+
+.confirm-modal p strong {
+  color: var(--text);
+}
+
+.confirm-modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.confirm-modal-actions .btn-outline {
+  flex: 1;
+  justify-content: center;
+}
+
+.confirm-modal-actions .btn-danger {
+  flex: 1;
+  justify-content: center;
+  background: #EF4444;
+  color: white;
+  border: none;
+}
+
+.confirm-modal-actions .btn-danger:hover {
+  background: #DC2626;
+}
+
+.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

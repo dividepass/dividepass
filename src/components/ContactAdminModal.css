@@ -1,0 +1,215 @@
+.contact-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.contact-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.contact-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.contact-modal-header h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--secondary);
+  margin: 0 0 0.2rem;
+}
+
+.contact-modal-header p {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.contact-modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  transition: all 0.2s;
+}
+
+.contact-modal-close:hover {
+  background: var(--border);
+  color: var(--secondary);
+}
+
+.contact-modal-form {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.contact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.contact-field label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.contact-field select,
+.contact-field textarea {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.9rem;
+  color: var(--secondary);
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.2s;
+}
+
+.contact-field select:focus,
+.contact-field textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.contact-field select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2rem;
+}
+
+.contact-char-count {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.contact-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.85rem;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 0.5rem;
+  font-size: 0.82rem;
+  color: #EF4444;
+}
+
+.contact-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  padding-top: 0.5rem;
+}
+
+.contact-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.contact-actions .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.contact-modal-success {
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.contact-modal-success svg {
+  color: #10B981;
+}
+
+.contact-modal-success h4 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.contact-modal-success p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.contact-success-note {
+  font-size: 0.8rem !important;
+  color: var(--text-muted);
+  margin-top: 0.5rem !important;
+}
+
+@media (max-width: 480px) {
+  .contact-modal {
+    max-width: 100%;
+    margin: 0.5rem;
+    max-height: 95vh;
+  }
+
+  .contact-modal-header {
+    padding: 1rem;
+  }
+
+  .contact-modal-form {
+    padding: 1rem;
+  }
+
+  .contact-actions {
+    flex-direction: column;
+  }
+
+  .contact-actions .btn {
+    justify-content: center;
+  }
+}

@@ -1,0 +1,471 @@
+.billing-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3rem;
+}
+
+.payment-methods h2, .invoice-history h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+  color: var(--secondary);
+}
+
+.card-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1.5rem;
+  border-radius: 1rem;
+  max-width: 600px;
+}
+
+.card-brand {
+  display: inline-block;
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+  font-weight: 800;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.card-info p {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.table-responsive {
+  overflow-x: auto;
+  background: var(--surface);
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+}
+
+.invoice-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.invoice-table th {
+  background: var(--background);
+  padding: 1rem 1.5rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.invoice-table td {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.invoice-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.invoice-table tbody tr:hover {
+  background: rgba(0,0,0,0.01);
+}
+
+.status-badge {
+  padding: 0.35rem 0.75rem;
+  border-radius: 2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.pago {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+}
+
+.status-badge.pendente {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--warning);
+}
+
+.pay-btn {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.status-badge.vencido {
+  background: rgba(239, 68, 68, 0.1);
+  color: #EF4444;
+}
+
+/* Assinaturas ativas */
+.billing-subscriptions h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+  color: var(--secondary);
+}
+
+.billing-empty {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  color: var(--text-muted);
+}
+
+.billing-subscriptions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.billing-sub-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.billing-sub-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+
+.billing-sub-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.billing-sub-info h4 {
+  font-size: 1rem;
+  margin-bottom: 0.25rem;
+  color: var(--secondary);
+}
+
+.billing-sub-info p {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.billing-sub-price {
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+/* Modal de detalhes */
+.invoice-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.invoice-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1.5rem;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 420px;
+  position: relative;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+}
+
+.invoice-modal-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+}
+
+.invoice-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-right: 2rem;
+}
+
+.invoice-modal-header svg {
+  color: var(--primary);
+}
+
+.invoice-modal-header h3 {
+  font-size: 1.1rem;
+  color: var(--secondary);
+  margin-bottom: 0.25rem;
+}
+
+.invoice-modal-header p {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.invoice-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.invoice-modal-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--background);
+  border-radius: 0.75rem;
+}
+
+.invoice-modal-row svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.invoice-modal-row span {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.invoice-modal-row strong {
+  color: var(--secondary);
+}
+
+.invoice-modal-row.pending {
+  color: var(--warning);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.invoice-modal-row.pending svg {
+  color: var(--warning);
+}
+
+.invoice-modal-row.pending span {
+  color: var(--warning);
+}
+
+.invoice-modal-row.overdue {
+  color: #EF4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.invoice-modal-row.overdue svg {
+  color: #EF4444;
+}
+
+.invoice-modal-row.overdue span {
+  color: #EF4444;
+}
+
+.loading-cell,
+.error-cell,
+.empty-cell {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+}
+
+.billing-pending-section {
+  margin-bottom: 1.5rem;
+}
+
+.billing-pending-section h2 {
+  font-size: 1.1rem;
+  color: var(--secondary);
+  margin-bottom: 0.75rem;
+}
+
+.billing-pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.billing-pending-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid #F59E0B;
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.25rem;
+  gap: 1rem;
+}
+
+.billing-pending-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.billing-pending-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.billing-pending-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+}
+
+.billing-pending-group strong {
+  font-size: 0.9rem;
+  color: var(--text);
+  display: block;
+}
+
+.billing-pending-service {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.billing-pending-id {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.billing-pending-amount {
+  font-size: 1rem !important;
+  font-weight: 700;
+  color: var(--secondary) !important;
+}
+
+.invoice-group-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.invoice-group-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+}
+
+.invoice-group-info strong {
+  display: block;
+  font-size: 0.85rem;
+}
+
+.invoice-group-info span {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.pix-modal {
+  max-width: 420px;
+}
+
+.pix-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.pix-qrcode-img {
+  max-width: 250px;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: white;
+  padding: 0.5rem;
+}
+
+.pix-copy-section {
+  width: 100%;
+}
+
+.pix-copy-section label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.pix-copy-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.pix-copy-input {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--text);
+  min-width: 0;
+}
+
+.pix-polling-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--primary);
+}
+
+.pix-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #EF4444;
+  background: rgba(239, 68, 68, 0.1);
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-sm);
+  width: 100%;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

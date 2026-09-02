@@ -1,0 +1,461 @@
+/* Final visual layer for app dashboards */
+
+@keyframes dpFadeLift {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+    filter: saturate(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: saturate(1);
+  }
+}
+
+@keyframes dpSoftPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.25); }
+  50% { box-shadow: 0 0 0 8px rgba(79, 70, 229, 0); }
+}
+
+.fade-in,
+.catalog-page,
+.checkout-page,
+.credentials-page,
+.users-page,
+.platforms-page,
+.groups-page,
+.group-form-page,
+.subscriptions-page,
+.user-detail-page,
+.platform-form-page,
+.billing-page,
+.support-page,
+.create-ticket-page,
+.ticket-detail-page {
+  animation: dpFadeLift 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.main-content,
+.admin-page-wrap {
+  scroll-behavior: smooth;
+}
+
+.page-header,
+.admin-header {
+  position: relative;
+  margin-bottom: 1.75rem;
+}
+
+.page-header h1,
+.admin-header h1 {
+  color: var(--text-main);
+  font-size: clamp(1.55rem, 2vw, 2.15rem);
+  letter-spacing: -0.02em;
+}
+
+.page-header p,
+.page-subtitle,
+.admin-header p {
+  color: var(--text-muted);
+  font-size: 0.94rem;
+}
+
+.admin-card,
+.metric-card,
+.service-card,
+.available-service-card,
+.catalog-card,
+.group-card,
+.checkout-summary,
+.checkout-payment,
+.credential-card,
+.billing-sub-card,
+.billing-empty,
+.empty-checkout,
+.empty-state,
+.access-denied,
+.form-card,
+.form-section,
+.pf-section,
+.users-table-card,
+.table-responsive,
+.service-section,
+.stat-card,
+.platform-card,
+.reply-form,
+.ticket-card,
+.invoice-modal,
+.credentials-modal,
+.modal-content {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.admin-card,
+.metric-card,
+.service-card,
+.available-service-card,
+.catalog-card,
+.group-card,
+.checkout-summary,
+.checkout-payment,
+.credential-card,
+.billing-sub-card,
+.billing-empty,
+.empty-checkout,
+.empty-state,
+.access-denied,
+.form-card,
+.form-section,
+.pf-section,
+.users-table-card,
+.table-responsive,
+.service-section,
+.platform-card,
+.reply-form {
+  border-radius: var(--radius-md);
+}
+
+.metric-card,
+.service-card,
+.available-service-card,
+.catalog-card,
+.group-card,
+.platform-card,
+.billing-sub-card,
+.ticket-card,
+.service-section,
+.stat-card {
+  transition:
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.22s ease,
+    border-color 0.22s ease,
+    background 0.22s ease;
+}
+
+.metric-card:hover,
+.service-card:hover,
+.available-service-card:hover,
+.catalog-card:hover,
+.group-card:hover,
+.platform-card:hover,
+.billing-sub-card:hover,
+.ticket-card:hover,
+.service-section:hover,
+.stat-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
+}
+
+.metric-card.highlight {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 90% 5%, rgba(255,255,255,0.12), transparent 11rem),
+    linear-gradient(135deg, #3730A3 0%, #4F46E5 52%, #EA580C 140%);
+  box-shadow: 0 20px 40px rgba(79, 70, 229, 0.3);
+}
+
+.metric-card.highlight::after {
+  content: '';
+  position: absolute;
+  inset: auto -20% -45% 40%;
+  height: 120px;
+  background: rgba(255,255,255,0.08);
+  filter: blur(26px);
+  transform: rotate(-12deg);
+}
+
+.metric-value,
+.price-value,
+.stat-card span {
+  letter-spacing: 0;
+}
+
+.back-btn,
+.back-btn-platform {
+  padding: 0.48rem 0.72rem !important;
+  border-radius: var(--radius-xs);
+  background: var(--surface-soft) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-xs);
+  color: var(--text-muted) !important;
+}
+
+.back-btn:hover,
+.back-btn-platform:hover {
+  color: var(--primary-light) !important;
+  border-color: var(--primary) !important;
+  transform: translateX(-2px);
+}
+
+.search-box,
+.search-input-wrap,
+.filter-box,
+.form-group input,
+.form-group select,
+.form-group textarea,
+.form-row input,
+.form-row select,
+.form-card input,
+.form-card select,
+.form-card textarea,
+.modal-form input,
+.modal-form select,
+.reply-form textarea,
+.color-input {
+  background: var(--surface-soft) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-xs) !important;
+  box-shadow: var(--shadow-xs);
+  color: var(--text-main) !important;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.search-box:focus-within,
+.search-input-wrap:focus-within,
+.filter-box:focus-within,
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus,
+.form-row input:focus,
+.form-row select:focus,
+.form-card input:focus,
+.form-card select:focus,
+.form-card textarea:focus,
+.modal-form input:focus,
+.modal-form select:focus,
+.reply-form textarea:focus {
+  background: var(--surface) !important;
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 4px var(--ring), var(--shadow-xs) !important;
+}
+
+table {
+  border-collapse: separate !important;
+  border-spacing: 0;
+}
+
+.users-table th,
+.invoice-table th,
+.subscriptions-table th,
+.history-table th {
+  background: var(--surface-soft) !important;
+  color: var(--text-muted) !important;
+  font-size: 0.72rem !important;
+  letter-spacing: 0.04em !important;
+}
+
+.users-table td,
+.invoice-table td,
+.subscriptions-table td,
+.history-table td {
+  background: transparent;
+  transition: background 0.18s ease;
+}
+
+.users-table tbody tr:hover td,
+.invoice-table tbody tr:hover td,
+.subscriptions-table tbody tr:hover td,
+.history-table tbody tr:hover td {
+  background: var(--primary-soft) !important;
+}
+
+.status-badge,
+.role-badge,
+.status,
+.tag,
+.status-pill,
+.group-tag,
+.ticket-status-badge,
+.cycle-check,
+.group-tag-item,
+.profile-badge,
+.assigned-badge,
+.available-badge {
+  border-radius: 999px !important;
+  border: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 18%, transparent);
+  letter-spacing: 0;
+}
+
+.user-avatar,
+.avatar,
+.admin-avatar,
+.member-avatar-sm,
+.member-avatar,
+.service-icon,
+.available-service-icon,
+.catalog-icon-text,
+.summary-icon,
+.credential-icon,
+.modal-icon,
+.billing-sub-icon,
+.platform-icon,
+.icon-preview {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 10px 22px rgba(0, 0, 0, 0.15);
+}
+
+.btn,
+.action-btn,
+.platform-btn,
+.group-btn,
+.filter-btn,
+.cycle-option,
+.payment-method,
+.reply-image-btn,
+.cred-action-btn,
+.user-tab,
+.add-profile-inline-btn,
+.btn-icon {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.btn:hover,
+.action-btn:hover,
+.platform-btn:hover,
+.group-btn:hover,
+.filter-btn:hover,
+.cycle-option:hover,
+.payment-method:hover,
+.reply-image-btn:hover,
+.cred-action-btn:hover,
+.user-tab:hover,
+.add-profile-inline-btn:hover,
+.btn-icon:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary:disabled,
+.btn:disabled {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.catalog-header,
+.available-service-header,
+.platform-header,
+.service-groups,
+.platform-actions {
+  background: var(--surface) !important;
+}
+
+.progress-bar {
+  background: var(--border) !important;
+}
+
+.progress-fill {
+  box-shadow: 0 0 12px color-mix(in srgb, currentColor 25%, transparent);
+}
+
+.info-banner,
+.checkout-rules,
+.entrance-fee-highlight,
+.group-rules,
+.group-warning,
+.price-simulation,
+.credential-meta-item,
+.invoice-modal-row,
+.cred-profile-card,
+.profile-entry,
+.credential-entry,
+.toggle-label,
+.member-item {
+  border-radius: var(--radius-xs) !important;
+  box-shadow: var(--shadow-xs);
+}
+
+.modal-overlay,
+.credentials-modal-overlay,
+.invoice-modal-overlay {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(79, 70, 229, 0.15), transparent 26rem),
+    rgba(0, 0, 0, 0.6) !important;
+  backdrop-filter: blur(10px) saturate(1.1) !important;
+}
+
+.modal-content,
+.credentials-modal,
+.invoice-modal {
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+  animation: dpFadeLift 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.credential-card {
+  border-left: 0 !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.credential-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: var(--service-color, var(--primary));
+}
+
+.credential-header {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--service-color, var(--primary)) 13%, transparent), var(--surface-soft)) !important;
+}
+
+.cycle-option.selected,
+.user-tab.active,
+.filter-btn.active,
+.cycle-check.active {
+  animation: dpSoftPulse 1.8s ease-out 1;
+  box-shadow: 0 0 0 4px var(--ring), var(--shadow-xs);
+}
+
+.form-footer,
+.platform-form-footer {
+  left: var(--shell-offset, 0) !important;
+  background: var(--surface) !important;
+  backdrop-filter: blur(18px) saturate(1.08);
+  border-top: 1px solid var(--border) !important;
+  box-shadow: 0 -18px 46px var(--shadow-sm) !important;
+}
+
+.admin-layout {
+  --shell-offset: 280px;
+}
+
+.layout-container {
+  --shell-offset: 280px;
+}
+
+.loading-state {
+  min-height: 240px;
+}
+
+.spin {
+  color: var(--primary);
+}
+
+@media (max-width: 768px) {
+  .admin-layout,
+  .layout-container {
+    --shell-offset: 0;
+  }
+
+  .page-header,
+  .admin-header {
+    margin-bottom: 1.25rem;
+  }
+
+  .modal-content,
+  .credentials-modal,
+  .invoice-modal {
+    border-radius: var(--radius-md) !important;
+  }
+}

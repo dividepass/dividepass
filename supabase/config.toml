@@ -1,0 +1,108 @@
+
+[functions.mercado-pago-create-subscription]
+enabled = true
+verify_jwt = true
+import_map = "./functions/mercado-pago-create-subscription/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/mercado-pago-create-subscription/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/mercado-pago-create-subscription/*.html" ]
+
+[functions.mercado-pago-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/mercado-pago-webhook/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/mercado-pago-webhook/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/mercado-pago-webhook/*.html" ]
+
+[functions.mercado-pago-verify-payment]
+enabled = true
+verify_jwt = false
+import_map = "./functions/mercado-pago-verify-payment/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/mercado-pago-verify-payment/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/mercado-pago-verify-payment/*.html" ]
+
+[functions.process-overdue-invoices]
+enabled = true
+verify_jwt = false
+import_map = "./functions/process-overdue-invoices/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/process-overdue-invoices/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/process-overdue-invoices/*.html" ]
+
+[functions.admin-update-user]
+enabled = true
+verify_jwt = false
+import_map = "./functions/admin-update-user/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/admin-update-user/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/admin-update-user/*.html" ]
+
+[functions.fetch-email-code]
+enabled = true
+verify_jwt = true
+import_map = "./functions/fetch-email-code/deno.json"
+entrypoint = "./functions/fetch-email-code/index.ts"
+
+[functions.receive-email-code]
+enabled = true
+verify_jwt = false
+import_map = "./functions/receive-email-code/deno.json"
+entrypoint = "./functions/receive-email-code/index.ts"
+
+[functions.check-entrance-deadline]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-entrance-deadline/index.ts"
+
+[functions.test-pagarme]
+enabled = true
+verify_jwt = false
+import_map = "./functions/test-pagarme/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/test-pagarme/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML files, you can use:
+# static_files = [ "./functions/test-pagarme/*.html" ]
+
+[functions.iopay-webhook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/iopay-webhook/index.ts"
+
+[functions.send-group-alert]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/send-group-alert/index.ts"
+
+[functions.register-push-subscription]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/register-push-subscription/index.ts"
+
+[functions.send-notification]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/send-notification/index.ts"
+
+[functions.grant-testimonial-reward]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/grant-testimonial-reward/index.ts"

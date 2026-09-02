@@ -1,0 +1,503 @@
+.share-page {
+  animation: slideUpFade 0.4s ease-out forwards;
+}
+
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.share-page .page-header {
+  margin-bottom: 2rem;
+}
+
+.share-page .page-header h1 {
+  font-size: 1.75rem;
+  margin-bottom: 0.5rem;
+  color: var(--secondary);
+}
+
+.share-page .page-header p {
+  color: var(--text-muted);
+}
+
+/* Referral Code Card */
+.referral-code-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  padding: 2rem;
+  margin-bottom: 2.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+.referral-code-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--primary);
+}
+
+.referral-code-header h2 {
+  font-size: 1.2rem;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.code-display {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--background);
+  border: 2px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.5rem;
+  min-width: 280px;
+}
+
+.code-text {
+  flex: 1;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--primary);
+  text-align: center;
+}
+
+.copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.copy-btn:hover {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+.copy-btn-sm {
+  width: 34px;
+  height: 34px;
+}
+
+.share-link-box {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 0.75rem 1rem;
+  width: 100%;
+  max-width: 500px;
+}
+
+.share-link-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.share-link-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.share-link-text {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.share-main-btn {
+  padding: 0.75rem 2rem;
+  font-size: 0.95rem;
+}
+
+/* Points Info Inline (inside referral code card) */
+.points-info-inline {
+  width: 100%;
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.points-info-inline .points-info-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  color: var(--primary);
+}
+
+.points-info-inline .points-info-header h3 {
+  font-size: 1rem;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.points-info-inline .points-rules {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.points-info-inline .points-rules li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.points-info-inline .points-rule-value {
+  background: rgba(79, 70, 229, 0.08);
+  color: var(--primary);
+  font-weight: 700;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+/* Share by Group */
+.share-groups-section {
+  margin-bottom: 2.5rem;
+}
+
+.share-groups-section .section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.share-groups-section .section-title-row h2 {
+  font-size: 1.25rem;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.group-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.group-share-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.25rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.group-share-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+}
+
+.group-share-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+  overflow: hidden;
+  font-size: 1.25rem;
+}
+
+.group-share-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.group-share-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.group-share-info h4 {
+  font-size: 1rem;
+  color: var(--secondary);
+  margin-bottom: 0.2rem;
+}
+
+.group-share-info p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.copy-btn-group {
+  width: 38px;
+  height: 38px;
+}
+
+/* Referrals Section */
+.referrals-section {
+  margin-bottom: 2.5rem;
+}
+
+.referrals-section .section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.referrals-section .section-title-row h2 {
+  font-size: 1.25rem;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.points-total {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(79, 70, 229, 0.08);
+  color: var(--primary);
+  padding: 0.4rem 0.85rem;
+  border-radius: 2rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.points-total svg {
+  color: var(--primary);
+}
+
+.referrals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.referral-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.25rem;
+}
+
+.referral-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.referral-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.referral-info h4 {
+  font-size: 0.95rem;
+  color: var(--secondary);
+  margin-bottom: 0.15rem;
+}
+
+.referral-date {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.referral-item .status-badge {
+  padding: 0.3rem 0.7rem;
+  border-radius: 2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.referral-item .status-badge.pending {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--warning);
+}
+
+.referral-item .status-badge.active {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+}
+
+.referral-points {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.empty-state {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 1rem;
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+.empty-state p {
+  color: var(--text-muted);
+  margin-top: 0.75rem;
+}
+
+.empty-icon {
+  color: var(--text-soft);
+}
+
+/* Points Info */
+.points-info {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+}
+
+.points-info-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  color: var(--primary);
+}
+
+.points-info-header h3 {
+  font-size: 1rem;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.points-rules {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.points-rules li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.points-rule-value {
+  background: rgba(79, 70, 229, 0.08);
+  color: var(--primary);
+  font-weight: 700;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Loading */
+.loading-cell {
+  text-align: center;
+  padding: 3rem;
+  color: var(--text-muted);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .share-page .page-header h1 {
+    font-size: 1.5rem;
+  }
+
+  .referral-code-card {
+    padding: 1.5rem;
+  }
+
+  .code-display {
+    min-width: 0;
+    padding: 0.75rem 1rem;
+  }
+
+  .code-text {
+    font-size: 1.35rem;
+    letter-spacing: 0.15em;
+  }
+
+  .share-link-box {
+    flex-wrap: wrap;
+  }
+
+  .share-link-label {
+    width: 100%;
+  }
+
+  .group-share-card {
+    padding: 0.85rem 1rem;
+  }
+
+  .group-share-icon {
+    width: 42px;
+    height: 42px;
+  }
+
+  .referral-item {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+  }
+
+  .referral-item .status-badge {
+    order: 4;
+  }
+
+  .referral-points {
+    order: 5;
+  }
+}

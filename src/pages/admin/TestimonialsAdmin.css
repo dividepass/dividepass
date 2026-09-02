@@ -1,0 +1,264 @@
+.ta-page {
+  padding: 1.5rem;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.ta-header {
+  margin-bottom: 1.5rem;
+}
+
+.ta-header h1 {
+  color: var(--text, #f9fafb);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.ta-header p {
+  color: var(--text-secondary, #9ca3af);
+  font-size: 0.9rem;
+}
+
+.ta-filters {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.ta-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--card-bg, #111827);
+  border: 1px solid var(--border, #1f2937);
+  color: var(--text-secondary, #9ca3af);
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ta-filter-btn:hover {
+  border-color: #4F46E5;
+  color: var(--text, #f9fafb);
+}
+
+.ta-filter-btn.active {
+  background: #4F46E5;
+  border-color: #4F46E5;
+  color: white;
+}
+
+.ta-count {
+  background: rgba(255, 255, 255, 0.15);
+  padding: 0.1rem 0.4rem;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+}
+
+.ta-filter-btn:not(.active) .ta-count {
+  background: var(--bg-secondary, #0d1117);
+}
+
+.ta-loading {
+  text-align: center;
+  padding: 3rem;
+  color: var(--text-secondary, #9ca3af);
+}
+
+.ta-empty {
+  text-align: center;
+  padding: 3rem;
+  color: var(--text-secondary, #6b7280);
+}
+
+.ta-empty p {
+  margin-top: 0.75rem;
+}
+
+.ta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ta-card {
+  background: var(--card-bg, #111827);
+  border: 1px solid var(--border, #1f2937);
+  border-radius: 10px;
+  padding: 1.25rem;
+  transition: border-color 0.2s;
+}
+
+.ta-card:hover {
+  border-color: #374151;
+}
+
+.ta-card.approved {
+  border-left: 3px solid #10B981;
+}
+
+.ta-card.rejected {
+  border-left: 3px solid #ef4444;
+}
+
+.ta-card.pending {
+  border-left: 3px solid #f59e0b;
+}
+
+.ta-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.ta-user {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.ta-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4F46E5, #818CF8);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.ta-user strong {
+  display: block;
+  color: var(--text, #f9fafb);
+  font-size: 0.9rem;
+}
+
+.ta-user span {
+  display: block;
+  color: var(--text-secondary, #6b7280);
+  font-size: 0.75rem;
+}
+
+.ta-card-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.ta-stars {
+  display: flex;
+  gap: 0.1rem;
+}
+
+.ta-status {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+}
+
+.ta-status.approved {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10B981;
+}
+
+.ta-status.rejected {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.ta-status.pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.ta-text {
+  color: var(--text-secondary, #d1d5db);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin-bottom: 0.75rem;
+}
+
+.ta-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ta-date {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #6b7280);
+}
+
+.ta-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.ta-approve-btn,
+.ta-reject-btn,
+.ta-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  border: none;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ta-approve-btn {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10B981;
+}
+
+.ta-approve-btn:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.25);
+}
+
+.ta-reject-btn {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.ta-reject-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.25);
+}
+
+.ta-delete-btn {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  padding: 0.35rem;
+}
+
+.ta-delete-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.ta-approve-btn:disabled,
+.ta-reject-btn:disabled,
+.ta-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
