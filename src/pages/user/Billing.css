@@ -126,11 +126,18 @@
 .billing-sub-card {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--service-color, var(--primary));
   border-radius: 1rem;
   padding: 1.25rem;
   display: flex;
   align-items: center;
   gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.billing-sub-card-pending {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.05);
 }
 
 .billing-sub-icon {
@@ -148,24 +155,161 @@
 .billing-sub-info {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-start;
 }
 
 .billing-sub-info h4 {
   font-size: 1rem;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0;
   color: var(--secondary);
 }
 
 .billing-sub-info p {
   color: var(--text-muted);
   font-size: 0.875rem;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0;
+}
+
+/* Vencimento do ciclo */
+.billing-sub-due {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.billing-sub-due strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Box de pendência com total e botão de pagamento */
+.billing-sub-pending-box {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+  padding-top: 0.85rem;
+  border-top: 1px dashed rgba(234, 179, 8, 0.35);
+}
+
+.billing-sub-pending-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.billing-sub-pending-total {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--secondary);
+  margin-right: auto;
+}
+
+.billing-sub-pay-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
 }
 
 .billing-sub-price {
   color: var(--primary);
   font-weight: 700;
   font-size: 0.9rem;
+}
+
+/* Escolha de método de pagamento */
+.pay-method-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.pay-method-option {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  font-family: inherit;
+  transition: all 0.2s;
+}
+
+.pay-method-option:hover {
+  border-color: var(--primary);
+}
+
+.pay-method-option.active {
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.08);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+.pay-method-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.pay-method-text strong {
+  font-size: 0.92rem;
+}
+
+.pay-method-text small {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.pay-method-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0.25rem 0;
+}
+
+.pay-method-summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 1rem;
+  padding: 0.85rem 1rem;
+  margin: 1rem 0;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.pay-method-summary span {
+  color: var(--text-muted);
+}
+
+.pay-method-summary strong {
+  text-align: right;
+}
+
+.pay-confirm-btn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.saved-card-row.selected {
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.08);
 }
 
 /* Modal de detalhes */

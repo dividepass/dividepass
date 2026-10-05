@@ -542,39 +542,54 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
     }
 
     const webhookUrl = `${supabaseUrl}/functions/v1/iopay-webhook`;
-    const pixBody: any = {
+    const chargedMethod = isPix ? "pix" : "credit_card";
+    const txBody: any = {
       amount: Math.round(Number(invoice.amount) * 100),
       currency: "BRL",
       description: `Fatura #${invoiceId.slice(0, 8).toUpperCase()}`.substring(0, 50),
       statement_descriptor: "DIVIDEPASS",
       io_seller_id: settings.iopay_seller_id,
-      payment_type: "pix",
+      payment_type: isPix ? "pix" : "credit",
       reference_id: `invoice:${invoiceId}`,
-      payment_method: "pix",
-      notification_url: webhookUrl,
     };
+
+    if (isPix) {
+      txBody.notification_url = webhookUrl;
+    } else {
+      if (!idCard) {
+        return new Response(
+          JSON.stringify({ error: "Nenhum cartao salvo encontrado para pagar esta fatura." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      txBody.capture = true;
+      txBody.installment_plan = { number_installments: 1 };
+      txBody.payment_method = "credit_card";
+      txBody.id_card = idCard;
+    }
 
     try {
       const token = await getToken(settings);
-      const txData = await apiRequest("POST", `v1/transaction/new/${customerId}`, pixBody, token, settings);
+      const txData = await apiRequest("POST", `v1/transaction/new/${customerId}`, txBody, token, settings);
       const txId = txData._txId || extractId(txData);
 
       if (!txId) {
-        return new Response(JSON.stringify({ error: "Transação PIX criada mas sem ID." }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ error: "Transação criada mas sem ID de retorno. Verifique seu pagamento." }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       await supabaseAdmin.from("invoices").update({
         gateway_transaction_id: txId,
-        payment_method: "pix",
+        payment_method: chargedMethod,
       }).eq("id", invoiceId);
 
-      await logAttempt("created", txId, { status: txData.status, payment_method: "pix" });
+      await logAttempt("created", txId, { status: txData.status, payment_method: chargedMethod });
 
       return Response.json({
         success: true,
         gateway: "iopay",
         transaction_id: txId,
         status: txData.status || "pending",
+        payment_method: chargedMethod,
         pix_copy_paste: txData.pix_copy_paste || txData.pix?.copy_paste || txData.qr_code?.copy_paste || null,
         pix_qrcode_url: txData.pix_qrcode_url || txData.pix?.qr_code_url || txData.qr_code?.url || null,
         pix_qrcode: txData.pix_qrcode || txData.pix?.qr_code || txData.qr_code?.base64 || null,
@@ -583,8 +598,8 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
       }, { headers: corsHeaders });
 
     } catch (e: any) {
-      console.error("IOPay PIX invoice error:", e);
-      return Response.json({ error: e.message || "Erro ao criar transação PIX" }, { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      console.error(`IOPay ${chargedMethod} invoice error:`, e);
+      return new Response(JSON.stringify({ error: e.message || `Erro ao criar transação ${chargedMethod}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
   }
 
