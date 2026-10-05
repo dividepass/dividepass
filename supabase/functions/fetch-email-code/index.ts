@@ -238,6 +238,80 @@ function isSubjectAllowed(subject: string, subjectIncludes: string[]): boolean {
 const LINK_KEYWORDS = /(code|c[oó]digo|verify|verifica|confirm|signin|sign-?_?in|login|token|otp|pin|auth|acesso|entrar|access|tv)/i;
 const LINK_BLOCKLIST = /(unsubscribe|opt[-_]?out|descadast|cancel(ar|e)?|remov|preferences|settings|privacy|privacidade|terms|termos|legal|help|ajuda|support|suporte|blog|jobs|careers|giftcard|pagamento|billing|invoice)/i;
 
+// --- E-mails de CONFIRMAÇÃO (não contêm código; exigem clique do usuário) ---
+// Ex.: "Você pediu para atualizar sua residência Netflix?" com botão "Sim, fui eu".
+// O link é de uso único e expira em ~15min: NÃO pode ser acessado pelo servidor,
+// senão o clique do usuário passa a falhar.
+
+const CONFIRM_CTA_TEXT = /(sim,?\s*fui\s*eu|yes,?\s*(it|that)\s+was\s+me|fui\s+eu|foi\s+eu|confirmar|confirme|aprovar|aprovo|ativar|ative|continuar|yes,?\s*i\s+did)/i;
+const CONFIRM_URL_HINTS = /(household|residence|updatehousehold|verifyhousehold|confirm|approve|activate|deviceupdate|update-?device|manage-?devices)/i;
+const CONFIRM_SUBJECT = /(resid[eê]ncia|atualizar\s+(a\s+|sua\s+)?(resid[eê]ncia|conta|acesso)|update\s+your\s+(household|residence)|household)/i;
+const PLATFORM_SENDER = /(netflix|disney\+|disneyplus|max\.com|hbo|primevideo|amazon|spotify|globoplay|paramount|crunchyroll|mubi)/i;
+
+function looksLikeConfirmationEmail(sender: string, subject: string, body: string): boolean {
+  const haystack = `${sender} ${subject} ${body}`;
+  if (!PLATFORM_SENDER.test(haystack)) return false;
+  if (CONFIRM_SUBJECT.test(subject)) return true;
+  return CONFIRM_CTA_TEXT.test(subject) || CONFIRM_CTA_TEXT.test(body);
+}
+
+function normalizeUrl(raw: string): string | null {
+  let url = (raw || "").replace(/=3D/gi, "=").replace(/&amp;/g, "&").trim();
+  url = url.replace(/[)\].,;'"]+$/, "");
+  if (!/^https?:\/\//i.test(url)) return null;
+  if (LINK_BLOCKLIST.test(url)) return null;
+  return url;
+}
+
+// Extrai a URL do BOTÃO de ação, usando o TEXTO da âncora para pontuar.
+// Falls back para <form action>, <button onclick> e URLs soltas no HTML.
+function extractActionLink(html: string, plain: string): string | null {
+  const scored = new Map<string, number>();
+
+  const score = (url: string | null, points: number): void => {
+    if (!url) return;
+    const clean = normalizeUrl(url);
+    if (!clean) return;
+    scored.set(clean, (scored.get(clean) || 0) + points);
+  };
+
+  const bump = (value: number, text: string, href: string): void => {
+    if (CONFIRM_CTA_TEXT.test(text)) value += 4;
+    if (CONFIRM_URL_HINTS.test(href)) value += 3;
+    if (PLATFORM_SENDER.test(href)) value += 1;
+    if (/(btn|button|cta)/i.test(text)) value += 1;
+    score(href, value);
+  };
+
+  // 1) Âncoras com href + texto interno
+  const anchorRe = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]{0,300}?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = anchorRe.exec(html)) !== null) {
+    bump(2, stripHtml(m[2]).replace(/\s+/g, " ").trim(), m[1]);
+  }
+
+  // 2) Formulários (botão submit)
+  const formRe = /<form\b[^>]*action\s*=\s*["']([^"']+)["']/gi;
+  while ((m = formRe.exec(html)) !== null) {
+    score(m[1], 3);
+  }
+
+  // 3) <button onclick="window.location='...'">
+  const onClickRe = /(?:onclick|location(?:\.href)?\s*=\s*)["'][^"']*?(https?:\/\/[^"']+)["']/gi;
+  while ((m = onClickRe.exec(html)) !== null) {
+    bump(2, "", m[1]);
+  }
+
+  // 4) URLs soltas no texto (tracking redirects do próprio e-mail)
+  const bareRe = /https?:\/\/[^\s<>"')]+/g;
+  while ((m = bareRe.exec(plain)) !== null) {
+    score(m[0], 1);
+  }
+
+  if (scored.size === 0) return null;
+  return [...scored.entries()].sort((a, b) => b[1] - a[1])[0][0];
+}
+
 function extractCandidateLinks(html: string, plain: string): string[] {
   const found = new Map<string, number>();
   const add = (rawUrl: string, baseScore: number) => {
@@ -730,9 +804,37 @@ export default {
         }
 
         if (!resultCode) {
+          // E-mails de CONFIRMAÇÃO (ex.: "atualizar sua residência Netflix", botão "Sim, fui eu").
+          // O link é de uso único e expira em ~15min: NÃO acessamos o servidor para não "queimar"
+          // o link. Entregamos a URL pro usuário clicar.
+          for (const email of emailBodies.slice(0, 3)) {
+            if (!looksLikeConfirmationEmail(email.sender, email.subject, email.body)) continue;
+            const actionLink = extractActionLink(email.html || "", email.body || "");
+            if (!actionLink) continue;
+
+            console.log(`[fetch-email-code] E-mail de confirmação detectado (${email.subject}) — devolvendo link para clique`);
+            return Response.json({
+              code: null,
+              requires_manual_action: true,
+              manual_action_type: "confirm_household",
+              manual_action_url: actionLink,
+              manual_action_label: "Abrir e confirmar na Netflix",
+              manual_action_note: "Clique no botão, aprove a solicitação e o acesso é liberado na TV. O link expira em poucos minutos.",
+              message: "A Netflix enviou uma confirmação para approve o acesso em vez de um código. Clique no botão abaixo para ativar a TV.",
+              sender: email.sender,
+              subject: email.subject,
+              received_at: email.date || new Date().toISOString(),
+            }, { headers: corsHeaders });
+          }
+        }
+
+        if (!resultCode) {
           console.log(`[fetch-email-code] Nenhum código no corpo dos e-mails. Tentando seguir links/botões...`);
           linkLoop:
           for (const email of emailBodies.slice(0, 5)) {
+            // Link de confirmação não pode ser acessado pelo servidor (uso único)
+            if (looksLikeConfirmationEmail(email.sender, email.subject, email.body)) continue;
+
             const links = extractCandidateLinks(email.html || "", email.body || "");
             if (links.length === 0) continue;
             console.log(`[fetch-email-code] ${links.length} links candidatos no email de ${email.sender}`);

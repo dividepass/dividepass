@@ -49,6 +49,7 @@ function ServiceCredentials() {
   const [cooldown, setCooldown] = useState(0);
   const [paymentStatus, setPaymentStatus] = useState(null);
   const [showContactModal, setShowContactModal] = useState(false);
+  const [manualAction, setManualAction] = useState(null); // { url, message, type }
 
   const [verifiedAccess, setVerifiedAccess] = useState(null);
   const [verifyingAccess, setVerifyingAccess] = useState(true);
@@ -168,7 +169,7 @@ function ServiceCredentials() {
     try {
       const { data } = await supabase
         .from('verification_pins')
-        .select('code, source_email, created_at')
+        .select('code, source_email, created_at, manual_action_url, manual_action_label, manual_action_note')
         .eq('group_id', activeService.group.id)
         .eq('used', false)
         .gt('expires_at', new Date().toISOString())
@@ -176,7 +177,20 @@ function ServiceCredentials() {
         .limit(1)
         .maybeSingle();
 
-      if (data) {
+      if (data?.manual_action_url) {
+        setManualAction({
+          url: data.manual_action_url,
+          message: 'Este serviço enviou uma confirmação em vez de um código. Abra o link para ativar o acesso.',
+          note: data.manual_action_note || 'O link expira em poucos minutos.',
+          label: data.manual_action_label || 'Abrir e confirmar',
+          type: 'confirm_household',
+          sender: data.source_email || '',
+          subject: '',
+          received_at: data.created_at,
+        });
+        setVerificationCode(null);
+        setCodeMessage('');
+      } else if (data?.code) {
         setVerificationCode({
           code: data.code,
           sender: data.source_email || '',
@@ -197,7 +211,7 @@ function ServiceCredentials() {
       try {
         const { data } = await supabase
           .from('verification_pins')
-          .select('code, source_email, created_at')
+          .select('code, source_email, created_at, manual_action_url, manual_action_label, manual_action_note')
           .eq('group_id', activeService.group.id)
           .eq('used', false)
           .gt('expires_at', new Date().toISOString())
@@ -205,7 +219,20 @@ function ServiceCredentials() {
           .limit(1)
           .maybeSingle();
 
-        if (data) {
+        if (data?.manual_action_url) {
+          setManualAction({
+            url: data.manual_action_url,
+            message: 'Este serviço enviou uma confirmação em vez de um código. Abra o link para ativar o acesso.',
+            note: data.manual_action_note || 'O link expira em poucos minutos.',
+            label: data.manual_action_label || 'Abrir e confirmar',
+            type: 'confirm_household',
+            sender: data.source_email || '',
+            subject: '',
+            received_at: data.created_at,
+          });
+          setVerificationCode(null);
+          setCodeMessage('');
+        } else if (data?.code) {
           setVerificationCode({
             code: data.code,
             sender: data.source_email || '',
@@ -233,7 +260,25 @@ function ServiceCredentials() {
         },
         (payload) => {
           const pin = payload.new;
-          if (pin && !pin.used && new Date(pin.expires_at) > new Date()) {
+          if (!pin || pin.used || !(new Date(pin.expires_at) > new Date())) return;
+
+          if (pin.manual_action_url) {
+            setManualAction({
+              url: pin.manual_action_url,
+              message: 'Este serviço enviou uma confirmação em vez de um código. Abra o link para ativar o acesso.',
+              note: pin.manual_action_note || 'O link expira em poucos minutos.',
+              label: pin.manual_action_label || 'Abrir e confirmar',
+              type: 'confirm_household',
+              sender: pin.source_email || '',
+              subject: '',
+              received_at: pin.created_at,
+            });
+            setVerificationCode(null);
+            setCodeMessage('');
+            return;
+          }
+
+          if (pin.code) {
             setVerificationCode({
               code: pin.code,
               sender: pin.source_email || '',
@@ -273,6 +318,7 @@ function ServiceCredentials() {
     setCodeMessage('');
     setVerificationCode(null);
     setSensitiveWarning(null);
+    setManualAction(null);
     setCooldown(40);
 
     try {
@@ -309,6 +355,21 @@ function ServiceCredentials() {
         });
         setVerificationCode(null);
         setCodeMessage('');
+      } else if (json.requires_manual_action) {
+        // Netflix ou outro serviço que exige clique no link (ex.: "Sim, fui eu")
+        setManualAction({
+          url: json.manual_action_url,
+          message: json.message || 'Este serviço enviou uma confirmação em vez de um código. Clique no botão abaixo para ativar o acesso.',
+          note: json.manual_action_note || '',
+          label: json.manual_action_label || 'Abrir e confirmar',
+          type: json.manual_action_type || 'generic',
+          sender: json.sender || '',
+          subject: json.subject || '',
+          received_at: json.received_at || new Date().toISOString(),
+        });
+        setVerificationCode(null);
+        setCodeMessage('');
+        setSensitiveWarning(null);
       } else if (json.code) {
         setVerificationCode({
           code: json.code,
@@ -319,9 +380,11 @@ function ServiceCredentials() {
         });
         setCodeMessage('');
         setSensitiveWarning(null);
+        setManualAction(null);
       } else {
         setCodeMessage(json.message || 'Nenhum código encontrado');
         setSensitiveWarning(null);
+        setManualAction(null);
       }
     } catch (err) {
       setCodeMessage(`Erro ao conectar: ${err.message}`);
@@ -767,6 +830,39 @@ function ServiceCredentials() {
                     <div className="verification-code-empty">
                       <AlertTriangle size={18} />
                       <span>{codeMessage}</span>
+                    </div>
+                  )}
+
+                  {manualAction && (
+                    <div className="manual-action-card">
+                      <div className="manual-action-icon">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <rect width="24" height="24" rx="4" fill="#E50914"/>
+                          <path d="M6.5 16.5V7.5L17.5 12L6.5 16.5Z" fill="white"/>
+                        </svg>
+                      </div>
+                      <div className="manual-action-content">
+                        <span className="manual-action-title">
+                          {manualAction.type === 'confirm_household' || manualAction.type === 'netflix_verify_link'
+                            ? 'Confirmação necessária'
+                            : 'Ação necessária'}
+                        </span>
+                        <span className="manual-action-desc">
+                          {manualAction.message}
+                        </span>
+                        <a
+                          href={manualAction.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-primary manual-action-btn"
+                        >
+                          <ExternalLink size={16} />
+                          {manualAction.label}
+                        </a>
+                        <p className="manual-action-hint">
+                          {manualAction.note || 'Abra o link em uma nova aba e conclua a ação para liberar o acesso.'}
+                        </p>
+                      </div>
                     </div>
                   )}
 

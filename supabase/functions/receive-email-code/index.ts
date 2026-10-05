@@ -94,7 +94,16 @@ export default {
       }
 
       const body = await req.json();
-      const { recipient, code: rawCode, sender, subject, body: emailBody } = body;
+      const {
+        recipient,
+        code: rawCode,
+        sender,
+        subject,
+        body: emailBody,
+        manual_action_url,
+        manual_action_label,
+        manual_action_note,
+      } = body;
 
       if (!recipient) {
         return new Response(
@@ -148,6 +157,45 @@ export default {
         ];
         const result = extractCode(emailBody, blockedSubjects);
         foundCode = result.code;
+      }
+
+      // E-mail de confirmação sem código: entrega a URL pro usuário clicar.
+      // O link é de uso único — nunca acessado pelo servidor.
+      if (!foundCode && manual_action_url) {
+        const { error: insertError } = await supabaseAdmin
+          .from("verification_pins")
+          .insert({
+            group_id: group.id,
+            code: null,
+            source_email: foundSender || null,
+            manual_action_url,
+            manual_action_label: manual_action_label || "Abrir e confirmar",
+            manual_action_note: manual_action_note || null,
+            used: false,
+            expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+          });
+
+        if (insertError) {
+          console.error("Failed to save manual action:", insertError);
+          return new Response(
+            JSON.stringify({ error: "Failed to save action link" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+
+        console.log(`Action link saved for group ${group.id}: ${manual_action_url}`);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            group_id: group.id,
+            requires_manual_action: true,
+            manual_action_url,
+            sender: foundSender,
+            subject: foundSubject,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
 
       if (!foundCode) {
