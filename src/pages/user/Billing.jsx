@@ -357,18 +357,19 @@ function Billing() {
                     <div className="billing-sub-icon" style={{ backgroundColor: sub.service?.color || '#4F46E5' }}>
                       {sub.service?.icon || 'S'}
                     </div>
-                    <div className="billing-sub-info">
-                      <h4>{sub.service?.name || sub.service?.full_name || 'Serviço'}</h4>
-                      <p>{sub.group?.name || 'Grupo'}</p>
-                      <span className="billing-sub-price">{formatCurrency(sub.amount)}/mês</span>
-
-                      <div className="billing-sub-due">
-                        <Calendar size={13} />
-                        <span>
-                          Vencimento: <strong>{formatDate(dueDate)}</strong>
-                        </span>
+                    <div className="billing-sub-head">
+                      <div className="billing-sub-head-text">
+                        <h4>{sub.service?.name || sub.service?.full_name || 'Serviço'}</h4>
+                        <p>{sub.group?.name || 'Grupo'}</p>
                       </div>
+                      <span className="billing-sub-price">{formatCurrency(sub.amount)}<small>/mês</small></span>
+                    </div>
 
+                    <div className="billing-sub-meta">
+                      <span className="billing-sub-due">
+                        <Calendar size={13} />
+                        Vencimento <strong>{formatDate(dueDate)}</strong>
+                      </span>
                       <span className={`status-badge ${isPending ? (isOverdue ? 'vencido' : 'pendente') : 'pago'}`}>
                         {isPending ? (isOverdue ? 'Vencida' : 'Pendente') : 'Paga'}
                       </span>
