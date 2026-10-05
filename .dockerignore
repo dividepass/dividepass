@@ -1,0 +1,29 @@
+node_modules
+dist
+dist-ssr
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.vercel
+.vercel_token
+
+# credenciais / supabase CLI (backend não faz parte da imagem do front)
+supabase
+database
+scripts
+
+# scripts de debug leftovers
+*.cjs
+*.ps1
+test-smtp.ts
+check-build.js
+
+Dockerfile
+.dockerignore
+nginx.conf
+static.json
+README.md
+DEPLOYMENT.md
+DEPLOY-DOKPLOY.md

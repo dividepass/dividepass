@@ -1,0 +1,25 @@
+{
+  "root": "dist",
+  "clean_urls": true,
+  "https_only": true,
+  "routes": [
+    {
+      "src": "/assets/(.*)",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      },
+      "continue": true
+    },
+    {
+      "src": "/(sw\\.js|index\\.html)",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      },
+      "continue": true
+    },
+    {
+      "src": "/*",
+      "dest": "/index.html"
+    }
+  ]
+}
