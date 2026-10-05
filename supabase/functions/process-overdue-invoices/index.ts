@@ -22,13 +22,29 @@ export default {
     }
 
     const authHeader = req.headers.get("authorization") || "";
-    const expectedSecret = Deno.env.get("OVERDUE_CRON_SECRET") ?? "";
     const serviceRoleKey = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
 
-    // Aceita: OVERDUE_CRON_SECRET, SERVICE_ROLE_KEY, ou JWT válido
-    const isCronSecret = authHeader === `Bearer ${expectedSecret}`;
-    const isServiceRole = authHeader === `Bearer ${serviceRoleKey}`;
-    const hasValidAuth = authHeader.startsWith("Bearer ") && (isCronSecret || isServiceRole);
+    let hasValidAuth = authHeader === `Bearer ${serviceRoleKey}`;
+
+    if (!hasValidAuth) {
+      // O cron envia o segredo de app_settings, que não é JWT e por isso é
+      // barrado no gateway. A validação real acontece aqui dentro.
+      const { data: secretRows } = await createClient(
+        Deno.env.get("SUPABASE_URL") ?? "",
+        serviceRoleKey,
+      ).from("app_settings").select("value").in("key", [
+        "overdue_cron_secret",
+        "recurring_billing_cron_secret",
+      ]);
+
+      const accepted = [
+        Deno.env.get("OVERDUE_CRON_SECRET") ?? "",
+        ...(secretRows || []).map((r: any) => r.value || ""),
+      ].filter(Boolean);
+
+      const provided = authHeader.replace(/^Bearer\s+/i, "").trim();
+      hasValidAuth = !!provided && accepted.includes(provided);
+    }
 
     if (!hasValidAuth) {
       return new Response(

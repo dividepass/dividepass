@@ -354,17 +354,34 @@ export default {
       return new Response("ok", { headers: corsHeaders });
     }
 
-    const authHeader = req.headers.get("Authorization");
-    const cronSecret = Deno.env.get("BILLING_CRON_SECRET") || "";
+    const authHeader = req.headers.get("Authorization") || "";
     const serviceRoleKey = Deno.env.get("SERVICE_ROLE_KEY") || "";
 
-    const isValidAuth = (cronSecret && authHeader === `Bearer ${cronSecret}`)
-      || (serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`);
-    if (!isValidAuth) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (authHeader === `Bearer ${serviceRoleKey}`) {
+      // acesso interno legítimo
+    } else {
+      // O cron envia o segredo guardado em app_settings, não um JWT. O gateway
+      // rejeita tokens que não são JWT, então a validação real acontece aqui.
+      const { data: secretRows } = await createClient(
+        Deno.env.get("SUPABASE_URL") ?? "",
+        serviceRoleKey,
+      ).from("app_settings").select("value").in("key", [
+        "recurring_billing_cron_secret",
+        "billing_cron_secret",
+      ]);
+
+      const accepted = [
+        Deno.env.get("BILLING_CRON_SECRET") || "",
+        ...(secretRows || []).map((r: any) => r.value || ""),
+      ].filter(Boolean);
+
+      const provided = (authHeader || "").replace(/^Bearer\s+/i, "").trim();
+      if (!provided || !accepted.includes(provided)) {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";

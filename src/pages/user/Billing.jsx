@@ -49,7 +49,7 @@ function Billing() {
           .limit(50),
         supabase
           .from('invoices')
-          .select('id, group_id, amount, due_date, status, paid_at, created_at, payment_method, gateway_transaction_id')
+          .select('id, group_id, amount, due_date, status, paid_at, created_at, gateway_transaction_id')
           .eq('user_id', user.id)
           .order('due_date', { ascending: true }),
       ]);
@@ -114,7 +114,12 @@ function Billing() {
 
   // Estado de cobrança de cada assinatura, derivado das faturas do grupo.
   // A fatura é a fonte da verdade: tem due_date (vencimento) e status.
+  // O enum invoices.status não tem 'overdue', então "Vencida" é derivado
+  // da comparação entre due_date e a data de hoje.
   const billingByGroup = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     const map = {};
     for (const inv of invoices) {
       if (!inv.group_id) continue;
@@ -123,20 +128,23 @@ function Billing() {
     }
     for (const groupId of Object.keys(map)) {
       const list = map[groupId];
-      const pending = list
-        .filter((i) => i.status === 'pending' || i.status === 'overdue')
+      // 'failed' também representa cobrança que não deu certo
+      const open = list
+        .filter((i) => i.status === 'pending' || i.status === 'failed')
         .sort((a, b) => new Date(a.due_date || 0) - new Date(b.due_date || 0));
       const paid = list
         .filter((i) => i.status === 'paid')
         .sort((a, b) => new Date(b.due_date || b.paid_at || 0) - new Date(a.due_date || a.paid_at || 0));
 
-      if (pending.length > 0) {
+      if (open.length > 0) {
+        const earliest = open[0];
+        const isOverdue = !!earliest.due_date && new Date(`${earliest.due_date}T00:00:00`) < today;
         map[groupId] = {
-          status: pending.some((i) => i.status === 'overdue') ? 'overdue' : 'pending',
-          dueDate: pending[0].due_date,
-          total: pending.reduce((sum, i) => sum + Number(i.amount || 0), 0),
-          count: pending.length,
-          invoices: pending,
+          status: isOverdue ? 'overdue' : 'pending',
+          dueDate: earliest.due_date,
+          total: open.reduce((sum, i) => sum + Number(i.amount || 0), 0),
+          count: open.length,
+          invoices: open,
         };
       } else if (paid.length > 0) {
         map[groupId] = {
@@ -327,8 +335,18 @@ function Billing() {
             <div className="billing-subscriptions-grid">
               {activeSubscriptions.map((sub) => {
                 const billing = billingByGroup[sub.group_id] || null;
-                const isPending = billing && (billing.status === 'pending' || billing.status === 'overdue');
+                const nextCharge = sub.next_charge_at ? new Date(sub.next_charge_at) : null;
+                const cycleDue = !!nextCharge && nextCharge <= new Date();
+
+                // Sem fatura mas com ciclo vencido: a cobrança não foi gerada.
+                // Mostramos como pendente usando o valor da assinatura.
+                const isPending = billing
+                  ? billing.status === 'pending' || billing.status === 'overdue'
+                  : cycleDue;
+                const isOverdue = billing ? billing.status === 'overdue' : cycleDue;
                 const dueDate = billing?.dueDate || sub.next_charge_at || sub.expires_at;
+                const total = billing ? billing.total : Number(sub.amount || 0);
+                const canPay = !!billing?.invoices?.length;
 
                 return (
                   <div
@@ -351,26 +369,32 @@ function Billing() {
                         </span>
                       </div>
 
-                      <span className={`status-badge ${isPending ? (billing.status === 'overdue' ? 'vencido' : 'pendente') : 'pago'}`}>
-                        {isPending ? (billing.status === 'overdue' ? 'Vencida' : 'Pendente') : 'Paga'}
+                      <span className={`status-badge ${isPending ? (isOverdue ? 'vencido' : 'pendente') : 'pago'}`}>
+                        {isPending ? (isOverdue ? 'Vencida' : 'Pendente') : 'Paga'}
                       </span>
                     </div>
 
                     {isPending && (
                       <div className="billing-sub-pending-box">
                         <span className="billing-sub-pending-label">
-                          {billing.count > 1
+                          {billing?.count > 1
                             ? `${billing.count} faturas em aberto`
                             : 'Total a pagar'}
                         </span>
-                        <span className="billing-sub-pending-total">{formatCurrency(billing.total)}</span>
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm billing-sub-pay-btn"
-                          onClick={() => openPaymentModal(billing, sub)}
-                        >
-                          <Wallet size={14} /> Pagar agora!
-                        </button>
+                        <span className="billing-sub-pending-total">{formatCurrency(total)}</span>
+                        {canPay ? (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm billing-sub-pay-btn"
+                            onClick={() => openPaymentModal(billing, sub)}
+                          >
+                            <Wallet size={14} /> Pagar agora!
+                          </button>
+                        ) : (
+                          <span className="billing-sub-pending-note">
+                            Cobrança ainda não gerada — contate o administrador do grupo
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
