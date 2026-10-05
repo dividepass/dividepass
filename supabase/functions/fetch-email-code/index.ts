@@ -769,6 +769,35 @@ export default {
           return db - da;
         });
 
+        // ETAPA 1 (prioridade máxima): e-mails de CONFIRMAÇÃO.
+        // Ex.: "Importante: Como atualizar sua residência Netflix", botão "Sim, fui eu".
+        // Esses e-mails NÃO têm código: o link é de uso único e expira em ~15min, então
+        // nunca deve ser acessado pelo servidor. É preciso rodar ANTES da IA e do regex,
+        // porque ambos podem devolver um código falso (o nftoken da URL tem vários
+        // dígitos) ou um código antigo de um e-mail "seu código de acesso" anterior.
+        for (const email of emailBodies) {
+          if (!looksLikeConfirmationEmail(email.sender, email.subject, email.body)) continue;
+          const actionLink = extractActionLink(email.html || "", email.body || "");
+          if (!actionLink) {
+            console.log(`[fetch-email-code] E-mail de confirmação sem link utilizável: ${email.subject}`);
+            continue;
+          }
+
+          console.log(`[fetch-email-code] Confirmação detectada — link entregue ao usuário: ${actionLink.slice(0, 90)}...`);
+          return Response.json({
+            code: null,
+            requires_manual_action: true,
+            manual_action_type: "confirm_household",
+            manual_action_url: actionLink,
+            manual_action_label: "Abrir e confirmar na Netflix",
+            manual_action_note: "Clique no botão, aprove a solicitação e o acesso é liberado na TV. O link expira em 15 minutos.",
+            message: "A Netflix enviou uma confirmação de acesso em vez de um código. Clique no botão abaixo para aprovar e ativar a TV.",
+            sender: email.sender,
+            subject: email.subject,
+            received_at: email.date || new Date().toISOString(),
+          }, { headers: corsHeaders });
+        }
+
         if (groupConfig.email_ai_enabled && groqApiKey && emailBodies.length > 0) {
           const aiEmails = emailBodies.slice(0, 3);
           console.log(`[fetch-email-code] IA habilitada, processando ${aiEmails.length} emails mais recentes com Groq...`);
@@ -806,31 +835,6 @@ export default {
               sensitiveMessage = result.sensitiveMessage || "";
               break;
             }
-          }
-        }
-
-        if (!resultCode) {
-          // E-mails de CONFIRMAÇÃO (ex.: "atualizar sua residência Netflix", botão "Sim, fui eu").
-          // O link é de uso único e expira em ~15min: NÃO acessamos o servidor para não "queimar"
-          // o link. Entregamos a URL pro usuário clicar.
-          for (const email of emailBodies.slice(0, 3)) {
-            if (!looksLikeConfirmationEmail(email.sender, email.subject, email.body)) continue;
-            const actionLink = extractActionLink(email.html || "", email.body || "");
-            if (!actionLink) continue;
-
-            console.log(`[fetch-email-code] E-mail de confirmação detectado (${email.subject}) — devolvendo link para clique`);
-            return Response.json({
-              code: null,
-              requires_manual_action: true,
-              manual_action_type: "confirm_household",
-              manual_action_url: actionLink,
-              manual_action_label: "Abrir e confirmar na Netflix",
-              manual_action_note: "Clique no botão, aprove a solicitação e o acesso é liberado na TV. O link expira em poucos minutos.",
-              message: "A Netflix enviou uma confirmação para approve o acesso em vez de um código. Clique no botão abaixo para ativar a TV.",
-              sender: email.sender,
-              subject: email.subject,
-              received_at: email.date || new Date().toISOString(),
-            }, { headers: corsHeaders });
           }
         }
 
