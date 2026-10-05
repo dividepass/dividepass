@@ -1,0 +1,153 @@
+.sac-container {
+  width: 100%;
+}
+
+.sac-viewport {
+  overflow: hidden;
+  border-radius: 1rem;
+}
+
+.sac-track {
+  display: flex;
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sac-page {
+  flex: 0 0 100%;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  min-width: 0;
+}
+
+.sac-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.25rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--service-color, var(--primary));
+  border-radius: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.sac-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--primary);
+  border-left-color: var(--service-color, var(--primary));
+  box-shadow: 0 6px 16px -4px rgba(79, 70, 229, 0.25);
+}
+
+.sac-card-logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  font-size: 1.25rem;
+}
+
+.sac-card-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sac-card-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.sac-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.65rem;
+  color: var(--success);
+  font-weight: 600;
+}
+
+.sac-card-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+
+.sac-dots {
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.sac-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: all 0.3s;
+  cursor: pointer;
+  border: none;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sac-dot:hover {
+  background: rgba(79, 70, 229, 0.5);
+}
+
+.sac-dot.active {
+  background: var(--primary);
+  transform: scale(1.4);
+}
+
+@media (max-width: 640px) {
+  .sac-page {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+
+  .sac-card {
+    padding: 0.75rem 0.35rem;
+    gap: 0.35rem;
+  }
+
+  .sac-card-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+  }
+
+  .sac-card-name {
+    font-size: 0.7rem;
+  }
+
+  .sac-card-status {
+    font-size: 0.6rem;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 900px) {
+  .sac-page {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.625rem;
+  }
+}

@@ -1,11 +1,12 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Search, ChevronLeft, ChevronRight, X, Pin, Star, Download, Smartphone, CheckCircle2, MessageSquare, TrendingUp, ChevronDown, AlertCircle, Info } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
 import { supabase } from '../../lib/supabase';
 import ServicesCarousel from '../../components/ServicesCarousel';
+import SubscriptionsCarousel from '../../components/SubscriptionsCarousel';
 import { calculateUserSavings, getSavingsSummary, getAdminAlerts, fmtPercentage } from '../../utils/savingsService';
 import './UserDashboard.css';
 
@@ -42,7 +43,6 @@ const CATEGORY_KEYWORDS = {
   seguranca: ['seguranca', 'vpn', 'senha', 'senhas', 'nordvpn', 'surfshark', 'bitwarden', '1password', 'protecao'],
 };
 
-const MAX_HOME_SUBSCRIPTIONS = 6;
 
 // ── Componente: linha de comparativo por serviço ──────────────────────
 function SavingsServiceRow({ item, unavailable, expandedId, onToggle }) {
@@ -145,7 +145,6 @@ function SavingsServiceRow({ item, unavailable, expandedId, onToggle }) {
 }
 
 function UserDashboard() {
-  const navigate = useNavigate();
   const { profile } = useAuth();
   const { currentUser, getActiveServices, getAvailableServices, isSubscribedToService, announcements, dismissAnnouncement, groups, streamingServices } = useAppDataContext();
   const { isStandalone, promptInstall } = usePwaInstall();
@@ -356,9 +355,6 @@ function UserDashboard() {
     setHideInstallCard(checked);
     localStorage.setItem('hide_dashboard_install_card', checked ? '1' : '0');
   };
-
-  const visibleActiveServices = activeServicesAll.slice(0, MAX_HOME_SUBSCRIPTIONS);
-  const hasMoreSubscriptions = activeServicesAll.length > MAX_HOME_SUBSCRIPTIONS;
   const availableServices = getAvailableServices();
   const hasActiveServices = activeServicesAll.length > 0;
   const shouldShowTestimonialCard = testimonialCheckDone && !hasTestimonial && !hideTestimonialCard;
@@ -469,6 +465,24 @@ function UserDashboard() {
         <p>{hasActiveServices ? 'Aqui está o resumo das suas assinaturas ativas.' : 'Escolha um serviço no catálogo para começar.'}</p>
       </div>
 
+      {/* Minhas Assinaturas — primeiro, com scroll horizontal automático */}
+      {hasActiveServices && (
+        <section className="active-services-section">
+          <div className="section-title-row">
+            <div>
+              <h2>Minhas Assinaturas</h2>
+              <p className="section-subtitle">Os serviços que você tem ativo agora</p>
+            </div>
+          </div>
+
+          <SubscriptionsCarousel items={activeServicesAll} />
+
+          <Link to="/dashboard/credentials" className="view-all-link">
+            Ver todas as {activeServicesAll.length} assinaturas
+          </Link>
+        </section>
+      )}
+
       {/* Grupos Disponíveis */}
       <section className="available-groups-section">
         <div className="section-title-row">
@@ -484,116 +498,116 @@ function UserDashboard() {
       {paymentsLoaded && hasActiveServices && hasAnyData && (
         <section className="savings-comp-section">
           <div className="savings-comp-header">
-            <h2 className="savings-comp-title">Quanto você está economizando</h2>
-            <p className="savings-comp-subtitle">
-              Compare o preço das assinaturas diretamente nas plataformas com o que você paga na DividePass.
-            </p>
+            <div>
+              <h2 className="savings-comp-title">Quanto você está economizando</h2>
+              {!showSavingsBreakdown && (
+                <p className="savings-comp-subtitle">
+                  Compare o preço das assinaturas diretamente nas plataformas com o que você paga na DividePass.
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              className="savings-expand-toggle"
+              onClick={() => setShowSavingsBreakdown(v => !v)}
+              aria-expanded={showSavingsBreakdown}
+            >
+              {showSavingsBreakdown ? 'Mostrar menos ▲' : 'Clique aqui e saiba mais ▼'}
+            </button>
           </div>
 
-          {/* Resumo principal — 3 perguntas respondidas */}
-          {summary.hasValidData && (
-            <div className="savings-summary-card">
-              <div className="savings-summary-row">
-                <div className="savings-summary-col">
-                  <span className="savings-summary-q">Quanto eu pagaria sozinho?</span>
-                  <span className="savings-summary-original">{fmtBRL(summary.totalOfficialMonthly)}<small>/mês</small></span>
-                </div>
-                <div className="savings-summary-vs">vs</div>
-                <div className="savings-summary-col">
-                  <span className="savings-summary-q">Quanto pago na DividePass?</span>
-                  <span className="savings-summary-dp">{fmtBRL(summary.totalDividePassMonthly)}<small>/mês</small></span>
-                </div>
-                <div className="savings-summary-divider" />
-                <div className="savings-summary-col savings-col-highlight">
-                  <span className="savings-summary-q savings-q-highlight">Minha economia</span>
-                  <span className="savings-summary-savings">{fmtBRL(summary.monthlySavings)}<small>/mês</small></span>
-                </div>
+          {/* Colapsado: só o número principal, sem poluir a visão */}
+          {!showSavingsBreakdown && summary.hasValidData && (
+            <button
+              type="button"
+              className="savings-collapsed-card"
+              onClick={() => setShowSavingsBreakdown(true)}
+            >
+              <div className="savings-collapsed-item">
+                <span className="savings-collapsed-label">Economia por mês</span>
+                <span className="savings-collapsed-value">
+                  {fmtBRL(summary.monthlySavings)}<small>/mês</small>
+                </span>
               </div>
-              <div className="savings-summary-footer">
-                <span className="savings-summary-pct">{fmtPercentage(summary.savingsPercentage)} de economia</span>
-                <span className="savings-summary-annual">R$ {fmtBRL(summary.annualSavings).replace('R$ ', '')} em 12 meses</span>
-              </div>
-            </div>
+              <div className="savings-collapsed-pct">{fmtPercentage(summary.savingsPercentage)} de economia</div>
+            </button>
           )}
 
-          {/* Breakdown por serviço — mobile: cards | desktop: inline */}
-          <div className="savings-comp-list">
-            {visibleSavings.map(item => (
-              <SavingsServiceRow
-                key={item.subscriptionId}
-                item={item}
-                expandedId={expandedServiceId}
-                onToggle={(id) => setExpandedServiceId(expandedServiceId === id ? null : id)}
-              />
-            ))}
+          {showSavingsBreakdown && (
+            <>
+              {/* Resumo principal — 3 perguntas respondidas */}
+              {summary.hasValidData && (
+                <div className="savings-summary-card">
+                  <div className="savings-summary-row">
+                    <div className="savings-summary-col">
+                      <span className="savings-summary-q">Quanto eu pagaria sozinho?</span>
+                      <span className="savings-summary-original">{fmtBRL(summary.totalOfficialMonthly)}<small>/mês</small></span>
+                    </div>
+                    <div className="savings-summary-vs">vs</div>
+                    <div className="savings-summary-col">
+                      <span className="savings-summary-q">Quanto pago na DividePass?</span>
+                      <span className="savings-summary-dp">{fmtBRL(summary.totalDividePassMonthly)}<small>/mês</small></span>
+                    </div>
+                    <div className="savings-summary-divider" />
+                    <div className="savings-summary-col savings-col-highlight">
+                      <span className="savings-summary-q savings-q-highlight">Minha economia</span>
+                      <span className="savings-summary-savings">{fmtBRL(summary.monthlySavings)}<small>/mês</small></span>
+                    </div>
+                  </div>
+                  <div className="savings-summary-footer">
+                    <span className="savings-summary-pct">{fmtPercentage(summary.savingsPercentage)} de economia</span>
+                    <span className="savings-summary-annual">R$ {fmtBRL(summary.annualSavings).replace('R$ ', '')} em 12 meses</span>
+                  </div>
+                </div>
+              )}
 
-            {hasMoreSavings && (
-              <button
-                className="savings-show-more-btn"
-                onClick={() => setShowAllSavings(v => !v)}
-              >
-                {showAllSavings
-                  ? 'Ver menos ▲'
-                  : `Ver mais ${savingsData.subscriptions.length - 3} serviços ▼`}
-              </button>
-            )}
-
-            {savingsData.unavailable.length > 0 && (
-              <div className="savings-unavailable-group">
-                <p className="savings-unavailable-label">
-                  Sem preço de referência — não entram no cálculo
-                </p>
-                {savingsData.unavailable.map(item => (
+              {/* Breakdown por serviço — mobile: cards | desktop: inline */}
+              <div className="savings-comp-list">
+                {visibleSavings.map(item => (
                   <SavingsServiceRow
                     key={item.subscriptionId}
                     item={item}
-                    unavailable
                     expandedId={expandedServiceId}
                     onToggle={(id) => setExpandedServiceId(expandedServiceId === id ? null : id)}
                   />
                 ))}
+
+                {hasMoreSavings && (
+                  <button
+                    className="savings-show-more-btn"
+                    onClick={() => setShowAllSavings(v => !v)}
+                  >
+                    {showAllSavings
+                      ? 'Ver menos ▲'
+                      : `Ver mais ${savingsData.subscriptions.length - 3} serviços ▼`}
+                  </button>
+                )}
+
+                {savingsData.unavailable.length > 0 && (
+                  <div className="savings-unavailable-group">
+                    <p className="savings-unavailable-label">
+                      Sem preço de referência — não entram no cálculo
+                    </p>
+                    {savingsData.unavailable.map(item => (
+                      <SavingsServiceRow
+                        key={item.subscriptionId}
+                        item={item}
+                        unavailable
+                        expandedId={expandedServiceId}
+                        onToggle={(id) => setExpandedServiceId(expandedServiceId === id ? null : id)}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* Disclaimer */}
-          <div className="savings-disclaimer">
-            <Info size={11} />
-            <span>Comparação baseada nos preços oficiais dos serviços no Brasil — pode variar conforme plano, impostos ou promoções.</span>
-          </div>
-        </section>
-      )}
-
-      {hasActiveServices && (
-        <section className="active-services-section">
-          <div className="section-title-row">
-            <h2>Minhas Assinaturas</h2>
-          </div>
-
-          <div className="home-subscriptions-grid">
-            {visibleActiveServices.map(({ service, group }) => (
-              <button
-                key={group.id}
-                className="home-sub-card"
-                onClick={() => navigate(`/dashboard/credentials/${service.slug || service.id}?group=${group.id}`)}
-                style={{ '--service-color': service.color }}
-              >
-                <div className="home-sub-logo" style={{ backgroundColor: service.color }}>
-                  {service.icon_url ? (
-                    <img src={service.icon_url} alt={service.name} />
-                  ) : (
-                    service.icon
-                  )}
-                </div>
-                <span className="home-sub-name">{service.fullName || service.name}</span>
-                <span className="home-sub-status">● Ativo</span>
-              </button>
-            ))}
-          </div>
-
-          <Link to="/dashboard/credentials" className="view-all-link">
-            Ver todas as {activeServicesAll.length} assinaturas
-          </Link>
+              {/* Disclaimer */}
+              <div className="savings-disclaimer">
+                <Info size={11} />
+                <span>Comparação baseada nos preços oficiais dos serviços no Brasil — pode variar conforme plano, impostos ou promoções.</span>
+              </div>
+            </>
+          )}
         </section>
       )}
 

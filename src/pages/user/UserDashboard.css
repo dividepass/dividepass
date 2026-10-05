@@ -1635,6 +1635,87 @@
   margin: 0;
 }
 
+/* Toggle "clique aqui e saiba mais" */
+.savings-expand-toggle {
+  align-self: flex-start;
+  margin-top: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(79, 70, 229, 0.08);
+  border: 1px solid rgba(79, 70, 229, 0.3);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.savings-expand-toggle:hover {
+  background: rgba(79, 70, 229, 0.16);
+  border-color: var(--primary);
+}
+
+/* Card colapsado: só o número principal */
+.savings-collapsed-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 1.15rem 1.25rem;
+  background: var(--home-surface);
+  border: 1px solid var(--home-border);
+  border-radius: 16px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--home-text);
+  transition: all 0.2s;
+}
+
+.savings-collapsed-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 6px 18px -6px rgba(79, 70, 229, 0.3);
+}
+
+.savings-collapsed-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.savings-collapsed-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--home-text-secondary, #94a3b8);
+}
+
+.savings-collapsed-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--success);
+  line-height: 1.1;
+}
+
+.savings-collapsed-value small {
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.75;
+  margin-left: 0.15rem;
+}
+
+.savings-collapsed-pct {
+  padding: 0.35rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.12);
+  border-radius: 999px;
+}
+
 /* ── Resumo principal — 3 perguntas ───────────────────────── */
 .savings-summary-card {
   background: var(--home-surface);
