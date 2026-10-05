@@ -325,20 +325,50 @@ function ServiceCredentials() {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
 
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/fetch-email-code`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ group_id: activeService.group.id }),
-        }
-      );
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://lasoouwboxspstqvjbsv.supabase.co';
+      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_wEPiY05_TmJVND5a6D812g_9Mw-_LXR';
 
-      const json = await res.json();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+      let res;
+      try {
+        res = await fetch(
+          `${supabaseUrl}/functions/v1/fetch-email-code`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+              'apikey': supabaseKey,
+            },
+            body: JSON.stringify({ group_id: activeService.group.id }),
+            signal: controller.signal,
+          }
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      // A função pode ser encerrada por timeout e devolver corpo vazio.
+      const rawBody = await res.text();
+      let json = null;
+      if (rawBody.trim()) {
+        try {
+          json = JSON.parse(rawBody);
+        } catch {
+          json = null;
+        }
+      }
+
+      if (!json) {
+        setCodeMessage(
+          res.status === 504 || res.status === 403 || res.status === 408
+            ? 'O servidor demorou demais para responder. Aguarde alguns segundos e busque novamente.'
+            : `O servidor não retornou uma resposta válida (HTTP ${res.status}). Tente novamente.`
+        );
+        return;
+      }
 
       if (!res.ok) {
         setCodeMessage(json.error || `Erro ${res.status}: falha ao buscar código`);
@@ -387,7 +417,12 @@ function ServiceCredentials() {
         setManualAction(null);
       }
     } catch (err) {
-      setCodeMessage(`Erro ao conectar: ${err.message}`);
+      const isAbort = err?.name === 'AbortError';
+      setCodeMessage(
+        isAbort
+          ? 'A busca demorou demais e foi cancelada. Aguarde alguns segundos e tente novamente.'
+          : `Erro ao conectar: ${err?.message || 'falha de comunicação'}`
+      );
     } finally {
       setFetchingCode(false);
     }

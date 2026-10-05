@@ -238,6 +238,12 @@ function isSubjectAllowed(subject: string, subjectIncludes: string[]): boolean {
 const LINK_KEYWORDS = /(code|c[oó]digo|verify|verifica|confirm|signin|sign-?_?in|login|token|otp|pin|auth|acesso|entrar|access|tv)/i;
 const LINK_BLOCKLIST = /(unsubscribe|opt[-_]?out|descadast|cancel(ar|e)?|remov|preferences|settings|privacy|privacidade|terms|termos|legal|help|ajuda|support|suporte|blog|jobs|careers|giftcard|pagamento|billing|invoice)/i;
 
+// Limites da etapa de "seguir links". A edge function e encerrada pelo gateway
+// se passar do tempo maximo e devolve corpo vazio, o que quebrava o front.
+const PAGE_FETCH_TIMEOUT_MS = 7000;
+const LINK_STAGE_BUDGET_MS = 45000;
+const MAX_LINKS_PER_EMAIL = 3;
+
 // --- E-mails de CONFIRMAÇÃO (não contêm código; exigem clique do usuário) ---
 // Ex.: "Você pediu para atualizar sua residência Netflix?" com botão "Sim, fui eu".
 // O link é de uso único e expira em ~15min: NÃO pode ser acessado pelo servidor,
@@ -338,7 +344,7 @@ function extractCandidateLinks(html: string, plain: string): string[] {
 
 async function fetchPageText(url: string): Promise<string | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), PAGE_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       signal: controller.signal,
@@ -830,8 +836,11 @@ export default {
 
         if (!resultCode) {
           console.log(`[fetch-email-code] Nenhum código no corpo dos e-mails. Tentando seguir links/botões...`);
+          // Orçamento de tempo: a função é encerrada pelo gateway se demorar demais e
+          // devolve corpo vazio (o front reportava "Unexpected end of JSON input").
+          const linkStageDeadline = Date.now() + LINK_STAGE_BUDGET_MS;
           linkLoop:
-          for (const email of emailBodies.slice(0, 5)) {
+          for (const email of emailBodies.slice(0, 3)) {
             // Link de confirmação não pode ser acessado pelo servidor (uso único)
             if (looksLikeConfirmationEmail(email.sender, email.subject, email.body)) continue;
 
@@ -839,19 +848,21 @@ export default {
             if (links.length === 0) continue;
             console.log(`[fetch-email-code] ${links.length} links candidatos no email de ${email.sender}`);
 
-            for (const link of links) {
+            for (const link of links.slice(0, MAX_LINKS_PER_EMAIL)) {
+              if (Date.now() > linkStageDeadline) {
+                console.log(`[fetch-email-code] Orçamento de tempo esgotado, interrompendo busca em links`);
+                break linkLoop;
+              }
+
               console.log(`[fetch-email-code] Acessando: ${link}`);
               const pageText = await fetchPageText(link);
               if (!pageText) continue;
 
-              let result: CodeResult | null = null;
-              if (groupConfig.email_ai_enabled && groqApiKey) {
+              // Regex primeiro (gratuito e instantâneo); IA só se o regex falhar.
+              let result: CodeResult | null = extractCode(pageText, groupConfig);
+              if (!result.code && groupConfig.email_ai_enabled && groqApiKey) {
                 const aiResult = await extractCodeWithAI(pageText, groqApiKey, serviceName, true);
                 if (aiResult?.code) result = aiResult;
-              }
-              if (!result) {
-                const regexResult = extractCode(pageText, groupConfig);
-                if (regexResult.code) result = regexResult;
               }
 
               if (result?.code) {
