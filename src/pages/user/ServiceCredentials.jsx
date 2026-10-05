@@ -169,7 +169,7 @@ function ServiceCredentials() {
     try {
       const { data } = await supabase
         .from('verification_pins')
-        .select('code, source_email, created_at, manual_action_url, manual_action_label, manual_action_note')
+        .select('code, source_email, created_at, manual_action_url, manual_action_label, manual_action_note, manual_action_details')
         .eq('group_id', activeService.group.id)
         .eq('used', false)
         .gt('expires_at', new Date().toISOString())
@@ -183,6 +183,7 @@ function ServiceCredentials() {
           message: 'Este serviço enviou uma confirmação em vez de um código. Abra o link para ativar o acesso.',
           note: data.manual_action_note || 'O link expira em poucos minutos.',
           label: data.manual_action_label || 'Abrir e confirmar',
+          details: data.manual_action_details || null,
           type: 'confirm_household',
           sender: data.source_email || '',
           subject: '',
@@ -211,7 +212,7 @@ function ServiceCredentials() {
       try {
         const { data } = await supabase
           .from('verification_pins')
-          .select('code, source_email, created_at, manual_action_url, manual_action_label, manual_action_note')
+          .select('code, source_email, created_at, manual_action_url, manual_action_label, manual_action_note, manual_action_details')
           .eq('group_id', activeService.group.id)
           .eq('used', false)
           .gt('expires_at', new Date().toISOString())
@@ -268,6 +269,7 @@ function ServiceCredentials() {
               message: 'Este serviço enviou uma confirmação em vez de um código. Abra o link para ativar o acesso.',
               note: pin.manual_action_note || 'O link expira em poucos minutos.',
               label: pin.manual_action_label || 'Abrir e confirmar',
+              details: pin.manual_action_details || null,
               type: 'confirm_household',
               sender: pin.source_email || '',
               subject: '',
@@ -392,6 +394,7 @@ function ServiceCredentials() {
           message: json.message || 'Este serviço enviou uma confirmação em vez de um código. Clique no botão abaixo para ativar o acesso.',
           note: json.manual_action_note || '',
           label: json.manual_action_label || 'Abrir e confirmar',
+          details: json.manual_action_details || null,
           type: json.manual_action_type || 'generic',
           sender: json.sender || '',
           subject: json.subject || '',
@@ -870,12 +873,6 @@ function ServiceCredentials() {
 
                   {manualAction && (
                     <div className="manual-action-card">
-                      <div className="manual-action-icon">
-                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <rect width="24" height="24" rx="4" fill="#E50914"/>
-                          <path d="M6.5 16.5V7.5L17.5 12L6.5 16.5Z" fill="white"/>
-                        </svg>
-                      </div>
                       <div className="manual-action-content">
                         <span className="manual-action-title">
                           {manualAction.type === 'confirm_household' || manualAction.type === 'netflix_verify_link'
@@ -885,6 +882,26 @@ function ServiceCredentials() {
                         <span className="manual-action-desc">
                           {manualAction.message}
                         </span>
+                        {manualAction.details?.requester && (
+                          <div className="manual-action-details">
+                            <span className="manual-action-detail">
+                              <span className="manual-action-detail-label">Solicitado por</span>
+                              <strong>{manualAction.details.requester}</strong>
+                            </span>
+                            {manualAction.details.device && (
+                              <span className="manual-action-detail">
+                                <span className="manual-action-detail-label">Aparelho</span>
+                                <strong>{manualAction.details.device}</strong>
+                              </span>
+                            )}
+                            {manualAction.details.when && (
+                              <span className="manual-action-detail">
+                                <span className="manual-action-detail-label">Quando</span>
+                                <strong>{manualAction.details.when}</strong>
+                              </span>
+                            )}
+                          </div>
+                        )}
                         <a
                           href={manualAction.url}
                           target="_blank"

@@ -250,15 +250,53 @@ const MAX_LINKS_PER_EMAIL = 3;
 // senão o clique do usuário passa a falhar.
 
 const CONFIRM_CTA_TEXT = /(sim,?\s*fui\s*eu|yes,?\s*(it|that)\s+was\s+me|fui\s+eu|foi\s+eu|confirmar|confirme|aprovar|aprovo|ativar|ative|continuar|yes,?\s*i\s+did)/i;
-const CONFIRM_URL_HINTS = /(household|residence|updatehousehold|verifyhousehold|confirm|approve|activate|deviceupdate|update-?device|manage-?devices)/i;
+const CONFIRM_URL_HINTS = /(household|residence|updatehousehold|verifyhousehold|confirm|approve|activate|deviceupdate|update-?device|manage-?devices|update-primary-location|primary-location|operation=update)/i;
 const CONFIRM_SUBJECT = /(resid[eê]ncia|atualizar\s+(a\s+|sua\s+)?(resid[eê]ncia|conta|acesso)|update\s+your\s+(household|residence)|household)/i;
+// E-mails de "depois" da ação: o pedido já foi aprovado/concluído, então não há
+// nada para o usuário confirmar. Ex.: "Confirmação: sua residência Netflix foi confirmada".
+const CONFIRM_ALREADY_DONE = /(foi\s+confirmad[ao]|confirmad[ao]\s+(com\s+sucesso|o\s+seu)|já\s+(foi|confirmad|atualiz)|foi\s+atualizad[ao]|residence\s+(has\s+been|was)\s+(updated|confirmed)|your\s+household\s+(has\s+been|was)\s+(updated|confirmed))/i;
 const PLATFORM_SENDER = /(netflix|disney\+|disneyplus|max\.com|hbo|primevideo|amazon|spotify|globoplay|paramount|crunchyroll|mubi)/i;
 
 function looksLikeConfirmationEmail(sender: string, subject: string, body: string): boolean {
   const haystack = `${sender} ${subject} ${body}`;
   if (!PLATFORM_SENDER.test(haystack)) return false;
+  if (CONFIRM_ALREADY_DONE.test(subject)) return false;
   if (CONFIRM_SUBJECT.test(subject)) return true;
   return CONFIRM_CTA_TEXT.test(subject) || CONFIRM_CTA_TEXT.test(body);
+}
+
+// Detalhe do pedido mostrado no cartão do front, ex.:
+// "Solicitado por Cintia em um aparelho Sony PlayStation 5 em 4 de outubro, 23:39"
+// Esse texto fica apenas na parte HTML do e-mail (o texto plano omite).
+function extractRequestDetails(html: string, plain: string): { requester: string; device: string; when: string } | null {
+  const source = `${html ? stripHtml(html) : ""}\n${plain || ""}`.replace(/\s+/g, " ");
+
+  // PT-BR: a data tem formato previsível, então dá para ancorar com segurança.
+  // As classes de caractere evitam [a-z] puro porque meses e cidades carregam
+  // acento (ex.: "outubro", "Brasília").
+  const pt = source.match(
+    /Solicitado\s+por\s+(.+?)\s+em\s+um\s+aparelho\s+(.+?)\s+em\s+(\d{1,2}\s+de\s+[^\s,.]+,?\s*\d{1,2}:\d{2}\s*hor[áa]rio\s+de\s+[^\s,.]{2,})/i,
+  );
+  if (pt) {
+    return {
+      requester: pt[1].trim().replace(/\s*\.\s*$/, ""),
+      device: pt[2].trim().replace(/\s*\.\s*$/, ""),
+      when: pt[3].trim(),
+    };
+  }
+
+  // Fallback: sem a data, ainda vale mostrar quem e em qual aparelho pediu.
+  const loose = source.match(/(?:Solicitado\s+por|Requested\s+by)\s+(.+?)\s+em\s+um\s+aparelho\s+(.+?)(?:\s+em\s+\d{1,2}\s+de|\s{2,}|\s*$)/i)
+    || source.match(/Requested\s+by\s+(.+?)\s+on\s+(?:a\s+)?(.+?)\s+device(?:\s+on\s+(.+?))?(?:\s{2,}|\s*$)/i);
+  if (loose) {
+    return {
+      requester: loose[1].trim(),
+      device: loose[2].trim(),
+      when: (loose[3] || "").trim(),
+    };
+  }
+
+  return null;
 }
 
 function normalizeUrl(raw: string): string | null {
@@ -784,6 +822,11 @@ export default {
           }
 
           console.log(`[fetch-email-code] Confirmação detectada — link entregue ao usuário: ${actionLink.slice(0, 90)}...`);
+          const details = extractRequestDetails(email.html || "", email.body || "");
+          if (details) {
+            console.log(`[fetch-email-code] Detalhe do pedido: ${details.requester} / ${details.device} / ${details.when}`);
+          }
+
           return Response.json({
             code: null,
             requires_manual_action: true,
@@ -791,6 +834,7 @@ export default {
             manual_action_url: actionLink,
             manual_action_label: "Abrir e confirmar na Netflix",
             manual_action_note: "Clique no botão, aprove a solicitação e o acesso é liberado na TV. O link expira em 15 minutos.",
+            manual_action_details: details,
             message: "A Netflix enviou uma confirmação de acesso em vez de um código. Clique no botão abaixo para aprovar e ativar a TV.",
             sender: email.sender,
             subject: email.subject,

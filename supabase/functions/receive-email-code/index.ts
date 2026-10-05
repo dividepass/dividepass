@@ -103,6 +103,7 @@ export default {
         manual_action_url,
         manual_action_label,
         manual_action_note,
+        manual_action_details,
       } = body;
 
       if (!recipient) {
@@ -171,6 +172,7 @@ export default {
             manual_action_url,
             manual_action_label: manual_action_label || "Abrir e confirmar",
             manual_action_note: manual_action_note || null,
+            manual_action_details: manual_action_details || null,
             used: false,
             expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
           });
@@ -191,6 +193,7 @@ export default {
             group_id: group.id,
             requires_manual_action: true,
             manual_action_url,
+            manual_action_details: manual_action_details || null,
             sender: foundSender,
             subject: foundSubject,
           }),

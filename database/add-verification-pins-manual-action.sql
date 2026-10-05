@@ -4,7 +4,8 @@
 ALTER TABLE verification_pins
   ADD COLUMN IF NOT EXISTS manual_action_url text,
   ADD COLUMN IF NOT EXISTS manual_action_label text,
-  ADD COLUMN IF NOT EXISTS manual_action_note text;
+  ADD COLUMN IF NOT EXISTS manual_action_note text,
+  ADD COLUMN IF NOT EXISTS manual_action_details jsonb;
 
 -- E-mails de confirmação não têm código numérico (code = NULL)
 ALTER TABLE verification_pins ALTER COLUMN code DROP NOT NULL;
@@ -20,3 +21,5 @@ COMMENT ON COLUMN verification_pins.manual_action_label IS
   'Texto do botão exibido no front (ex.: "Abrir e confirmar")';
 COMMENT ON COLUMN verification_pins.manual_action_note IS
   'Instrução curta exibida abaixo do botão';
+COMMENT ON COLUMN verification_pins.manual_action_details IS
+  'Detalhes do pedido exibidos no cartão: { requester, device, when }';
