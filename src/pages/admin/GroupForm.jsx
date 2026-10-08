@@ -83,9 +83,7 @@ function GroupForm() {
   const [customPlanActive, setCustomPlanActive] = useState(false);
 
   const [emailCodeEnabled, setEmailCodeEnabled] = useState(false);
-  const [emailCodeMethod, setEmailCodeMethod] = useState('imap');
   const [emailAddress, setEmailAddress] = useState('');
-  const [verificationEmail, setVerificationEmail] = useState('');
   const [emailImapServer, setEmailImapServer] = useState('');
   const [emailImapPort, setEmailImapPort] = useState(993);
   const [emailImapUser, setEmailImapUser] = useState('');
@@ -398,9 +396,7 @@ function GroupForm() {
 
           if (group) {
             setEmailCodeEnabled(group.email_code_enabled || false);
-            setEmailCodeMethod(group.email_code_method || 'imap');
             setEmailAddress(group.email_address || '');
-            setVerificationEmail(group.verification_email || '');
             setEmailImapServer(group.email_imap_server || '');
             setEmailImapPort(group.email_imap_port || 993);
             setEmailImapUser(group.email_imap_user || '');
@@ -493,29 +489,29 @@ function GroupForm() {
         status: formData.status,
         owner_id: isEditing ? (ownerId || null) : (user?.id || null),
         email_code_enabled: emailCodeEnabled,
-        email_code_method: emailCodeEnabled ? emailCodeMethod : null,
-        email_address: emailCodeEnabled && emailCodeMethod === 'imap' ? emailAddress : null,
-        verification_email: emailCodeEnabled && emailCodeMethod === 'webhook' ? verificationEmail : null,
-        email_imap_server: emailCodeEnabled && emailCodeMethod === 'imap' ? emailImapServer : null,
-        email_imap_port: emailCodeEnabled && emailCodeMethod === 'imap' ? emailImapPort : 993,
-        email_imap_user: emailCodeEnabled && emailCodeMethod === 'imap' ? emailImapUser : null,
-        email_imap_password: emailCodeEnabled && emailCodeMethod === 'imap' ? emailImapPassword : null,
-        email_allowed_senders: emailCodeEnabled && emailCodeMethod === 'imap'
+        email_code_method: emailCodeEnabled ? 'imap' : null,
+        email_address: emailCodeEnabled ? emailAddress : null,
+        verification_email: null,
+        email_imap_server: emailCodeEnabled ? emailImapServer : null,
+        email_imap_port: emailCodeEnabled ? emailImapPort : 993,
+        email_imap_user: emailCodeEnabled ? emailImapUser : null,
+        email_imap_password: emailCodeEnabled ? emailImapPassword : null,
+        email_allowed_senders: emailCodeEnabled
           ? emailAllowedSenders.split('\n').map(s => s.trim()).filter(Boolean)
           : [],
-        email_blocked_subjects: emailCodeEnabled && emailCodeMethod === 'imap'
+        email_blocked_subjects: emailCodeEnabled
           ? emailBlockedSubjects.split('\n').map(s => s.trim()).filter(Boolean)
           : [],
-        email_code_patterns: emailCodeEnabled && emailCodeMethod === 'imap'
+        email_code_patterns: emailCodeEnabled
           ? emailCodePatterns.split('\n').map(s => s.trim()).filter(Boolean)
           : [],
-        email_body_keywords: emailCodeEnabled && emailCodeMethod === 'imap'
+        email_body_keywords: emailCodeEnabled
           ? emailBodyKeywords.split('\n').map(s => s.trim()).filter(Boolean)
           : [],
-        email_subject_includes: emailCodeEnabled && emailCodeMethod === 'imap'
+        email_subject_includes: emailCodeEnabled
           ? emailSubjectIncludes.split('\n').map(s => s.trim()).filter(Boolean)
           : [],
-        email_ai_enabled: emailCodeEnabled && emailCodeMethod === 'imap' ? emailAiEnabled : false,
+        email_ai_enabled: emailCodeEnabled ? emailAiEnabled : false,
         custom_cycle_months: formData.available_cycles.includes('custom') ? parseInt(formData.custom_cycle_months) || null : null,
         custom_cycle_label: formData.available_cycles.includes('custom') ? formData.custom_cycle_label || null : null,
         custom_cycle_days: formData.available_cycles.includes('days') ? parseInt(formData.custom_cycle_days) || null : null,
@@ -1205,69 +1201,8 @@ function GroupForm() {
 
           {emailCodeEnabled && (
             <div style={{ marginTop: '1.25rem' }}>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label style={{ marginBottom: '0.5rem', display: 'block' }}>Método de recebimento</label>
-                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="emailCodeMethod"
-                      value="webhook"
-                      checked={emailCodeMethod === 'webhook'}
-                      onChange={() => setEmailCodeMethod('webhook')}
-                    />
-                    <strong>Webhook (API_URL)</strong>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>- Gratuito, recomendado</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="emailCodeMethod"
-                      value="imap"
-                      checked={emailCodeMethod === 'imap'}
-                      onChange={() => setEmailCodeMethod('imap')}
-                    />
-                    <strong>IMAP</strong>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>- Requer conta de e-mail</span>
-                  </label>
-                </div>
-              </div>
-
-              {emailCodeMethod === 'webhook' ? (
-                <div>
-                  <div className="form-group">
-                    <label>Endereço de verificação</label>
-                    <input
-                      value={verificationEmail}
-                      onChange={e => setVerificationEmail(e.target.value)}
-                      placeholder={`verify-${formData.slug || 'grupo'}@dividepass.com`}
-                    />
-                    <p className="section-desc" style={{ marginTop: '0.35rem' }}>
-                      Configure o serviço de streaming para enviar emails de verificação para este endereço.
-                      O Cloudflare Worker irá capturar e processar automaticamente.
-                    </p>
-                  </div>
-
-                  {formData.slug && (
-                    <div style={{
-                      background: 'var(--background)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '0.5rem',
-                      padding: '0.75rem 1rem',
-                      fontSize: '0.85rem',
-                      color: 'var(--text-muted)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                    }}>
-                      <Mail size={16} style={{ color: 'var(--primary)', flexShrink: 0 }} />
-                      <span>Sugestão: <code style={{ color: 'var(--secondary)' }}>verify-{formData.slug}@dividepass.com</code></span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div>
-                  <div className="form-grid">
+              <div>
+                <div className="form-grid">
                     <div className="form-group">
                       <label>E-mail da conta</label>
                       <input
@@ -1402,7 +1337,6 @@ function GroupForm() {
                     </label>
                   </div>
                 </div>
-              )}
             </div>
           )}
         </section>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Eye,
@@ -18,7 +18,6 @@ import {
   Settings,
   User,
   MessageCircle,
-  Wifi,
   CreditCard
 } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
@@ -124,9 +123,6 @@ function ServiceCredentials() {
   // Se há múltiplos grupos para esta plataforma, listar todos
   const allGroupsForService = activeServices.filter(item => item.service.id === serviceId || item.service.slug === serviceId);
 
-  const isWebhook = activeService?.group?.email_code_method === 'webhook';
-  const webhookListening = isWebhook && !!activeService?.group?.id;
-
   useEffect(() => {
     if (cooldown <= 0) return;
     const timer = setInterval(() => {
@@ -164,139 +160,7 @@ function ServiceCredentials() {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const fetchLatestPin = useCallback(async () => {
-    if (!activeService?.group?.id) return;
-    try {
-      const { data } = await supabase
-        .from('verification_pins')
-        .select('code, source_email, created_at, manual_action_url, manual_action_label, manual_action_note, manual_action_details')
-        .eq('group_id', activeService.group.id)
-        .eq('used', false)
-        .gt('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
 
-      if (data?.manual_action_url) {
-        setManualAction({
-          url: data.manual_action_url,
-          message: 'Este serviço enviou uma confirmação em vez de um código. Abra o link para ativar o acesso.',
-          note: data.manual_action_note || 'O link expira em poucos minutos.',
-          label: data.manual_action_label || 'Abrir e confirmar',
-          details: data.manual_action_details || null,
-          type: 'confirm_household',
-          sender: data.source_email || '',
-          subject: '',
-          received_at: data.created_at,
-        });
-        setVerificationCode(null);
-        setCodeMessage('');
-      } else if (data?.code) {
-        setVerificationCode({
-          code: data.code,
-          sender: data.source_email || '',
-          subject: '',
-          received_at: data.created_at,
-        });
-        setCodeMessage('');
-      }
-    } catch {
-      // silent
-    }
-  }, [activeService]);
-
-  useEffect(() => {
-    if (!isWebhook || !activeService?.group?.id) return;
-
-    const loadInitial = async () => {
-      try {
-        const { data } = await supabase
-          .from('verification_pins')
-          .select('code, source_email, created_at, manual_action_url, manual_action_label, manual_action_note, manual_action_details')
-          .eq('group_id', activeService.group.id)
-          .eq('used', false)
-          .gt('expires_at', new Date().toISOString())
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (data?.manual_action_url) {
-          setManualAction({
-            url: data.manual_action_url,
-            message: 'Este serviço enviou uma confirmação em vez de um código. Abra o link para ativar o acesso.',
-            note: data.manual_action_note || 'O link expira em poucos minutos.',
-            label: data.manual_action_label || 'Abrir e confirmar',
-            type: 'confirm_household',
-            sender: data.source_email || '',
-            subject: '',
-            received_at: data.created_at,
-          });
-          setVerificationCode(null);
-          setCodeMessage('');
-        } else if (data?.code) {
-          setVerificationCode({
-            code: data.code,
-            sender: data.source_email || '',
-            subject: '',
-            received_at: data.created_at,
-          });
-          setCodeMessage('');
-        }
-      } catch {
-        // silent
-      }
-    };
-
-    loadInitial();
-
-    const channel = supabase
-      .channel(`verification-pins-${activeService.group.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'verification_pins',
-          filter: `group_id=eq.${activeService.group.id}`,
-        },
-        (payload) => {
-          const pin = payload.new;
-          if (!pin || pin.used || !(new Date(pin.expires_at) > new Date())) return;
-
-          if (pin.manual_action_url) {
-            setManualAction({
-              url: pin.manual_action_url,
-              message: 'Este serviço enviou uma confirmação em vez de um código. Abra o link para ativar o acesso.',
-              note: pin.manual_action_note || 'O link expira em poucos minutos.',
-              label: pin.manual_action_label || 'Abrir e confirmar',
-              details: pin.manual_action_details || null,
-              type: 'confirm_household',
-              sender: pin.source_email || '',
-              subject: '',
-              received_at: pin.created_at,
-            });
-            setVerificationCode(null);
-            setCodeMessage('');
-            return;
-          }
-
-          if (pin.code) {
-            setVerificationCode({
-              code: pin.code,
-              sender: pin.source_email || '',
-              subject: '',
-              received_at: pin.created_at,
-            });
-            setCodeMessage('');
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [isWebhook, activeService?.group?.id]);
 
   const handleFetchCode = async () => {
     if (!activeService?.group?.id) return;
@@ -747,67 +611,50 @@ function ServiceCredentials() {
                   : <p>Não compartilhe suas credenciais com ninguém.</p>
                 }
               </div>
-
-              {group.email_code_enabled && (
+{group.email_code_enabled && (
                 <div className="verification-code-section">
                   <div className="verification-code-header">
-                    {isWebhook ? <Wifi size={20} /> : <Mail size={20} />}
+                    <Mail size={20} />
                     <div>
                       <h3>Código de Verificação</h3>
-                      {isWebhook ? (
-                        <p>O código será exibido automaticamente quando o serviço enviar o email.</p>
-                      ) : (
-                        <p>Busque o código mais recente enviado para a conta compartilhada.</p>
-                      )}
+                      <p>Busque o código mais recente enviado para a conta compartilhada.</p>
                     </div>
                   </div>
 
-                  {isWebhook ? (
-                    <div className="webhook-status">
-                      {webhookListening && !verificationCode && (
-                        <div className="webhook-listening">
-                          <Loader2 size={16} className="spin" />
-                          <span>Aguardando código...</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      <button
-                        className="btn btn-primary fetch-code-btn"
-                        onClick={handleFetchCode}
-                        disabled={fetchingCode || cooldown > 0}
-                      >
-                        {fetchingCode ? (
-                          <>
-                            <Loader2 size={16} className="spin" />
-                            Buscando...
-                          </>
-                        ) : cooldown > 0 ? (
-                          <>
-                            <Mail size={16} />
-                            Buscar Código ({cooldown}s)
-                          </>
-                        ) : (
-                          <>
-                            <Mail size={16} />
-                            Buscar Código
-                          </>
-                        )}
-                      </button>
-                      <p className="email-delay-warning">
-                        Os e-mails podem sofrer delay caso os servidores estejam com instabilidade.
-                       {' '}
-                        <button
-                          type="button"
-                          className="contact-admin-link"
-                          onClick={() => setShowContactModal(true)}
-                        >
-                          Contatar administrador do grupo
-                        </button>
-                      </p>
-                    </>
-                  )}
+                  <button
+                    className="btn btn-primary fetch-code-btn"
+                    onClick={handleFetchCode}
+                    disabled={fetchingCode || cooldown > 0}
+                  >
+                    {fetchingCode ? (
+                      <>
+                        <Loader2 size={16} className="spin" />
+                        Buscando...
+                      </>
+                    ) : cooldown > 0 ? (
+                      <>
+                        <Mail size={16} />
+                        Buscar Código ({cooldown}s)
+                      </>
+                    ) : (
+                      <>
+                        <Mail size={16} />
+                        Buscar Código
+                      </>
+                    )}
+                  </button>
+
+                  <p className="email-delay-warning">
+                    Os e-mails podem sofrer delay caso os servidores estejam com instabilidade.
+                   {' '}
+                    <button
+                      type="button"
+                      className="contact-admin-link"
+                      onClick={() => setShowContactModal(true)}
+                    >
+                      Contatar administrador do grupo
+                    </button>
+                  </p>
 
                   {verificationCode && (
                     <div className="verification-code-result">
@@ -916,17 +763,6 @@ function ServiceCredentials() {
                         </p>
                       </div>
                     </div>
-                  )}
-
-                  {isWebhook && verificationCode && (
-                    <button
-                      className="btn btn-outline fetch-code-btn"
-                      onClick={() => { setVerificationCode(null); fetchLatestPin(); }}
-                      style={{ marginTop: '0.75rem' }}
-                    >
-                      <RotateCcw size={16} />
-                      Verificar novamente
-                    </button>
                   )}
                 </div>
               )}
