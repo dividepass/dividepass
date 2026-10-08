@@ -11,9 +11,24 @@ export default {
     const mpAccessToken = Deno.env.get("MERCADO_PAGO_ACCESS_TOKEN") ?? "";
     const cronSecret = Deno.env.get("CRON_SECRET") ?? "";
 
-    // Validate cron secret
-    const authHeader = req.headers.get("Authorization");
-    if (authHeader !== `Bearer ${cronSecret}`) {
+    // Auth do cron. O job no pg_cron envia a service_role key como Bearer,
+    // não o CRON_SECRET, então os dois precisam ser aceitos — senão o job
+    // devolvia 401 e o prazo de 12h nunca era expirado.
+    const authHeader = req.headers.get("Authorization") || "";
+    const provided = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const accepted = [cronSecret, supabaseServiceKey].filter(Boolean);
+
+    let authorized = accepted.includes(provided);
+    if (!authorized && provided) {
+      const { data: secretRows } = await createClient(supabaseUrl, supabaseServiceKey)
+        .from("app_settings")
+        .select("value")
+        .in("key", ["recurring_billing_cron_secret", "overdue_cron_secret"]);
+      const fromSettings = (secretRows || []).map((r: any) => r.value || "");
+      authorized = fromSettings.filter(Boolean).includes(provided);
+    }
+
+    if (!authorized) {
       return new Response("Unauthorized", { status: 401 });
     }
 

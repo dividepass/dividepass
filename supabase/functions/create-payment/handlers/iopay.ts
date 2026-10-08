@@ -644,8 +644,21 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
       }
 
       if (!isPix) {
+        // Cartão é capturado na hora. Para pagamento SÓ de taxa de adesão o
+        // membro precisa ficar em 'entrance_paid' (e com prazo de 12h), que é o
+        // estado que o Checkout usa para liberar o Passo 2. Antes gravava
+        // 'active', o que travava o fluxo e ainda liberava o acesso antes da
+        // assinatura estar paga.
+        const isEntranceOnly = !isCombined && entranceAmount > 0;
         await supabaseAdmin.from("group_members").upsert({
-          group_id, user_id, status: "active", payment_status: isCombined ? "awaiting_subscription" : "active",
+          group_id, user_id,
+          status: "active",
+          payment_status: isCombined ? "awaiting_subscription" : (isEntranceOnly ? "entrance_paid" : "active"),
+          ...(isEntranceOnly ? {
+            entrance_paid_at: new Date().toISOString(),
+            entrance_payment_id: txId,
+            subscription_deadline: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+          } : {}),
         }, { onConflict: "group_id, user_id" });
       }
 

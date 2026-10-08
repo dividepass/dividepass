@@ -90,6 +90,9 @@ function Checkout() {
   const [error, setError] = useState('');
   const [remoteGroup, setRemoteGroup] = useState(undefined);
   const [memberStatus, setMemberStatus] = useState(null);
+  // Confirmação de que a taxa de adesão foi paga, checada direto em payments.
+  // Complementa group_members.payment_status quando o webhook atrasa.
+  const [entrancePaidState, setEntrancePaid] = useState(false);
   const [activeGateway, setActiveGateway] = useState('mercadopago');
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [gatewayResult, setGatewayResult] = useState(null);
@@ -334,12 +337,39 @@ function Checkout() {
           .eq('user_id', user.id)
           .maybeSingle();
         setMemberStatus(data);
+        void refreshEntrancePaid(details.group.id, user.id);
       };
       refresh();
     } else if (paymentStatus === 'subscription_success') {
       navigate('/dashboard/credentials');
     }
   }, [paymentStatus, user, details, navigate]);
+
+  // Entrada paga? Não confiar só em group_members.payment_status: se o webhook
+  // atrasou ou o pagamento foi confirmado por outro caminho, o estado pode ficar
+  // inconsistente e travar o Passo 2. A existence de um pagamento de entrada
+  // aprovado é a fonte da verdade.
+  const refreshEntrancePaid = async (groupId, userId) => {
+    try {
+      const { data } = await supabase
+        .from('payments')
+        .select('id, status')
+        .eq('group_id', groupId)
+        .eq('user_id', userId)
+        .eq('payment_type', 'entrance')
+        .in('status', ['paid', 'approved'])
+        .limit(1);
+      if (data && data.length > 0) setEntrancePaid(true);
+    } catch {
+      // silencioso: o fluxo normal já cobre
+    }
+  };
+
+  useEffect(() => {
+    if (!user || !details?.group?.id) return;
+    if (!(details?.group?.has_entrance_fee && Number(details?.group?.entrance_fee || 0) > 0)) return;
+    void refreshEntrancePaid(details.group.id, user.id);
+  }, [user, details?.group?.id, details?.group?.has_entrance_fee, memberStatus?.payment_status]);
 
   // Reset gateway state when entrance is already paid
   const entrancePaidHook = details?.group?.has_entrance_fee && Number(details?.group?.entrance_fee || 0) > 0 && (memberStatus?.payment_status === 'entrance_paid' || memberStatus?.payment_status === 'awaiting_subscription' || memberStatus?.payment_status === 'active');
@@ -1308,7 +1338,7 @@ function Checkout() {
     );
   }
 
-  const entrancePaid = hasEntranceFee && (memberStatus?.payment_status === 'entrance_paid' || memberStatus?.payment_status === 'awaiting_subscription' || memberStatus?.payment_status === 'active');
+  const entrancePaid = hasEntranceFee && (entrancePaidState || memberStatus?.payment_status === 'entrance_paid' || memberStatus?.payment_status === 'awaiting_subscription' || memberStatus?.payment_status === 'active');
   const entranceExpired = hasEntranceFee && (memberStatus?.payment_status === 'expired' || memberStatus?.payment_status === 'overdue' || memberStatus?.payment_status === 'cancelled');
 
   const handleResetPayment = async () => {
@@ -1682,7 +1712,14 @@ function Checkout() {
   // ============================================
   // STEP 1.5: Entrada paga, aguardando assinatura
   // ============================================
-  if (hasEntranceFee && memberStatus?.payment_status === 'entrance_paid') {
+  // Aceita 'entrance_paid' e 'awaiting_subscription'. Um pagamento só de
+  // entrada deixa o membro como 'entrance_paid'; pagamento combinado já
+  // entra como 'awaiting_subscription'. Sem os dois, o fluxo travava no Passo 1.
+  const entranceConfirmed = memberStatus?.payment_status === 'entrance_paid'
+    || memberStatus?.payment_status === 'awaiting_subscription'
+    || entrancePaid === true;
+
+  if (hasEntranceFee && entranceConfirmed) {
     const deadline = new Date(memberStatus.subscription_deadline);
     const now = new Date();
     const hoursLeft = Math.max(0, (deadline - now) / (1000 * 60 * 60));
