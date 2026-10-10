@@ -60,8 +60,9 @@ export default function PlatformPicker({
   const isNone = value.includes(NONE);
 
   const toggle = (platformId) => {
-    // "Nenhuma destas" é exclusivo nos dois sentidos.
-    onToggle(isNone ? platformId : value.filter((v) => v !== NONE).concat(platformId));
+    // Sempre um array: o gate chama .filter() na validação, e um id solto
+    // aqui estouraria TypeError e travaria a etapa sem mensagem na tela.
+    onToggle(isNone ? [platformId] : value.filter((v) => v !== NONE).concat(platformId));
   };
 
   const toggleNone = () => {

@@ -87,7 +87,10 @@ export default function OnboardingGate() {
     if (s.type === 'platforms') {
       const picked = platformPicks[s.id] || [];
       const customs = customPicks[s.id] || [];
-      if (picked.filter((v) => v !== NONE_PLATFORM).length === 0 && customs.length === 0) {
+      const chosen = Array.isArray(picked)
+        ? picked.filter((v) => v !== NONE_PLATFORM).length
+        : 0;
+      if (chosen === 0 && customs.length === 0) {
         setError('Escolha ao menos uma opção.');
         return false;
       }
