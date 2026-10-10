@@ -3,9 +3,11 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Loader2, Save, Lock, Mail, Phone, User, Shield,
   CreditCard, FileText, Clock, Calendar, AlertTriangle, CheckCircle,
-  RefreshCw, Plus, XCircle, Timer, Zap, Edit2
+  RefreshCw, Plus, XCircle, Timer, Zap, Edit2, ClipboardList
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { maskPhone, onlyDigits } from '../../lib/maskPhone';
+import { ONBOARDING_STEPS, labelForValue } from '../../lib/onboardingQuestions';
 import './UserDetail.css';
 
 const ROLE_OPTIONS = [
@@ -319,7 +321,7 @@ function UserDetail() {
         user_id: userId,
         name: form.name,
         email: form.email,
-        phone: form.phone,
+        phone: onlyDigits(form.phone) || null,
         cpf: form.cpf,
         role: form.role,
         status: form.status,
@@ -412,6 +414,7 @@ function UserDetail() {
           { id: 'invoices', label: 'Faturas', icon: FileText },
           { id: 'payments', label: 'Pagamentos', icon: CreditCard },
           { id: 'crons', label: 'Crons', icon: Clock },
+          { id: 'onboarding', label: 'Qualificação', icon: ClipboardList },
         ].map(tab => (
           <button
             key={tab.id}
@@ -437,7 +440,7 @@ function UserDetail() {
             </div>
             <div className="form-row">
               <label><Phone size={14} /> Celular</label>
-              <input type="text" name="phone" value={form.phone || ''} onChange={handleChange} />
+              <input type="tel" name="phone" inputMode="numeric" value={form.phone || ''} onChange={(e) => handleChange({ target: { name: 'phone', value: maskPhone(e.target.value) } })} placeholder="(11) 99999-9999" />
             </div>
             <div className="form-row">
               <label>CPF</label>
@@ -589,6 +592,10 @@ function UserDetail() {
             </table>
           )}
         </div>
+      )}
+
+      {activeTab === 'onboarding' && (
+        <OnboardingAnswers userId={userId} completedAt={user?.onboarding_completed_at} />
       )}
 
       {activeTab === 'crons' && (
@@ -972,6 +979,133 @@ function UserDetail() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Aba de qualificação: mostra as respostas do onboarding do usuário na
+ * mesma ordem do questionário, com os rótulos legíveis vindos de
+ * onboardingQuestions — nunca os valores crus do banco.
+ */
+function OnboardingAnswers({ userId, completedAt }) {
+  const [profile, setProfile] = useState(null);
+  const [interests, setInterests] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      const [pRes, iRes] = await Promise.all([
+        supabase.from('user_onboarding_profiles').select('*').eq('user_id', userId).maybeSingle(),
+        supabase.from('user_onboarding_interests').select('*').eq('user_id', userId),
+      ]);
+      if (cancelled) return;
+      setProfile(pRes.data || null);
+      setInterests(iRes.data || []);
+      setLoading(false);
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  if (loading) {
+    return (
+      <div className="admin-card" style={{ textAlign: 'center', padding: '2rem' }}>
+        <Loader2 size={22} className="spin" /> <p>Carregando...</p>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="admin-card">
+        <div className="empty-table">
+          <p>
+            Este usuário ainda não respondeu o onboarding
+            {completedAt ? ' (o registro está com data, mas sem respostas salvas).' : '.'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const current = interests.filter((i) => i.kind === 'current');
+  const interested = interests.filter((i) => i.kind === 'interested');
+  const sharesWithStep = ONBOARDING_STEPS.find((s) => s.column === 'shares_with');
+
+  const answered = ONBOARDING_STEPS.filter((s) => s.column && s.type !== 'info').filter((s) => {
+    const v = profile[s.column];
+    return v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && !v.length);
+  });
+
+  return (
+    <div className="ob-answers-tab">
+      <div className="admin-card">
+        <div className="crons-section-header">
+          <h3>Perfil de qualificação</h3>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            {answered.length} de {ONBOARDING_STEPS.filter((s) => s.column).length} perguntas respondidas
+          </span>
+        </div>
+
+        <div className="ob-answer-grid">
+          {answered.map((step) => {
+            const raw = profile[step.column];
+            const display = Array.isArray(raw)
+              ? raw.map((v) => labelForValue(sharesWithStep, v)).join(', ')
+              : step.type === 'yes_no'
+                ? raw ? 'Sim' : 'Não'
+                : labelForValue(step, raw);
+
+            return (
+              <div className="ob-answer-item" key={step.id}>
+                <span className="ob-answer-label">{step.title}</span>
+                <span className="ob-answer-value">{display}</span>
+              </div>
+            );
+          })}
+
+          {profile.main_barrier_other && (
+            <div className="ob-answer-item">
+              <span className="ob-answer-label">Outro motivo</span>
+              <span className="ob-answer-value">{profile.main_barrier_other}</span>
+            </div>
+          )}
+
+          {profile.would_recommend && (
+            <div className="ob-answer-item">
+              <span className="ob-answer-label">Indicaria / criaria grupo</span>
+              <span className="ob-answer-value">{profile.would_recommend}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {[['current', current], ['interested', interested]].map(([kind, list]) => (
+        <div className="admin-card" key={kind}>
+          <div className="crons-section-header">
+            <h3>
+              {kind === 'current' ? 'Plataformas que já usa' : 'Plataformas que quer dividir'}
+            </h3>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{list.length}</span>
+          </div>
+          {list.length === 0 ? (
+            <div className="empty-table"><p>Nenhuma plataforma marcada.</p></div>
+          ) : (
+            <div className="ob-interest-tags">
+              {list.map((i) => (
+                <span key={i.id} className={`ob-interest-tag ${i.is_custom ? 'custom' : ''}`}>
+                  {i.platform_name}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

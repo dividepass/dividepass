@@ -145,3 +145,76 @@
     width: 100%;
   }
 }
+
+/* ─────────── Erro inline abaixo do input ─────────── */
+.register-form .field-error {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #EF4444;
+  animation: regFieldShake 0.25s ease;
+}
+
+.register-form .input-error {
+  border-color: #EF4444 !important;
+  background-color: rgba(239, 68, 68, 0.06);
+}
+
+.register-form .input-error:focus {
+  outline-color: #EF4444;
+}
+
+@keyframes regFieldShake {
+  0%, 100% { transform: translateX(0); }
+  30%      { transform: translateX(-3px); }
+  70%      { transform: translateX(3px); }
+}
+
+/* ─────────── Origem: chips em vez de <select> ─────────── */
+.lead-source-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.lead-source-chip {
+  padding: 0.45rem 0.75rem;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.lead-source-chip:hover:not(.selected) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.lead-source-chip.selected {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+
+.lead-source-chip:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .lead-source-chip {
+    font-size: 0.78rem;
+    padding: 0.4rem 0.6rem;
+    min-height: 36px;
+  }
+}

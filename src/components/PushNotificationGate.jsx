@@ -12,8 +12,12 @@ function PushNotificationGate() {
   const [error, setError] = useState('');
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1');
 
+  // Enquanto o onboarding não termina, ele ocupa a tela inteira — este
+  // gate ficaria empilhado por cima, disputando o mesmo espaço.
+  const onboardingPending = Boolean(profile && !profile.onboarding_completed_at);
+
   const shouldShow = Boolean(
-    profile && supported && !profile.push_notifications_enabled_at && !enabled && !dismissed
+    profile && !onboardingPending && supported && !profile.push_notifications_enabled_at && !enabled && !dismissed
   );
 
   const handleEnable = async () => {

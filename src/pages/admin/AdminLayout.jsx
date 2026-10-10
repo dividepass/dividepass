@@ -49,6 +49,7 @@ function AdminLayout() {
           <Link onClick={closeMenu} to="/admin/announcements" className={`nav-item ${isActive('/admin/announcements')}`}>Avisos 📢</Link>
           <Link onClick={closeMenu} to="/admin/coupons" className={`nav-item ${isActive('/admin/coupons')}`}>Cupons 🏷️</Link>
           <Link onClick={closeMenu} to="/admin/surveys" className={`nav-item ${isActive('/admin/surveys')}`}>Pesquisas 📝</Link>
+          <Link onClick={closeMenu} to="/admin/onboarding" className={`nav-item ${isActive('/admin/onboarding')}`}>Onboarding 🎯</Link>
           <Link onClick={closeMenu} to="/admin/testimonials" className={`nav-item ${isActive('/admin/testimonials')}`}>Depoimentos ⭐</Link>
           <Link onClick={closeMenu} to="/admin/savings" className={`nav-item ${isActive('/admin/savings')}`}>Economia 📈</Link>
           <Link onClick={closeMenu} to="/admin/service-plans" className={`nav-item ${isActive('/admin/service-plans')}`}>Planos 📋</Link>

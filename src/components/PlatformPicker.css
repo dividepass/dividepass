@@ -1,0 +1,151 @@
+.platform-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.platform-picker-helper {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0 0 0.5rem;
+}
+
+.platform-picker-loading {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 1rem;
+  text-align: center;
+  background: var(--surface-soft, rgba(148, 163, 184, 0.08));
+  border-radius: 0.5rem;
+}
+
+.platform-picker-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.platform-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.platform-pill:hover:not(.selected) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.platform-pill.selected {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+
+.platform-pill-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+
+.platform-pill-name {
+  white-space: nowrap;
+}
+
+.platform-pill-check {
+  flex-shrink: 0;
+}
+
+.platform-pill-none {
+  border-style: dashed;
+}
+
+.platform-picker-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.platform-custom-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-start;
+  padding: 0.25rem 0.4rem 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.platform-custom-tag button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.22);
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.platform-custom-add {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-muted);
+}
+
+.platform-custom-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-family: inherit;
+}
+
+.platform-custom-add button {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--primary);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.platform-custom-add button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

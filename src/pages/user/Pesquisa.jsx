@@ -5,6 +5,7 @@ import {
   MessageCircle, Loader2, PartyPopper, AlertCircle, Star
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { maskPhone } from '../../lib/maskPhone';
 import './Pesquisa.css';
 
 function Pesquisa() {
@@ -26,13 +27,6 @@ function Pesquisa() {
   const [userInfo, setUserInfo] = useState({ name: '', email: '', whatsapp: '' });
   const [userInfoErrors, setUserInfoErrors] = useState({});
   const [answers, setAnswers] = useState({});
-
-  const maskPhone = (value) => {
-    const digits = value.replace(/\D/g, '').slice(0, 11);
-    if (digits.length <= 2) return `(${digits}`;
-    if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
-  };
 
   useEffect(() => { loadSurvey(); }, [slug]);
 

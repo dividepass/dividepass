@@ -25,7 +25,12 @@ function PwaInstallGate() {
     };
   }, []);
 
-  const shouldShow = useMemo(() => Boolean(user && isMobile && !profile?.pwa_installed_at && !isStandalone && !dismissed), [user, isMobile, profile?.pwa_installed_at, isStandalone, dismissed]);
+  // O onboarding ocupa a tela inteira enquanto o usuário não termina. Se
+  // este gate abrisse por cima, teríamos dois modais empilhados disputando
+  // a tela — e o onboarding é o que precisa ser respondido primeiro.
+  const onboardingPending = Boolean(profile && !profile.onboarding_completed_at);
+
+  const shouldShow = useMemo(() => Boolean(user && isMobile && !onboardingPending && !profile?.pwa_installed_at && !isStandalone && !dismissed), [user, isMobile, onboardingPending, profile?.pwa_installed_at, isStandalone, dismissed]);
 
   useEffect(() => {
     setOpen(shouldShow);

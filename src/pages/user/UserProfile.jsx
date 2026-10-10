@@ -4,6 +4,7 @@ import { Camera, Save, ArrowLeft, Trash2, AlertTriangle, Loader2, MessageCircle,
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { optimizeImage } from '../../lib/imageOptimizer';
+import { maskPhone, onlyDigits } from '../../lib/maskPhone';
 import { usePushNotifications } from '../../hooks/usePushNotifications';
 import './UserProfile.css';
 
@@ -16,7 +17,7 @@ export default function UserProfile() {
   const [form, setForm] = useState(() => ({
     name: profile?.name || '',
     nickname: profile?.nickname || '',
-    phone: profile?.phone || '',
+    phone: maskPhone(profile?.phone || ''),
     birthdate: profile?.birthdate || '',
   }));
   const [avatarUrl, setAvatarUrl] = useState(() => profile?.avatar_url || null);
@@ -97,7 +98,7 @@ export default function UserProfile() {
         avatar_url: newAvatarUrl,
       };
 
-      if (form.phone !== undefined) updateData.phone = form.phone || null;
+      if (form.phone !== undefined) updateData.phone = onlyDigits(form.phone) || null;
       if (form.nickname !== undefined) updateData.nickname = form.nickname || null;
       if (form.birthdate !== undefined) updateData.birthdate = form.birthdate || null;
 
@@ -312,8 +313,9 @@ export default function UserProfile() {
                 id="phone"
                 name="phone"
                 type="tel"
+                inputMode="numeric"
                 value={form.phone}
-                onChange={handleChange}
+                onChange={(e) => handleChange({ target: { name: 'phone', value: maskPhone(e.target.value) } })}
                 placeholder="(11) 99999-9999"
               />
             </div>

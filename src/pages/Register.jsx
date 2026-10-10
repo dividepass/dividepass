@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Loader2, Check } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Loader2, Check, AlertCircle } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { maskPhone, onlyDigits, isValidPhone } from '../lib/maskPhone';
 import logoImg from '../assets/logo.png';
 import './Register.css';
 
@@ -41,7 +42,28 @@ function Register() {
 
   const goToStep = (next) => {
     setError('');
+    setFieldErrors({});
     setStep(next);
+  };
+
+  // Erros por campo, mostrados logo abaixo do input. A banner global fica
+  // como reforço, mas o usuário está olhando para o campo, não para o topo.
+  const [fieldErrors, setFieldErrors] = useState({});
+
+  const clearError = (field) => {
+    setError('');
+    setFieldErrors(prev => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const fail = (field, message) => {
+    setError('');
+    setFieldErrors(prev => ({ ...prev, [field]: message }));
+    return false;
   };
 
   // Enter já dispara o onSubmit do <form> (implicit submission), então não
@@ -49,36 +71,25 @@ function Register() {
   const handleNext = (e) => {
     // Sem isso o <form> faz submit nativo e a página recarrega, zerando o wizard.
     e.preventDefault();
-    setError('');
 
     if (step === 1 && name.trim().length < 3) {
-      setError('Digite seu nome completo.');
-      return;
+      return fail('name', 'Preencha o nome completo.');
     }
 
-    if (step === 2) {
-      const digits = phone.replace(/\D/g, '');
-      if (digits.length < 10) {
-        setError('Digite um WhatsApp válido com DDD.');
-        return;
-      }
+    if (step === 2 && !isValidPhone(phone)) {
+      return fail('phone', 'Preencha o WhatsApp com DDD.');
     }
 
-    if (step === 3) {
-      if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
-        setError('Digite um e-mail válido.');
-        return;
-      }
+    if (step === 3 && !/^\S+@\S+\.\S+$/.test(email.trim())) {
+      return fail('email', 'Preencha um e-mail válido.');
     }
 
     if (step === 4) {
       if (!leadSource) {
-        setError('Escolha como você conheceu o DividePass.');
-        return;
+        return fail('leadSource', 'Escolha como você conheceu o DividePass.');
       }
       if (leadSource === 'Outro' && !leadSourceOther.trim()) {
-        setError('Conte como você conheceu o DividePass.');
-        return;
+        return fail('leadSourceOther', 'Conte como você conheceu o DividePass.');
       }
     }
 
@@ -90,19 +101,17 @@ function Register() {
     setError('');
 
     if (password.length < 6) {
-      setError('A senha deve ter pelo menos 6 caracteres.');
-      return;
+      return fail('password', 'A senha deve ter pelo menos 6 caracteres.');
     }
 
     if (password !== confirmPassword) {
-      setError('As senhas não coincidem.');
-      return;
+      return fail('confirmPassword', 'As senhas não coincidem.');
     }
 
     setLoading(true);
 
     try {
-      await signUp(name.trim(), email.trim(), phone.trim(), password, inviteCode || null, {
+      await signUp(name.trim(), email.trim(), onlyDigits(phone), password, inviteCode || null, {
         lead_source: leadSource,
         lead_source_other: leadSource === 'Outro' ? leadSourceOther.trim() : null,
       });
@@ -195,12 +204,23 @@ function Register() {
                 type="text"
                 id="name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  clearError('name');
+                }}
                 placeholder="João da Silva"
+                className={fieldErrors.name ? 'input-error' : ''}
+                aria-invalid={!!fieldErrors.name}
+                aria-describedby={fieldErrors.name ? 'name-error' : undefined}
                 autoFocus
-                required
               />
-              <span className="form-hint">Use seu nome completo.</span>
+              {fieldErrors.name ? (
+                <span className="field-error" id="name-error">
+                  <AlertCircle size={13} /> {fieldErrors.name}
+                </span>
+              ) : (
+                <span className="form-hint">Use seu nome completo.</span>
+              )}
             </div>
           )}
 
@@ -211,12 +231,24 @@ function Register() {
                 type="tel"
                 id="phone"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => {
+                  setPhone(maskPhone(e.target.value));
+                  clearError('phone');
+                }}
                 placeholder="(11) 99999-9999"
+                className={fieldErrors.phone ? 'input-error' : ''}
+                aria-invalid={!!fieldErrors.phone}
+                aria-describedby={fieldErrors.phone ? 'phone-error' : undefined}
+                inputMode="numeric"
                 autoFocus
-                required
               />
-              <span className="form-hint">É por aqui que falamos com você quando precisar.</span>
+              {fieldErrors.phone ? (
+                <span className="field-error" id="phone-error">
+                  <AlertCircle size={13} /> {fieldErrors.phone}
+                </span>
+              ) : (
+                <span className="form-hint">É por aqui que falamos com você quando precisar.</span>
+              )}
             </div>
           )}
 
@@ -227,36 +259,58 @@ function Register() {
                 type="email"
                 id="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  clearError('email');
+                }}
                 placeholder="seu@email.com"
+                className={fieldErrors.email ? 'input-error' : ''}
+                aria-invalid={!!fieldErrors.email}
+                aria-describedby={fieldErrors.email ? 'email-error' : undefined}
                 autoFocus
-                required
               />
-              <span className="form-hint">Enviamos a confirmação de cadastro para cá.</span>
+              {fieldErrors.email ? (
+                <span className="field-error" id="email-error">
+                  <AlertCircle size={13} /> {fieldErrors.email}
+                </span>
+              ) : (
+                <span className="form-hint">Enviamos a confirmação de cadastro para cá.</span>
+              )}
             </div>
           )}
 
           {step === 4 && (
             <>
               <div className="form-group">
-                <label htmlFor="leadSource">Como você conheceu o DividePass?</label>
-                <select
-                  id="leadSource"
-                  value={leadSource}
-                  onChange={(e) => {
-                    setLeadSource(e.target.value);
-                    if (e.target.value !== 'Outro') setLeadSourceOther('');
-                  }}
-                  autoFocus
-                  required
-                >
-                  <option value="">Selecione...</option>
-                  {LEAD_SOURCES.map((source) => (
-                    <option key={source} value={source}>
-                      {source}
-                    </option>
-                  ))}
-                </select>
+                <label id="leadSourceLabel">Como você conheceu o DividePass?</label>
+                <div className="lead-source-grid" role="group" aria-labelledby="leadSourceLabel">
+                  {LEAD_SOURCES.map((source) => {
+                    const selected = leadSource === source;
+                    return (
+                      <button
+                        key={source}
+                        type="button"
+                        className={`lead-source-chip ${selected ? 'selected' : ''}`}
+                        aria-pressed={selected}
+                        onClick={() => {
+                          setLeadSource(source);
+                          if (source !== 'Outro') {
+                            setLeadSourceOther('');
+                            clearError('leadSourceOther');
+                          }
+                          clearError('leadSource');
+                        }}
+                      >
+                        {source}
+                      </button>
+                    );
+                  })}
+                </div>
+                {fieldErrors.leadSource && (
+                  <span className="field-error" id="leadSource-error">
+                    <AlertCircle size={13} /> {fieldErrors.leadSource}
+                  </span>
+                )}
               </div>
 
               {leadSource === 'Outro' && (
@@ -266,10 +320,19 @@ function Register() {
                     type="text"
                     id="leadSourceOther"
                     value={leadSourceOther}
-                    onChange={(e) => setLeadSourceOther(e.target.value)}
+                    onChange={(e) => {
+                      setLeadSourceOther(e.target.value);
+                      clearError('leadSourceOther');
+                    }}
                     placeholder="Ex: vi num grupo do Facebook"
-                    required
+                    className={fieldErrors.leadSourceOther ? 'input-error' : ''}
+                    aria-invalid={!!fieldErrors.leadSourceOther}
                   />
+                  {fieldErrors.leadSourceOther && (
+                    <span className="field-error" id="leadSourceOther-error">
+                      <AlertCircle size={13} /> {fieldErrors.leadSourceOther}
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -310,11 +373,21 @@ function Register() {
                   type="password"
                   id="password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    clearError('password');
+                    clearError('confirmPassword');
+                  }}
                   placeholder="Mínimo de 6 caracteres"
+                  className={fieldErrors.password ? 'input-error' : ''}
+                  aria-invalid={!!fieldErrors.password}
                   autoFocus
-                  required
                 />
+                {fieldErrors.password && (
+                  <span className="field-error">
+                    <AlertCircle size={13} /> {fieldErrors.password}
+                  </span>
+                )}
               </div>
 
               <div className="form-group">
@@ -323,10 +396,19 @@ function Register() {
                   type="password"
                   id="confirmPassword"
                   value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    clearError('confirmPassword');
+                  }}
                   placeholder="••••••••"
-                  required
+                  className={fieldErrors.confirmPassword ? 'input-error' : ''}
+                  aria-invalid={!!fieldErrors.confirmPassword}
                 />
+                {fieldErrors.confirmPassword && (
+                  <span className="field-error">
+                    <AlertCircle size={13} /> {fieldErrors.confirmPassword}
+                  </span>
+                )}
               </div>
             </>
           )}

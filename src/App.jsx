@@ -65,6 +65,7 @@ import Coupons from './pages/admin/Coupons';
 import PlatformEvents from './pages/admin/PlatformEvents';
 import Surveys from './pages/admin/Surveys';
 import SurveyResults from './pages/admin/SurveyResults';
+import OnboardingReport from './pages/admin/OnboardingReport';
 import TestimonialsAdmin from './pages/admin/TestimonialsAdmin';
 import SavingsStats from './pages/admin/SavingsStats';
 import ServicePlans from './pages/admin/ServicePlans';
@@ -153,6 +154,7 @@ function App() {
             <Route path="coupons" element={<Coupons />} />
             <Route path="events" element={<PlatformEvents />} />
             <Route path="surveys" element={<Surveys />} />
+            <Route path="onboarding" element={<OnboardingReport />} />
             <Route path="surveys/:id/edit" element={<Surveys />} />
             <Route path="surveys/:id/results" element={<SurveyResults />} />
             <Route path="testimonials" element={<TestimonialsAdmin />} />

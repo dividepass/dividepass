@@ -11,6 +11,7 @@ import { getStoredTheme, getSystemTheme, applyTheme } from '../../lib/themeUtils
 import logoImg from '../../assets/logo.png';
 import PwaInstallGate from '../../components/PwaInstallGate';
 import PushNotificationGate from '../../components/PushNotificationGate';
+import OnboardingGate from '../../components/OnboardingGate';
 import './UserLayout.css';
 
 const APP_VERSION = '1.0.0.2';
@@ -78,6 +79,9 @@ function UserLayout() {
 
   return (
     <div className="layout-container">
+      {/* Primeiro da lista: o onboarding bloqueia a tela, então nada mais
+          por cima dele enquanto ele estiver ativo. */}
+      <OnboardingGate />
       <PwaInstallGate />
       <PushNotificationGate />
 
