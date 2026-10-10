@@ -48,7 +48,8 @@ function SavingsStats() {
         .select(`
           *,
           user:user_id(id, name, email),
-          group:group_id(id, name, service_id)
+          group:group_id(id, name, service_id),
+          subscription:subscription_id(billing_cycle)
         `)
         .eq('payment_type', 'subscription')
         .order('created_at', { ascending: false })
@@ -168,7 +169,7 @@ function SavingsStats() {
       const official = Number(p.official_price) || 0;
       const paid = Number(p.paid_amount) || Number(p.amount) || 0;
       if (!official) return sum;
-      const cycleMonths = getCycleMonths(p.billing_cycle, p.custom_months);
+      const cycleMonths = getCycleMonths(p.subscription?.billing_cycle, p.custom_months);
       const totalOfficial = official * cycleMonths;
       return sum + Math.max(0, totalOfficial - paid);
     }, 0);
@@ -187,7 +188,7 @@ function SavingsStats() {
       const official = Number(p.official_price) || 0;
       const paid = Number(p.paid_amount) || Number(p.amount) || 0;
       if (!official) return;
-      const cycleMonths = getCycleMonths(p.billing_cycle, p.custom_months);
+      const cycleMonths = getCycleMonths(p.subscription?.billing_cycle, p.custom_months);
       const totalOfficial = official * cycleMonths;
       const savings = Math.max(0, totalOfficial - paid);
 
@@ -208,7 +209,7 @@ function SavingsStats() {
       const official = Number(p.official_price) || 0;
       const paid = Number(p.paid_amount) || Number(p.amount) || 0;
       if (!official) return;
-      const cycleMonths = getCycleMonths(p.billing_cycle, p.custom_months);
+      const cycleMonths = getCycleMonths(p.subscription?.billing_cycle, p.custom_months);
       const totalOfficial = official * cycleMonths;
       const savings = Math.max(0, totalOfficial - paid);
 
@@ -475,7 +476,7 @@ function SavingsStats() {
                 const plan = plansMap[payment.group?.plan_id];
                 const official = Number(payment.official_price) || 0;
                 const paid = Number(payment.paid_amount) || Number(payment.amount) || 0;
-                const cycleMonths = getCycleMonths(payment.billing_cycle, payment.custom_months);
+                const cycleMonths = getCycleMonths(payment.subscription?.billing_cycle, payment.custom_months);
                 const totalOfficial = official * cycleMonths;
                 const savings = official > 0 ? Math.max(0, totalOfficial - paid) : 0;
 
@@ -616,14 +617,14 @@ function SavingsStats() {
                 <div className="detail-item">
                   <span className="detail-label">Ciclo de cobrança</span>
                   <span className="detail-value">
-                    {selectedPayment.billing_cycle || '-'} ({getCycleMonths(selectedPayment.billing_cycle, selectedPayment.custom_months)} meses)
+                    {selectedPayment.subscription?.billing_cycle || '-'} ({getCycleMonths(selectedPayment.subscription?.billing_cycle, selectedPayment.custom_months)} meses)
                   </span>
                 </div>
                 <div className="detail-item">
                   <span className="detail-label">Preço oficial total (período)</span>
                   <span className="detail-value text-muted">
                     {Number(selectedPayment.official_price) > 0
-                      ? fmtBRL(Number(selectedPayment.official_price) * getCycleMonths(selectedPayment.billing_cycle, selectedPayment.custom_months))
+                      ? fmtBRL(Number(selectedPayment.official_price) * getCycleMonths(selectedPayment.subscription?.billing_cycle, selectedPayment.custom_months))
                       : '-'}
                   </span>
                 </div>
@@ -635,7 +636,7 @@ function SavingsStats() {
                   <span className="detail-label">Economia calculada</span>
                   <span className="detail-value text-success">
                     {Number(selectedPayment.official_price) > 0
-                      ? fmtBRL(Math.max(0, Number(selectedPayment.official_price) * getCycleMonths(selectedPayment.billing_cycle, selectedPayment.custom_months) - Number(selectedPayment.paid_amount || selectedPayment.amount)))
+                      ? fmtBRL(Math.max(0, Number(selectedPayment.official_price) * getCycleMonths(selectedPayment.subscription?.billing_cycle, selectedPayment.custom_months) - Number(selectedPayment.paid_amount || selectedPayment.amount)))
                       : 'N/A'}
                   </span>
                 </div>

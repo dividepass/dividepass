@@ -204,8 +204,9 @@ export default function Home() {
         .from('payments')
         .select(`
           id, user_id, amount, official_price, paid_amount,
-          billing_cycle, custom_months, status, payment_type, created_at,
-          group:group_id(service_id)
+          custom_months, status, payment_type, created_at,
+          group:group_id(service_id),
+          subscription:subscription_id(billing_cycle)
         `)
         .eq('status', 'paid')
         .eq('payment_type', 'subscription')
@@ -225,7 +226,8 @@ export default function Home() {
         const totalSavings = withPrice.reduce((sum, p) => {
           const official = Number(p.official_price) || 0;
           const paid = Number(p.paid_amount) || Number(p.amount) || 0;
-          const cycleMonths = getCycleMonths(p.billing_cycle, p.custom_months);
+          // payments não tem billing_cycle: o ciclo vive na assinatura.
+          const cycleMonths = getCycleMonths(p.subscription?.billing_cycle, p.custom_months);
           const totalOfficial = official * cycleMonths;
           return sum + Math.max(0, totalOfficial - paid);
         }, 0);
