@@ -1,12 +1,16 @@
 import { useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, ArrowRight, ArrowLeft, Loader2, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
+import { Camera, ArrowRight, ArrowLeft, Loader2, AlertCircle, CheckCircle2, Sparkles, Plus, X } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import { saveAvatar } from '../lib/uploadAvatar';
 import { buildOnboardingPath, pickColumnValues, ONBOARDING_STEPS } from '../lib/onboardingQuestions';
+import { maskPhone, onlyDigits, isValidPhone } from '../lib/maskPhone';
 import PlatformPicker, { NONE_PLATFORM } from './PlatformPicker';
 import './OnboardingFlow.css';
+
+// Últimos 10 dígitos: compara 11... com 55... como o mesmo contato.
+const right11 = (digits) => String(digits || '').slice(-10);
 
 const SCREEN_AVATAR = 'avatar';
 const SCREEN_SURVEY = 'survey';
@@ -43,6 +47,12 @@ export default function OnboardingFlow() {
   const [platformPicks, setPlatformPicks] = useState({});
   const [customPicks, setCustomPicks] = useState({});
   const [customInputs, setCustomInputs] = useState({});
+
+  // Etapa final: pessoas que o usuário chamaria para um grupo.
+  const [invites, setInvites] = useState([]);
+  const [inviteName, setInviteName] = useState('');
+  const [invitePhone, setInvitePhone] = useState('');
+  const [inviteError, setInviteError] = useState('');
 
   // A sequência só muda quando a resposta do yes/no muda, então recalcular
   // por render é barato e evita uma lista de passos dessincronizada.
@@ -97,6 +107,21 @@ export default function OnboardingFlow() {
 
     if (s.type === 'text') return true; // opcional
 
+    // A etapa de indicações é a única que não usa `answers`: as pessoas
+    // ficam em `invites`, porque viram linhas próprias na tabela.
+    if (s.type === 'invites') {
+      const falta = (s.minInvites || 2) - invites.length;
+      if (falta > 0) {
+        setError(
+          falta === 1
+            ? 'Adicione mais 1 pessoa para continuar.'
+            : `Adicione mais ${falta} pessoas para continuar.`
+        );
+        return false;
+      }
+      return true;
+    }
+
     const value = answers[s.id];
     const empty =
       value === undefined ||
@@ -127,6 +152,37 @@ export default function OnboardingFlow() {
   const handleBack = () => {
     setError('');
     setIndex((i) => Math.max(i - 1, 0));
+  };
+
+  const addInvite = () => {
+    const name = inviteName.trim();
+    const phone = onlyDigits(invitePhone);
+
+    if (!name) {
+      setInviteError('Digite o nome da pessoa.');
+      return;
+    }
+    if (!isValidPhone(phone)) {
+      setInviteError('Digite um WhatsApp válido com DDD.');
+      return;
+    }
+    // O mesmo contato não entra duas vezes nem com DDD diferente.
+    const jaTem = invites.some((i) => i.phone === phone || right11(i.phone) === right11(phone));
+    if (jaTem) {
+      setInviteError('Esse WhatsApp já foi adicionado.');
+      return;
+    }
+
+    setInvites((prev) => [...prev, { name, phone }]);
+    setInviteName('');
+    setInvitePhone('');
+    setInviteError('');
+    setError('');
+  };
+
+  const removeInvite = (phone) => {
+    setInvites((prev) => prev.filter((i) => i.phone !== phone));
+    setInviteError('');
   };
 
   const handleAvatarFile = (e) => {
@@ -212,6 +268,16 @@ export default function OnboardingFlow() {
         if (intErr) throw intErr;
       }
 
+      if (invites.length) {
+        const { error: invErr } = await supabase
+          .from('user_onboarding_invites')
+          .upsert(
+            invites.map((i) => ({ user_id: profile.id, name: i.name, phone: i.phone })),
+            { onConflict: 'user_id,phone', ignoreDuplicates: true }
+          );
+        if (invErr) throw invErr;
+      }
+
       // A flag vai por último: se algo acima falhar, o gate abre de novo
       // em vez de marcar o onboarding como concluído sem estar.
       const { error: userErr } = await supabase
@@ -255,6 +321,16 @@ export default function OnboardingFlow() {
                   {(profile?.name || '?').charAt(0).toUpperCase()}
                 </div>
               )}
+              {!avatarFile && (
+                <button
+                  className="ob-avatar-edit"
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={uploading}
+                  aria-label="Escolher foto"
+                >
+                  <Camera size={16} />
+                </button>
+              )}
             </div>
 
             {error && (
@@ -263,27 +339,18 @@ export default function OnboardingFlow() {
               </div>
             )}
 
-            <div className="ob-actions">
-              <button className="ob-btn-primary" onClick={goToSurvey} disabled={uploading}>
+            <div className="ob-actions ob-actions-center">
+              <button className="ob-btn-primary ob-btn-block" onClick={goToSurvey} disabled={uploading}>
                 {uploading ? <><Loader2 size={16} className="spin" /> Enviando...</> : <>Continuar <ArrowRight size={16} /></>}
               </button>
-              <button
-                className="ob-btn-ghost"
-                onClick={() => setScreen(SCREEN_SURVEY)}
-                disabled={uploading}
-              >
-                {avatarFile ? 'Enviar depois' : 'Agora não'}
-              </button>
             </div>
-            {!avatarFile && (
-              <button
-                className="ob-upload-link"
-                onClick={() => avatarInputRef.current?.click()}
-                disabled={uploading}
-              >
-                <Camera size={14} /> Escolher foto
-              </button>
-            )}
+            <button
+              className="ob-upload-link"
+              onClick={() => setScreen(SCREEN_SURVEY)}
+              disabled={uploading}
+            >
+              {avatarFile ? 'Enviar a foto depois' : 'Agora não, quero pular essa etapa'}
+            </button>
             <input
               ref={avatarInputRef}
               type="file"
@@ -402,6 +469,75 @@ export default function OnboardingFlow() {
                 onRemoveCustom={(name) => removeCustom(step, name)}
                 helper={step.helper}
               />
+            )}
+
+            {step.type === 'invites' && (
+              <div className="ob-invites">
+                {step.helper && <p className="ob-invites-helper">{step.helper}</p>}
+
+                {invites.length > 0 && (
+                  <ul className="ob-invites-list">
+                    {invites.map((i) => (
+                      <li key={i.phone}>
+                        <span className="ob-invites-avatar">{i.name.charAt(0).toUpperCase()}</span>
+                        <span className="ob-invites-info">
+                          <strong>{i.name}</strong>
+                          <span>{maskPhone(i.phone)}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeInvite(i.phone)}
+                          aria-label={`Remover ${i.name}`}
+                        >
+                          <X size={14} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <div className="ob-invites-count">
+                  <strong>{invites.length}</strong> de {step.minInvites || 2} adicionadas
+                </div>
+
+                <div className="ob-invites-form">
+                  <div className="ob-invites-row">
+                    <input
+                      type="text"
+                      value={inviteName}
+                      onChange={(e) => { setInviteName(e.target.value); setInviteError(''); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addInvite(); } }}
+                      placeholder="Nome"
+                      aria-label="Nome da pessoa"
+                    />
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      value={invitePhone}
+                      onChange={(e) => { setInvitePhone(maskPhone(e.target.value)); setInviteError(''); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addInvite(); } }}
+                      placeholder="(11) 99999-9999"
+                      aria-label="WhatsApp da pessoa"
+                    />
+                    <button type="button" onClick={addInvite} disabled={uploading}>
+                      <Plus size={16} /> Adicionar
+                    </button>
+                  </div>
+
+                  {inviteError && (
+                    <span className="field-error">
+                      <AlertCircle size={13} /> {inviteError}
+                    </span>
+                  )}
+
+                  {invites.length < (step.minInvites || 2) && (
+                    <p className="ob-invites-hint">
+                      Faltam <strong>{(step.minInvites || 2) - invites.length}</strong>{' '}
+                      {(step.minInvites || 2) - invites.length === 1 ? 'pessoa' : 'pessoas'} para continuar.
+                    </p>
+                  )}
+                </div>
+              </div>
             )}
 
             {step.type === 'text' && (

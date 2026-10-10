@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Users, Target, Loader2, Search, TrendingUp, Share2, CheckCircle2 } from 'lucide-react';
+import { Target, Loader2, Search, TrendingUp, Share2, CheckCircle2, UserPlus } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { ONBOARDING_STEPS, labelForValue } from '../../lib/onboardingQuestions';
 import './OnboardingReport.css';
@@ -24,6 +24,7 @@ const SCALAR_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'single' && s
 export default function OnboardingReport() {
   const [rows, setRows] = useState([]);
   const [interests, setInterests] = useState([]);
+  const [invites, setInvites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('overview');
@@ -38,12 +39,13 @@ export default function OnboardingReport() {
 
       // Só o completed_at vem do perfil; as respostas estão em user_onboarding_profiles.
       // Select enxuto para não puxar email_verified e cpf de 100+ usuários à toa.
-      const [profilesRes, interestsRes] = await Promise.all([
+      const [profilesRes, interestsRes, invitesRes] = await Promise.all([
         supabase
           .from('users')
           .select('id, name, email, avatar_url, created_at, onboarding_completed_at')
           .not('onboarding_completed_at', 'is', null),
         supabase.from('user_onboarding_interests').select('*'),
+        supabase.from('user_onboarding_invites').select('*'),
       ]);
 
       if (cancelled) return;
@@ -54,9 +56,18 @@ export default function OnboardingReport() {
       if (cancelled) return;
 
       const answersByUser = Object.fromEntries((answers || []).map((a) => [a.user_id, a]));
+      const invitesByUser = {};
+      for (const inv of invitesRes.data || []) {
+        (invitesByUser[inv.user_id] = invitesByUser[inv.user_id] || []).push(inv);
+      }
 
-      setRows(users.map((u) => ({ ...u, answers: answersByUser[u.id] || null })));
+      setRows(users.map((u) => ({
+        ...u,
+        answers: answersByUser[u.id] || null,
+        invites: invitesByUser[u.id] || [],
+      })));
       setInterests(interestsRes.data || []);
+      setInvites(invitesRes.data || []);
       setError('');
       setLoading(false);
     })();
@@ -172,14 +183,13 @@ export default function OnboardingReport() {
   const wantGroup = rows.filter((r) => r.answers?.group_interest === 'sim').length;
   const maybeGroup = rows.filter((r) => r.answers?.group_interest === 'talvez').length;
   const alreadyShares = rows.filter((r) => r.answers?.already_shares === true).length;
-  const paysNothing = rows.filter((r) => r.answers?.subscriptions_count_band === 'nenhuma').length;
 
   const stats = [
     { label: 'Onboarding concluído', value: total, icon: <CheckCircle2 size={18} />, tone: 'green' },
     { label: 'Quer entrar em grupo', value: wantGroup, icon: <Target size={18} />, tone: 'blue' },
     { label: 'Pode querer', value: maybeGroup, icon: <TrendingUp size={18} />, tone: 'orange' },
     { label: 'Já compartilha', value: alreadyShares, icon: <Share2 size={18} />, tone: 'purple' },
-    { label: 'Não paga assinatura', value: paysNothing, icon: <Users size={18} />, tone: 'red' },
+    { label: 'Pessoas indicadas', value: invites.length, icon: <UserPlus size={18} />, tone: 'red' },
   ];
 
   // ── Lista ──────────────────────────────────────────────────────────────
@@ -367,6 +377,7 @@ export default function OnboardingReport() {
                     <th>Com quem</th>
                     <th>Interesse</th>
                     <th>Top interesse</th>
+                    <th>Convidaria</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -411,6 +422,24 @@ export default function OnboardingReport() {
                           </span>
                         </td>
                         <td>{top ? top.platform_name : '—'}</td>
+                        <td>
+                          {row.invites?.length ? (
+                            <div className="ob-invite-cells">
+                              {row.invites.map((iv) => (
+                                <a
+                                  key={iv.id}
+                                  href={`https://wa.me/${iv.phone}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="ob-invite-chip"
+                                  title={`Falar com ${iv.name} no WhatsApp`}
+                                >
+                                  {iv.name}
+                                </a>
+                              ))}
+                            </div>
+                          ) : '—'}
+                        </td>
                       </tr>
                     );
                   })}

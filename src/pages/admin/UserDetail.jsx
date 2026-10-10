@@ -991,6 +991,7 @@ function UserDetail() {
 function OnboardingAnswers({ userId, completedAt }) {
   const [profile, setProfile] = useState(null);
   const [interests, setInterests] = useState([]);
+  const [invites, setInvites] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -999,13 +1000,15 @@ function OnboardingAnswers({ userId, completedAt }) {
 
     (async () => {
       setLoading(true);
-      const [pRes, iRes] = await Promise.all([
+      const [pRes, iRes, invRes] = await Promise.all([
         supabase.from('user_onboarding_profiles').select('*').eq('user_id', userId).maybeSingle(),
         supabase.from('user_onboarding_interests').select('*').eq('user_id', userId),
+        supabase.from('user_onboarding_invites').select('*').eq('user_id', userId),
       ]);
       if (cancelled) return;
       setProfile(pRes.data || null);
       setInterests(iRes.data || []);
+      setInvites(invRes.data || []);
       setLoading(false);
     })();
 
@@ -1083,6 +1086,36 @@ function OnboardingAnswers({ userId, completedAt }) {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="admin-card">
+        <div className="crons-section-header">
+          <h3>Pessoas que ele convidaria para um grupo</h3>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{invites.length}</span>
+        </div>
+        {invites.length === 0 ? (
+          <div className="empty-table"><p>Ninguém informado.</p></div>
+        ) : (
+          <div className="ob-invite-list">
+            {invites.map((iv) => (
+              <div className="ob-invite-row" key={iv.id}>
+                <div className="ob-invite-avatar">{iv.name.charAt(0).toUpperCase()}</div>
+                <div className="ob-invite-info">
+                  <strong>{iv.name}</strong>
+                  <span>{iv.phone}</span>
+                </div>
+                <a
+                  className="ob-invite-wa"
+                  href={`https://wa.me/${iv.phone}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Phone size={13} /> Falar
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {[['current', current], ['interested', interested]].map(([kind, list]) => (

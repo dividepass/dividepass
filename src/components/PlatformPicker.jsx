@@ -40,16 +40,43 @@ export default function PlatformPicker({
 
     (async () => {
       setLoading(true);
-      const { data } = await supabase
-        .from('streaming_services')
-        .select('id, name, icon_url, color')
-        .in('category', categoryKey ? categoryKey.split(',') : ['__none__']);
+      const catList = categoryKey ? categoryKey.split(',') : ['__none__'];
+
+      const [svcRes, groupsRes] = await Promise.all([
+        supabase
+          .from('streaming_services')
+          .select('id, name, icon_url, color, pinned, featured')
+          .in('category', catList),
+        // Só os ids: 23 linhas hoje, e é o que alimenta a 2ª ordem.
+        supabase.from('groups').select('service_id'),
+      ]);
 
       if (cancelled) return;
 
-      const list = data || [];
-      // Fixadas e em destaque primeiro, como no catálogo.
-      list.sort((a, b) => (b.pinned === a.pinned ? (a.name || '').localeCompare(b.name || '', 'pt-BR') : b.pinned ? 1 : -1));
+      // Quantos grupos cada plataforma tem. Uma plataforma com grupo é o que
+      // realmente vendemos, então sobe na lista mesmo sem ser destaque.
+      const groupCount = new Map();
+      for (const g of groupsRes.data || []) {
+        if (!g.service_id) continue;
+        groupCount.set(g.service_id, (groupCount.get(g.service_id) || 0) + 1);
+      }
+
+      const list = svcRes.data || [];
+      list.sort((a, b) => {
+        // 1. destaques (pinned ou featured) — o que a plataforma quer mostrar
+        const aHot = a.pinned === true || a.featured === true ? 1 : 0;
+        const bHot = b.pinned === true || b.featured === true ? 1 : 0;
+        if (aHot !== bHot) return bHot - aHot;
+
+        // 2. quem já tem grupo — é o que temos pra vender agora
+        const aGroups = groupCount.get(a.id) || 0;
+        const bGroups = groupCount.get(b.id) || 0;
+        if (aGroups !== bGroups) return bGroups - aGroups;
+
+        // 3. alfabética, para achar o resto
+        return (a.name || '').localeCompare(b.name || '', 'pt-BR');
+      });
+
       setPlatforms(list);
       setLoading(false);
     })();

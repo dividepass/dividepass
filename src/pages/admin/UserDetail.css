@@ -508,3 +508,54 @@
   justify-content: flex-end;
   padding-top: 0.5rem;
 }
+.ob-invite-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 1.25rem;
+}
+
+.ob-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.6rem;
+  background: var(--background);
+  border: 1px solid var(--border);
+}
+
+.ob-invite-row .ob-invite-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #4F46E5, #EA580C);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ob-invite-info { flex: 1; min-width: 0; }
+
+.ob-invite-info strong { display: block; font-size: 0.88rem; color: var(--text-main); }
+.ob-invite-info span { font-size: 0.78rem; color: var(--text-muted); }
+
+.ob-invite-wa {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 0.45rem;
+  background: rgba(37, 211, 102, 0.14);
+  color: #15803D;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ob-invite-wa:hover { background: rgba(37, 211, 102, 0.26); }

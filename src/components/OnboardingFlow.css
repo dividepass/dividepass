@@ -72,15 +72,18 @@
 .ob-info .ob-title { margin-bottom: 0.9rem; }
 
 .ob-avatar-area {
+  position: relative;
   display: flex;
   justify-content: center;
-  margin-bottom: 1.25rem;
+  margin: 0 auto 1.5rem;
+  width: 112px;
+  height: 112px;
 }
 
 .ob-avatar-img,
 .ob-avatar-placeholder {
-  width: 96px;
-  height: 96px;
+  width: 112px;
+  height: 112px;
   border-radius: 50%;
   object-fit: cover;
   border: 2px solid var(--border);
@@ -90,10 +93,208 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2rem;
+  font-size: 2.25rem;
   font-weight: 800;
   color: #fff;
-  background: linear-gradient(90deg, #4F46E5, #EA580C);
+  background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 50%, #EA580C 100%);
+  box-shadow: 0 10px 30px rgba(79, 70, 229, 0.28);
+}
+
+/* Botão de câmera sobreposto no canto do avatar, em vez de um link solto
+   abaixo dos botões — o alvo fica onde o olho já está. */
+.ob-avatar-edit {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary);
+  color: #fff;
+  border: 2px solid var(--surface);
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.ob-avatar-edit:hover:not(:disabled) {
+  transform: scale(1.08);
+  background: var(--action);
+}
+
+.ob-avatar-edit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.ob-actions-center {
+  justify-content: center;
+}
+
+.ob-btn-block {
+  width: 100%;
+  justify-content: center;
+  padding: 0.85rem 1.5rem;
+}
+
+/* ─────────── Etapa de indicações ─────────── */
+.ob-invites {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ob-invites-helper {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.ob-invites-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+}
+
+.ob-invites-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.6rem;
+  background: var(--background);
+  border: 1px solid var(--border);
+}
+
+.ob-invites-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #4F46E5, #EA580C);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ob-invites-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ob-invites-info strong {
+  font-size: 0.88rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ob-invites-info span {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.ob-invites-list li button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ob-invites-list li button:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #EF4444;
+}
+
+.ob-invites-count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.ob-invites-count strong {
+  color: var(--primary);
+  font-size: 0.95rem;
+}
+
+.ob-invites-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 0.7rem;
+  border: 1px dashed var(--border-strong, #475569);
+  background: var(--background);
+}
+
+.ob-invites-row {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.ob-invites-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.ob-invites-row input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.ob-invites-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.55rem 0.85rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: linear-gradient(90deg, var(--primary), var(--action));
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ob-invites-row button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.ob-invites-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.ob-invites-hint strong { color: var(--primary); }
+
+@media (max-width: 480px) {
+  .ob-invites-row { flex-wrap: wrap; }
+  .ob-invites-row input { flex: 1 1 100%; }
+  .ob-invites-row button { width: 100%; justify-content: center; }
 }
 
 .ob-progress-wrap {

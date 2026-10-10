@@ -18,9 +18,12 @@
 export const INTEREST_CATEGORIES = {
   STREAMING: ['streaming'],
   MUSIC: ['musica'],
-  AI: ['ia'],
   HEALTH: ['saude'],
-  OTHER: ['cursos', 'produtividade', 'ferramentas', 'leitura', 'games', 'seguranca'],
+  // Idiomas, finanças e cursos propriamente ditos (Duolingo, Busuu,
+  // Nath Finanças, Descomplica, Brainly...).
+  EDUCATION: ['cursos'],
+  AI: ['ia', 'produtividade', 'ferramentas'],
+  OTHER: ['leitura', 'games', 'seguranca'],
 };
 
 export const ONBOARDING_STEPS = [
@@ -141,8 +144,9 @@ export const ONBOARDING_STEPS = [
     categories: [
       ...INTEREST_CATEGORIES.STREAMING,
       ...INTEREST_CATEGORIES.MUSIC,
-      ...INTEREST_CATEGORIES.AI,
       ...INTEREST_CATEGORIES.HEALTH,
+      ...INTEREST_CATEGORIES.EDUCATION,
+      ...INTEREST_CATEGORIES.AI,
       ...INTEREST_CATEGORIES.OTHER,
     ],
   },
@@ -166,15 +170,6 @@ export const ONBOARDING_STEPS = [
   },
 
   {
-    id: 'interested_ai',
-    type: 'platforms',
-    kind: 'interested',
-    title: 'Quais ferramentas de inteligência artificial e produtividade te interessam?',
-    helper: 'Selecione todas as opções que despertam seu interesse.',
-    categories: [...INTEREST_CATEGORIES.AI, ...INTEREST_CATEGORIES.OTHER],
-  },
-
-  {
     id: 'interested_health',
     type: 'platforms',
     kind: 'interested',
@@ -184,12 +179,31 @@ export const ONBOARDING_STEPS = [
   },
 
   {
-    id: 'recommend',
-    type: 'text',
-    column: 'would_recommend',
-    title: 'Indicaria o DividePass para alguém? Ou criaria um grupo com você?',
-    helper: 'Opcional. Conte como você nos encontraria.',
-    placeholder: 'Ex: criaria um grupo de Netflix com a minha família...',
+    id: 'interested_education',
+    type: 'platforms',
+    kind: 'interested',
+    title: 'Quais serviços de educação e idiomas te interessam?',
+    helper: 'Cursos, idiomas e educação financeira.',
+    categories: INTEREST_CATEGORIES.EDUCATION,
+  },
+
+  {
+    id: 'interested_ai',
+    type: 'platforms',
+    kind: 'interested',
+    title: 'Quais ferramentas de inteligência artificial e produtividade te interessam?',
+    helper: 'Selecione todas as opções que despertam seu interesse.',
+    categories: INTEREST_CATEGORIES.AI,
+  },
+
+  {
+    // Última etapa. Não é texto livre: o usuário adiciona as pessoas que
+    // chamaria para um grupo, e o mínimo de 2 libera o botão de concluir.
+    id: 'invites',
+    type: 'invites',
+    minInvites: 2,
+    title: 'Se você fosse criar um grupo hoje para dividir assinaturas, tem amigos ou familiares que faria sentido convidar para participar?',
+    helper: 'Adicione pelo menos 2 pessoas. Podemos avisar quando abrir grupos que combinam com elas.',
   },
 ];
 
