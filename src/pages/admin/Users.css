@@ -280,3 +280,83 @@
     padding: 0.75rem;
   }
 }
+
+/* ----------- Filtros e ordenação ----------- */
+.users-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.users-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--text-muted);
+  height: 42px;
+}
+
+.users-filter select,
+.users-filter-select {
+  border: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.2rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.users-filter select:focus,
+.users-filter-select:focus {
+  outline: none;
+}
+
+.users-filter-select {
+  height: 42px;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.users-filter-clear {
+  height: 42px;
+  padding: 0 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.users-filter-clear:hover {
+  color: var(--text-main);
+  border-color: var(--primary);
+}
+
+.action-btn.whatsapp {
+  color: #25D366;
+}
+
+.action-btn.whatsapp:hover {
+  background: rgba(37, 211, 102, 0.12);
+}
+
+@media (max-width: 768px) {
+  .users-filters {
+    width: 100%;
+  }
+
+  .users-filter,
+  .users-filter-select,
+  .users-filter-clear {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}

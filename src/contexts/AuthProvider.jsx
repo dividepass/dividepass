@@ -73,7 +73,7 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
-  const signUp = useCallback(async (name, email, phone, password, referralCode = null) => {
+  const signUp = useCallback(async (name, email, phone, password, referralCode = null, extraData = {}) => {
     const attribution = getGoogleAdsAttribution();
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -82,6 +82,8 @@ export function AuthProvider({ children }) {
         data: {
           name,
           phone,
+          lead_source: extraData.lead_source || null,
+          lead_source_other: extraData.lead_source_other || null,
           ga_source: attribution?.source || null,
           ga_gclid: attribution?.gclid || null,
           ga_utm_source: attribution?.utm_source || null,

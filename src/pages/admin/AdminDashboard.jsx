@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import {
   Users,
@@ -9,8 +10,24 @@ import {
   Activity,
   DollarSign,
   Shield,
+  Flame,
+  X,
 } from 'lucide-react';
 import './AdminDashboard.css';
+
+const CATEGORY_LABELS = {
+  general: 'Geral',
+  billing: 'Financeiro',
+  credential: 'Credenciais',
+  technical: 'Técnico',
+  other: 'Outro',
+};
+
+const PRIORITY_LABELS = {
+  normal: 'Normal',
+  high: 'Alta',
+  critical: 'Crítica',
+};
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('pt-BR', {
@@ -70,6 +87,7 @@ function isSuccessfulPaymentAttemptStatus(status) {
 }
 
 function AdminDashboard() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState({
     totalUsers: 0,
@@ -80,10 +98,19 @@ function AdminDashboard() {
     openTickets: 0,
   });
   const [activities, setActivities] = useState([]);
+  const [openTickets, setOpenTickets] = useState([]);
+  const [popupCritical, setPopupCritical] = useState(null);
   const [stats, setStats] = useState({
     usersByRole: {},
     groupsByStatus: {},
   });
+
+  const dismissCritical = (id) => {
+    const seen = JSON.parse(localStorage.getItem('dp_seen_critical_tickets') || '[]');
+    const next = Array.from(new Set([...seen, id]));
+    localStorage.setItem('dp_seen_critical_tickets', JSON.stringify(next));
+    setPopupCritical((prev) => (prev && prev.id === id ? null : prev));
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -108,17 +135,21 @@ function AdminDashboard() {
           platformEventsRes,
           rolesRes,
           groupsRes,
+          openTicketsRes,
+          criticalTicketsRes,
         ] = await Promise.all([
           supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'user').maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
           supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active').maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
           supabase.from('payments').select('amount, transaction_code, created_at').eq('status', 'paid').gte('created_at', firstDayOfMonth).lte('created_at', lastDayOfMonth),
           supabase.from('payment_attempts').select('amount, gateway_transaction_id, external_reference, status, created_at').gte('created_at', firstDayOfMonth).lte('created_at', lastDayOfMonth),
           supabase.from('master_accounts').select('cost').eq('status', 'active'),
-          supabase.from('support_tickets').select('id', { count: 'exact', head: true }).in('status', ['open', 'in_progress']).maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
+          supabase.from('support_tickets').select('id', { count: 'exact', head: true }).in('status', ['open', 'answered']).eq('archived', false).maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
           supabase.from('activity_logs').select('id, action, description, created_at').gte('created_at', last24Hours).order('created_at', { ascending: false }).limit(10),
           supabase.from('platform_events').select('id, event_type, title, message, created_at').gte('created_at', last24Hours).order('created_at', { ascending: false }).limit(10),
           supabase.from('users').select('role'),
           supabase.from('groups').select('status'),
+          supabase.from('support_tickets').select('id, subject, category, priority, status, created_at, user:users(id, name, email)').eq('archived', false).in('status', ['open', 'answered']).order('created_at', { ascending: true }).limit(50),
+          supabase.from('support_tickets').select('id, subject, priority, created_at, user:users(id, name, email)').eq('archived', false).eq('priority', 'critical').in('status', ['open', 'answered']).order('created_at', { ascending: true }),
         ]);
 
         if (cancelled) return;
@@ -190,6 +221,12 @@ function AdminDashboard() {
         });
 
         setStats({ usersByRole: rolesMap, groupsByStatus: groupsMap });
+
+        setOpenTickets(openTicketsRes.data || []);
+
+        const seen = new Set(JSON.parse(localStorage.getItem('dp_seen_critical_tickets') || '[]'));
+        const unseen = (criticalTicketsRes.data || []).filter((t) => !seen.has(t.id));
+        setPopupCritical(unseen[0] || null);
       } catch (err) {
         console.error('AdminDashboard fetch error:', err);
       } finally {
@@ -281,6 +318,48 @@ function AdminDashboard() {
         ))}
       </div>
 
+      {openTickets.length > 0 && (
+        <div className="support-block">
+          <div className="panel-header">
+            <h2>
+              <AlertTriangle size={18} />
+              Suporte
+            </h2>
+            <button className="support-see-all" onClick={() => navigate('/admin/support')}>
+              Ver todos
+            </button>
+          </div>
+
+          <ul className="support-list">
+            {openTickets.slice(0, 6).map((ticket) => (
+              <li key={ticket.id}>
+                <button
+                  className={`support-row priority-${ticket.priority || 'normal'}`}
+                  onClick={() => navigate(`/admin/support/${ticket.id}`)}
+                >
+                  <span className="support-priority-dot" aria-hidden />
+                  <span className="support-row-main">
+                    <span className="support-row-subject">{ticket.subject}</span>
+                    <span className="support-row-meta">
+                      {ticket.user?.name || ticket.user?.email || 'Usuário'}
+                      {' · '}
+                      {CATEGORY_LABELS[ticket.category] || 'Geral'}
+                      {' · '}
+                      {formatRelativeTime(ticket.created_at)}
+                    </span>
+                  </span>
+                  {ticket.priority && ticket.priority !== 'normal' && (
+                    <span className={`badge priority-badge ${ticket.priority}`}>
+                      {PRIORITY_LABELS[ticket.priority]}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="activity-section">
           <div className="activity-panel">
             <div className="panel-header">
@@ -351,6 +430,50 @@ function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      {popupCritical && (
+        <div className="critical-popup-backdrop" onClick={() => dismissCritical(popupCritical.id)}>
+          <div
+            className="critical-popup"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="critical-popup-close"
+              onClick={() => dismissCritical(popupCritical.id)}
+              aria-label="Fechar"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="critical-popup-icon">
+              <Flame size={24} />
+            </div>
+
+            <h3>Ticket crítico aberto</h3>
+            <p className="critical-popup-subject">{popupCritical.subject}</p>
+            <p className="critical-popup-meta">
+              {popupCritical.user?.name || popupCritical.user?.email || 'Usuário'}
+              {' · '}
+              {formatRelativeTime(popupCritical.created_at)}
+            </p>
+
+            <div className="critical-popup-actions">
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  dismissCritical(popupCritical.id);
+                  navigate(`/admin/support/${popupCritical.id}`);
+                }}
+              >
+                Ver ticket
+              </button>
+              <button className="btn btn-outline" onClick={() => dismissCritical(popupCritical.id)}>
+                Depois
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

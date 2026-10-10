@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Plus, Loader2, ChevronLeft, Pencil, Trash2, Heart, Search, X,
@@ -305,7 +305,15 @@ function GroupsTab() {
   const getActiveMembers = (group) =>
     group.members?.filter(m => m.status === 'active' || m.status === 'pending').length || 0;
 
-  const filteredServices = services.filter(s =>
+  // Esta aba só lista plataformas que têm ao menos um grupo. A aba Plataformas
+// continua mostrando todas, senão o admin não consegue editar uma plataforma
+// que ainda não tem grupo.
+  const servicesWithGroups = useMemo(() => {
+    const ids = new Set(groups.map(g => g.service_id).filter(Boolean));
+    return services.filter(s => ids.has(s.id));
+  }, [services, groups]);
+
+  const filteredServices = servicesWithGroups.filter(s =>
     s.name?.toLowerCase().includes(serviceSearch.toLowerCase()) ||
     s.full_name?.toLowerCase().includes(serviceSearch.toLowerCase())
   );
@@ -499,7 +507,7 @@ function GroupsTab() {
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
-        <p className="page-subtitle" style={{ margin: 0 }}>{groups.length} grupos em {services.length} plataformas</p>
+        <p className="page-subtitle" style={{ margin: 0 }}>{groups.length} grupos em {servicesWithGroups.length} plataformas</p>
         <div className="groups-header-actions">
           <Link to="/admin/interest" className="btn btn-outline btn-sm">
             <Heart size={16} /> Lista de Espera

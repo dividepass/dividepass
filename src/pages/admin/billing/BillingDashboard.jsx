@@ -26,6 +26,23 @@ function formatCurrency(value) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 }
 
+// Uma assinatura está em atraso quando a data da próxima cobrança já passou
+// OU quando o gateway está em tentativa de repagamento.
+// Não usamos billing_status 'overdue'/'failed': esses valores não existem no
+// banco (só 'active' e 'retrying'), então o filtro antigo sempre retornava 0.
+function isOverdueSub(s, now = new Date()) {
+  if (!s) return false;
+  if (s.billing_status === 'retrying') return true;
+  return !!s.next_charge_at && new Date(s.next_charge_at) < now;
+}
+
+function subscriptionStatus(s, now = new Date()) {
+  if (s?.billing_status === 'retrying') return { label: 'Em tentativa', tone: 'retrying' };
+  if (isOverdueSub(s, now)) return { label: 'Atrasada', tone: 'overdue' };
+  if (s?.next_charge_at) return { label: 'Agendada', tone: 'active' };
+  return { label: 'Sem previsão', tone: 'pending' };
+}
+
 function BillingDashboard() {
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState({
@@ -64,6 +81,10 @@ function BillingDashboard() {
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
       const today = now.toISOString().split('T')[0];
       const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString().split('T')[0];
+      const nowIso = now.toISOString();
+
+      const OVERDUE_FILTER = `next_charge_at.lt.${nowIso},billing_status.eq.retrying`;
+      const isOverdue = (s) => isOverdueSub(s, now);
 
       const [
         subsActiveRes,
@@ -77,7 +98,7 @@ function BillingDashboard() {
         supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active'),
         supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).gte('started_at', today).lt('started_at', tomorrow),
         supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'cancelled').gte('updated_at', firstDay),
-        supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active').or('billing_status.eq.overdue,billing_status.eq.failed'),
+        supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('billing_status', 'retrying'),
         supabase.from('payments').select('amount').eq('status', 'paid').eq('payment_type', 'subscription').gte('created_at', firstDay).lte('created_at', lastDay),
         supabase.from('user_subscriptions')
           .select(`
@@ -97,7 +118,7 @@ function BillingDashboard() {
             group:group_id (id, name),
             service:service_id (id, name)
           `)
-          .or('billing_status.eq.overdue,billing_status.eq.failed')
+          .or(OVERDUE_FILTER)
           .order('updated_at', { ascending: false })
           .limit(10),
       ]);
@@ -120,12 +141,12 @@ function BillingDashboard() {
 
       let failuresTodayCount = 0;
       (todaySubsRes.data || []).forEach(s => {
-        if (s.billing_status === 'overdue' || s.billing_status === 'failed') failuresTodayCount++;
+        if (isOverdue(s)) failuresTodayCount++;
       });
 
       const allActiveRes = await supabase.from('user_subscriptions').select('billing_status', { count: 'exact', head: true }).eq('status', 'active');
       const totalActive = allActiveRes.count || 0;
-      const allFailedRes = await supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active').or('billing_status.eq.overdue,billing_status.eq.failed');
+      const allFailedRes = await supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active').or(OVERDUE_FILTER);
       const totalFailed = allFailedRes.count || 0;
       let approvalRate = totalActive > 0 ? Math.round(((totalActive - totalFailed) / totalActive) * 100) : 100;
 
@@ -433,9 +454,9 @@ function BillingDashboard() {
         <div className="metric-card">
           <div className="metric-icon revenue"><BarChart3 size={22} /></div>
           <div className="metric-info">
-            <span className="metric-label">MRR</span>
+            <span className="metric-label">Equivalente mensal</span>
             <span className="metric-value">{formatCurrency(metrics.mrr)}</span>
-            <span className="metric-sub">Receita mensal recorrente</span>
+            <span className="metric-sub">Ciclos maiores normalizados por mês</span>
           </div>
         </div>
 
@@ -460,8 +481,8 @@ function BillingDashboard() {
           </div>
           {(() => {
             let data = todayCharges;
-            if (cardFilter === 'failures') data = todayCharges.filter(c => c.billing_status === 'overdue' || c.billing_status === 'failed');
-            else if (cardFilter === 'retrying') data = todayCharges.filter(c => c.retry_count > 0);
+            if (cardFilter === 'failures') data = todayCharges.filter(c => isOverdueSub(c));
+            else if (cardFilter === 'retrying') data = todayCharges.filter(c => c.billing_status === 'retrying');
 
             if (data.length === 0) {
               return <p className="empty-state">{cardFilter ? 'Nenhum item para este filtro.' : 'Nenhuma cobrança agendada para hoje.'}</p>;
@@ -476,7 +497,7 @@ function BillingDashboard() {
                       <th>Grupo</th>
                       <th>Ciclo</th>
                       <th>Cartão</th>
-                      <th>Valor</th>
+<th>Valor do ciclo</th>
                       <th>Status</th>
                     </tr>
                   </thead>
@@ -495,12 +516,14 @@ function BillingDashboard() {
                         <td>{charge.card_last4 ? `•••• ${charge.card_last4}` : <span style={{ color: '#ef4444' }}>Sem cartão</span>}</td>
                         <td><strong>{formatCurrency(charge.amount)}</strong></td>
                         <td>
-                          <span className={`status-badge ${charge.billing_status || charge.status}`}>
-                            {charge.billing_status === 'overdue' ? 'Atrasada' :
-                             charge.billing_status === 'failed' ? 'Falhou' :
-                             charge.billing_status === 'active' ? 'Agendada' :
-                             charge.status === 'active' ? 'Agendada' : 'Pendente'}
-                          </span>
+                          {(() => {
+                            const st = subscriptionStatus(charge, new Date());
+                            return (
+                              <span className={`status-badge ${st.tone}`}>
+                                {st.label}
+                              </span>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}
@@ -550,11 +573,16 @@ function BillingDashboard() {
                           {fail.retry_count || 0}ª
                         </span>
                       </td>
-                      <td>
-                        <span className={`status-badge ${fail.billing_status || 'failed'}`}>
-                          {fail.billing_status === 'overdue' ? 'Atrasada' : 'Falhou'}
-                        </span>
-                      </td>
+<td>
+                          {(() => {
+                            const st = subscriptionStatus(fail, new Date());
+                            return (
+                              <span className={`status-badge ${st.tone}`}>
+                                {st.label}
+                              </span>
+                            );
+                          })()}
+                        </td>
                       <td>{fail.updated_at ? new Date(fail.updated_at).toLocaleDateString('pt-BR') : '—'}</td>
                     </tr>
                   ))}

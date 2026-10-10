@@ -163,6 +163,23 @@
   font-weight: 700;
   color: var(--primary);
   flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.renewal-value em {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+.sub-value-equivalent {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 .renewal-card.alert {

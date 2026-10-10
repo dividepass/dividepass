@@ -85,3 +85,63 @@
   color: #818CF8;
   text-decoration: underline;
 }
+
+/* ----------- Cadastro em etapas ----------- */
+.reg-progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 1.5rem;
+}
+
+.reg-progress-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.25s ease;
+}
+
+.reg-progress-bar.done {
+  background: var(--primary);
+}
+
+.reg-progress-bar.current {
+  background: var(--primary);
+  opacity: 0.55;
+}
+
+.register-form .form-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.reg-nav {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.reg-nav .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.reg-nav-next {
+  margin-left: auto;
+  justify-content: center;
+}
+
+@media (max-width: 480px) {
+  .reg-nav {
+    flex-direction: column-reverse;
+  }
+
+  .reg-nav-next {
+    margin-left: 0;
+    width: 100%;
+  }
+}

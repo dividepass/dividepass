@@ -1,8 +1,38 @@
-import { useState, useEffect } from 'react';
-import { Search, Phone, Shield, User, Eye, Loader2, Trash2, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, Phone, Shield, User, Eye, Loader2, Trash2, RefreshCw, MessageCircle, ArrowUpDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import './Users.css';
+
+const SORT_OPTIONS = [
+  { key: 'name_asc', label: 'Nome (A-Z)' },
+  { key: 'name_desc', label: 'Nome (Z-A)' },
+  { key: 'created_desc', label: 'Mais recentes' },
+  { key: 'created_asc', label: 'Mais antigos' },
+  { key: 'status', label: 'Status' },
+];
+
+const STATUS_OPTIONS = [
+  { key: 'all', label: 'Todos os status' },
+  { key: 'active', label: 'Ativos' },
+  { key: 'inactive', label: 'Inativos' },
+  { key: 'pending', label: 'Pendentes' },
+  { key: 'suspended', label: 'Suspensos' },
+];
+
+const STATUS_LABELS = {
+  active: 'Ativo',
+  inactive: 'Inativo',
+  pending: 'Pendente',
+  suspended: 'Suspenso',
+};
+
+function normalizePhone(phone) {
+  if (!phone) return null;
+  const digits = String(phone).replace(/\D/g, '');
+  if (!digits) return null;
+  return digits.startsWith('55') ? digits : `55${digits}`;
+}
 
 function Users() {
   const [users, setUsers] = useState([]);
@@ -12,12 +42,53 @@ function Users() {
   const [deletingUser, setDeletingUser] = useState(null);
   const [syncingMembers, setSyncingMembers] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
+  const [sortBy, setSortBy] = useState('created_desc');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [pushFilter, setPushFilter] = useState('all');
 
-  const filteredUsers = users.filter(user =>
-    user.name?.toLowerCase().includes(search.toLowerCase()) ||
-    user.email?.toLowerCase().includes(search.toLowerCase()) ||
-    user.phone?.includes(search)
-  );
+  const filteredUsers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    const list = users.filter((user) => {
+      if (query) {
+        const matches =
+          user.name?.toLowerCase().includes(query) ||
+          user.email?.toLowerCase().includes(query) ||
+          (user.phone && user.phone.includes(query));
+        if (!matches) return false;
+      }
+
+      if (statusFilter !== 'all' && user.status !== statusFilter) return false;
+      if (roleFilter !== 'all' && user.role !== roleFilter) return false;
+
+      if (pushFilter === 'with' && !user.push_notifications_enabled_at) return false;
+      if (pushFilter === 'without' && user.push_notifications_enabled_at) return false;
+
+      return true;
+    });
+
+    const byName = (a, b) => (a?.name || '').localeCompare(b?.name || '', 'pt-BR');
+
+    return [...list].sort((a, b) => {
+      switch (sortBy) {
+        case 'name_asc':
+          return byName(a, b);
+        case 'name_desc':
+          return byName(b, a);
+        case 'created_asc':
+          return new Date(a.created_at) - new Date(b.created_at);
+        case 'status':
+          return (a.status || '').localeCompare(b.status || '') || byName(a, b);
+        case 'created_desc':
+        default:
+          return new Date(b.created_at) - new Date(a.created_at);
+      }
+    });
+  }, [users, search, statusFilter, roleFilter, pushFilter, sortBy]);
+
+  const hasActiveFilters =
+    statusFilter !== 'all' || roleFilter !== 'all' || pushFilter !== 'all' || search.trim() !== '';
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +144,21 @@ function Users() {
     setSyncingMembers(false);
   };
 
+  const handleWhatsApp = (user) => {
+    const phone = normalizePhone(user.phone);
+    if (!phone) {
+      alert('Este usuário não tem WhatsApp cadastrado.');
+      return;
+    }
+
+    const nome = (user.name || '').split(' ')[0] || 'tudo bem';
+    const texto =
+      `Olá, ${nome}! Aqui é do suporte do DividePass. ` +
+      `Podemos falar sobre a sua conta?`;
+
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener,noreferrer');
+  };
+
   const handleDeleteUser = async (userId, userName) => {
     if (!window.confirm(`Tem certeza que deseja excluir o usuário "${userName}"?\n\nEsta ação irá:\n- Remover todos os dados do usuário\n- Remover de todos os grupos\n- Excluir a conta permanentemente\n\nEsta ação NÃO pode ser desfeita.`)) {
       return;
@@ -101,7 +187,11 @@ function Users() {
       <div className="admin-header">
         <div>
           <h1>Gestão de Usuários</h1>
-          <p className="page-subtitle">{users.length} usuários cadastrados</p>
+          <p className="page-subtitle">
+            {hasActiveFilters
+              ? `${filteredUsers.length} de ${users.length} usuários`
+              : `${users.length} usuários cadastrados`}
+          </p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <button className="btn btn-outline" onClick={handleSyncAllMembers} disabled={syncingMembers}>
@@ -129,6 +219,64 @@ function Users() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+        </div>
+
+        <div className="users-filters">
+          <label className="users-filter">
+            <ArrowUpDown size={14} />
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="Ordenar por">
+              {SORT_OPTIONS.map((opt) => (
+                <option key={opt.key} value={opt.key}>{opt.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <select
+            className="users-filter-select"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            aria-label="Filtrar por status"
+          >
+            {STATUS_OPTIONS.map((opt) => (
+              <option key={opt.key} value={opt.key}>{opt.label}</option>
+            ))}
+          </select>
+
+          <select
+            className="users-filter-select"
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+            aria-label="Filtrar por permissão"
+          >
+            <option value="all">Toda permissão</option>
+            <option value="user">Somente usuários</option>
+            <option value="admin">Somente administradores</option>
+          </select>
+
+          <select
+            className="users-filter-select"
+            value={pushFilter}
+            onChange={(e) => setPushFilter(e.target.value)}
+            aria-label="Filtrar por notificação push"
+          >
+            <option value="all">Push: todos</option>
+            <option value="with">Com push ativado</option>
+            <option value="without">Sem push</option>
+          </select>
+
+          {hasActiveFilters && (
+            <button
+              className="users-filter-clear"
+              onClick={() => {
+                setSearch('');
+                setStatusFilter('all');
+                setRoleFilter('all');
+                setPushFilter('all');
+              }}
+            >
+              Limpar filtros
+            </button>
+          )}
         </div>
       </div>
 
@@ -193,7 +341,7 @@ function Users() {
                     </td>
                     <td>
                       <span className={`status-badge ${user.status}`}>
-                        {user.status === 'active' ? 'Ativo' : user.status}
+                        {STATUS_LABELS[user.status] || user.status || '—'}
                       </span>
                     </td>
                     <td>
@@ -203,6 +351,15 @@ function Users() {
                     </td>
                     <td>
                       <div className="actions-cell">
+                        <button
+                          className="action-btn whatsapp"
+                          title={user.phone ? `Falar no WhatsApp com ${user.name}` : 'Usuário sem WhatsApp cadastrado'}
+                          onClick={() => handleWhatsApp(user)}
+                          disabled={!user.phone}
+                          style={!user.phone ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                        >
+                          <MessageCircle size={18} />
+                        </button>
                         <Link to={`/admin/users/${user.id}`} className="action-btn" title="Ver detalhes">
                           <Eye size={18} />
                         </Link>

@@ -149,6 +149,8 @@ function Subscriptions() {
       return nextCharge > thirtyDays && nextCharge <= sixtyDays;
     });
 
+    // Equivalente mensal: normaliza ciclos maiores (trimestral, anual...) por mês,
+// para o total ser comparável entre assinaturas de ciclos diferentes.
     const calcRevenue = (subs) => subs.reduce((sum, s) => {
       const cycle = s.billing_cycle || 'monthly';
       const months = CYCLE_MONTHS[cycle];
@@ -162,11 +164,22 @@ function Subscriptions() {
       return sum + amount;
     }, 0);
 
+    // Valor real que sai do cartão na cobrança: soma os valores de cada ciclo,
+    // sem normalizar. É o número que o usuário vai ver na fatura.
+    const calcCycleTotal = (subs) =>
+      subs.reduce((sum, s) => sum + (Number(s.amount || 0)), 0);
+
+    const buildStat = (list) => ({
+      count: list.length,
+      revenue: calcRevenue(list),
+      cycleTotal: calcCycleTotal(list),
+    });
+
     return {
-      thisMonth: { count: thisMonth.length, revenue: calcRevenue(thisMonth) },
-      next7Days: { count: next7Days.length, revenue: calcRevenue(next7Days) },
-      next30Days: { count: next30Days.length, revenue: calcRevenue(next30Days) },
-      next60Days: { count: next60Days.length, revenue: calcRevenue(next60Days) },
+      thisMonth: buildStat(thisMonth),
+      next7Days: buildStat(next7Days),
+      next30Days: buildStat(next30Days),
+      next60Days: buildStat(next60Days),
     };
   }, [subscriptions]);
 
@@ -462,6 +475,18 @@ function Subscriptions() {
     return '';
   };
 
+  // Equivalente mensal do valor do ciclo. Retorna null quando o ciclo já é
+  // mensal — aí não há divisão para mostrar, evitamos poluir a tabela.
+  const cycleMonthlyEquivalent = (sub) => {
+    const cycle = sub.billing_cycle || 'monthly';
+    const amount = Number(sub.amount || 0);
+    const months = CYCLE_MONTHS[cycle];
+
+    if (months && months > 1) return amount / months;
+    if (cycle === 'days' && sub.custom_cycle_days) return (amount / sub.custom_cycle_days) * 30;
+    return null;
+  };
+
   const paymentStatusLabel = (s) => ({
     paid: 'Pago', pending: 'Pendente', failed: 'Falhou', cancelled: 'Cancelado',
     approved: 'Aprovado', processing: 'Processando', authorized: 'Autorizado',
@@ -542,7 +567,9 @@ function Subscriptions() {
             <span className="renewal-count">{renewalStats.thisMonth.count}</span>
             <small>Vence este mês</small>
           </div>
-          <span className="renewal-value">R$ {renewalStats.thisMonth.revenue.toFixed(2)}</span>
+          <span className="renewal-value" title={"Equivalente mensal. Valor real cobrado no ciclo: R$ {renewalStats.thisMonth.cycleTotal.toFixed(2)}"}>
+            R$ {renewalStats.thisMonth.revenue.toFixed(2)}<em>/mês equiv.</em>
+          </span>
           {renewalStats.thisMonth.count > 0 && <span className="stat-detail-hint renewal-hint">Ver detalhes ›</span>}
         </div>
         <div className={`renewal-card ${renewalStats.next7Days.count > 0 ? 'critical' : ''} clickable`} onClick={() => renewalStats.next7Days.count > 0 && openStatDetail('next7')}>
@@ -551,7 +578,9 @@ function Subscriptions() {
             <span className="renewal-count">{renewalStats.next7Days.count}</span>
             <small>Próximos 7 dias</small>
           </div>
-          <span className="renewal-value">R$ {renewalStats.next7Days.revenue.toFixed(2)}</span>
+          <span className="renewal-value" title={"Equivalente mensal. Valor real cobrado no ciclo: R$ {renewalStats.next7Days.cycleTotal.toFixed(2)}"}>
+            R$ {renewalStats.next7Days.revenue.toFixed(2)}<em>/mês equiv.</em>
+          </span>
           {renewalStats.next7Days.count > 0 && <span className="stat-detail-hint renewal-hint">Ver detalhes ›</span>}
         </div>
         <div className={`renewal-card ${renewalStats.next30Days.count > 0 ? 'warning' : ''} clickable`} onClick={() => renewalStats.next30Days.count > 0 && openStatDetail('next30')}>
@@ -560,7 +589,9 @@ function Subscriptions() {
             <span className="renewal-count">{renewalStats.next30Days.count}</span>
             <small>Próximos 30 dias</small>
           </div>
-          <span className="renewal-value">R$ {renewalStats.next30Days.revenue.toFixed(2)}</span>
+          <span className="renewal-value" title={"Equivalente mensal. Valor real cobrado no ciclo: R$ {renewalStats.next30Days.cycleTotal.toFixed(2)}"}>
+            R$ {renewalStats.next30Days.revenue.toFixed(2)}<em>/mês equiv.</em>
+          </span>
           {renewalStats.next30Days.count > 0 && <span className="stat-detail-hint renewal-hint">Ver detalhes ›</span>}
         </div>
         <div className={`renewal-card clickable`} onClick={() => renewalStats.next60Days.count > 0 && openStatDetail('next60')}>
@@ -569,7 +600,9 @@ function Subscriptions() {
             <span className="renewal-count">{renewalStats.next60Days.count}</span>
             <small>Próximos 60 dias</small>
           </div>
-          <span className="renewal-value">R$ {renewalStats.next60Days.revenue.toFixed(2)}</span>
+          <span className="renewal-value" title={"Equivalente mensal. Valor real cobrado no ciclo: R$ {renewalStats.next60Days.cycleTotal.toFixed(2)}"}>
+            R$ {renewalStats.next60Days.revenue.toFixed(2)}<em>/mês equiv.</em>
+          </span>
           {renewalStats.next60Days.count > 0 && <span className="stat-detail-hint renewal-hint">Ver detalhes ›</span>}
         </div>
       </div>
@@ -638,7 +671,7 @@ function Subscriptions() {
               <tr>
                 <th>Usuário</th>
                 <th>Serviço / Grupo</th>
-                <th>Valor</th>
+                <th>Valor do ciclo</th>
                 <th>Periodicidade</th>
                 <th>Gateway</th>
                 <th>Status</th>
@@ -684,6 +717,15 @@ function Subscriptions() {
                         </span>
                       )}
                       <strong>R$ {Number(sub.amount || 0).toFixed(2)}</strong>
+                      {(() => {
+                        const eq = cycleMonthlyEquivalent(sub);
+                        if (eq === null) return null;
+                        return (
+                          <span className="sub-value-equivalent">
+                            equivale a R$ {eq.toFixed(2)}/mês
+                          </span>
+                        );
+                      })()}
                     </div>
                   </td>
                   <td>

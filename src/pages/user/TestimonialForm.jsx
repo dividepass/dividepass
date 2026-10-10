@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Star, Send, Loader2, CheckCircle, AlertCircle, Trash2, Sparkles, ArrowRight, Copy, Check } from 'lucide-react';
+import { Star, Send, Loader2, CheckCircle, AlertCircle, Trash2, Sparkles, ArrowRight, Copy, Check, ImageIcon, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
+import { saveAvatar } from '../../lib/uploadAvatar';
 import './TestimonialForm.css';
 
 function TestimonialForm() {
@@ -19,6 +20,29 @@ function TestimonialForm() {
   const [rewardData, setRewardData] = useState(null);
   const [rewardError, setRewardError] = useState('');
   const [couponCopied, setCouponCopied] = useState(false);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const avatarUrl = profile?.avatar_url || null;
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setMessage({ type: 'error', text: 'Selecione uma imagem válida.' });
+      return;
+    }
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setPhotoPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const removePhoto = () => {
+    setPhotoFile(null);
+    setPhotoPreview(null);
+  };
 
   useEffect(() => {
     loadMyTestimonials();
@@ -48,11 +72,20 @@ function TestimonialForm() {
       setMessage({ type: 'error', text: 'Você precisa estar autenticado para enviar um depoimento.' });
       return;
     }
-    setSubmitting(true);
+setSubmitting(true);
     setMessage(null);
     setRewardError('');
 
     try {
+      let currentAvatarUrl = avatarUrl;
+
+      if (photoFile) {
+        setUploadingPhoto(true);
+        currentAvatarUrl = await saveAvatar(photoFile, user.id);
+        setUploadingPhoto(false);
+        removePhoto();
+      }
+
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
       if (!accessToken) throw new Error('Sessão expirada. Faça login novamente.');
@@ -62,13 +95,14 @@ function TestimonialForm() {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${accessToken}`,
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
           user_name: profile?.name || user.user_metadata?.name || user.email || 'Anônimo',
           user_role: role || null,
           text: text.trim(),
           rating,
+          avatar_url: currentAvatarUrl || null,
         }),
       });
 
@@ -95,6 +129,7 @@ function TestimonialForm() {
     } catch (err) {
       setMessage({ type: 'error', text: err.message || 'Erro ao enviar depoimento.' });
     } finally {
+      setUploadingPhoto(false);
       setSubmitting(false);
     }
   };
@@ -240,9 +275,33 @@ function TestimonialForm() {
             />
           </div>
 
+          <div className="tf-form-group">
+            <label>Sua foto (opcional)</label>
+            {photoPreview ? (
+              <div className="image-preview-box">
+                <img src={photoPreview} alt="Preview" />
+                <button type="button" className="remove-image-btn" onClick={removePhoto}>
+                  <X size={16} />
+                </button>
+              </div>
+            ) : avatarUrl ? (
+              <div className="tf-avatar-current">
+                <img src={avatarUrl} alt="Seu avatar" />
+                <span>Essa é a foto que aparece no seu depoimento.</span>
+              </div>
+            ) : (
+              <label className="image-upload-area">
+                <ImageIcon size={24} />
+                <span>Adicionar uma foto</span>
+                <small>Aparece junto do seu depoimento (máx. 5MB)</small>
+                <input type="file" accept="image/*" onChange={handlePhotoChange} hidden />
+              </label>
+            )}
+          </div>
+
           <button type="submit" className="tf-submit" disabled={submitting || !text.trim()}>
             {submitting ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
-            {submitting ? 'Enviando...' : 'Enviar Depoimento'}
+            {uploadingPhoto ? 'Enviando foto...' : submitting ? 'Enviando...' : 'Enviar Depoimento'}
           </button>
         </form>
 

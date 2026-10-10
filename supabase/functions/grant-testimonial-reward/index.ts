@@ -40,7 +40,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { user_name, user_role, text, rating } = body;
+    const { user_name, user_role, text, rating, avatar_url } = body;
 
     // Validation
     if (!text || !text.trim()) {
@@ -80,6 +80,24 @@ Deno.serve(async (req: Request) => {
     // ── ATOMIC: criar testemunho + elegibilidade ───────────────────────────
     const expiresAt = new Date(Date.now() + REWARD_DAYS_VALID * 24 * 60 * 60 * 1000);
 
+    // Avatar é desnormalizado aqui porque a RLS de users não permite leitura
+    // por visitante anônimo, e a home pública precisa exibi-lo.
+    // Aceitamos só URL do próprio bucket para o cliente não injetar origem externa.
+    let safeAvatarUrl: string | null = null;
+    const submittedAvatar = typeof avatar_url === "string" ? avatar_url.trim() : "";
+    if (submittedAvatar) {
+      const { data: avatarProfile } = await supabaseAdmin
+        .from("users")
+        .select("avatar_url")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      // Só persistimos o avatar que realmente pertence a este usuário.
+      if (avatarProfile?.avatar_url && submittedAvatar === avatarProfile.avatar_url) {
+        safeAvatarUrl = avatarProfile.avatar_url;
+      }
+    }
+
     // Insert testimonial
     const { data: testimonial, error: testimonialErr } = await supabaseAdmin
       .from("testimonials")
@@ -90,6 +108,7 @@ Deno.serve(async (req: Request) => {
         text: text.trim(),
         rating: Number(rating),
         status: "pending",
+        avatar_url: safeAvatarUrl,
       })
       .select()
       .single();

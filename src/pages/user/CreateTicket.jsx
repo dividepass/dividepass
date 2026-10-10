@@ -14,6 +14,7 @@ function CreateTicket() {
   const [form, setForm] = useState({
     subject: '',
     category: 'general',
+    priority: 'normal',
     message: '',
   });
   const { imagePreview, handleImageChange, removeImage, uploadImage } = useSupportImageUpload();
@@ -40,6 +41,9 @@ function CreateTicket() {
         .insert({
           user_id: user.id,
           subject: form.subject.trim(),
+          category: form.category,
+          priority: form.priority,
+          archived: false,
         })
         .select('id')
         .single();
@@ -99,6 +103,20 @@ function CreateTicket() {
             <option value="technical">Técnico</option>
             <option value="other">Outro</option>
           </select>
+        </div>
+
+        <div className="form-group">
+          <label>Urgência</label>
+          <select name="priority" value={form.priority} onChange={handleChange}>
+            <option value="normal">Normal — resposta em até 24h</option>
+            <option value="high">Alta — está me impedindo de usar o serviço</option>
+            <option value="critical">Crítica —_perdi_ acesso à assinatura</option>
+          </select>
+          {form.priority === 'critical' && (
+            <small className="form-hint critical-hint">
+              Vamos priorizar esse ticket e avisar nossa equipe.
+            </small>
+          )}
         </div>
 
         <div className="form-group">

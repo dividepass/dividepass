@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Send, User, Headphones, MessageSquare, ImageIcon, X } from 'lucide-react';
+import { ArrowLeft, Loader2, Send, User, Headphones, MessageSquare, ImageIcon, X, Archive, ArchiveRestore } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { useSupportImageUpload } from '../../hooks/useSupportImageUpload';
@@ -89,10 +89,51 @@ function AdminTicketDetail() {
     setTicket(prev => ({ ...prev, status: newStatus }));
   };
 
+  const handlePriorityChange = async (newPriority) => {
+    const { error } = await supabase
+      .from('support_tickets')
+      .update({ priority: newPriority })
+      .eq('id', ticketId);
+
+    if (error) {
+      alert('Não foi possível alterar a urgência: ' + error.message);
+      return;
+    }
+    setTicket(prev => ({ ...prev, priority: newPriority }));
+  };
+
+  const handleArchiveToggle = async () => {
+    const next = !ticket.archived;
+    const { error } = await supabase
+      .from('support_tickets')
+      .update({
+        archived: next,
+        archived_at: next ? new Date().toISOString() : null,
+        archived_by: next ? user?.id ?? null : null,
+      })
+      .eq('id', ticketId);
+
+    if (error) {
+      alert('Não foi possível arquivar o ticket: ' + error.message);
+      return;
+    }
+    setTicket(prev => ({
+      ...prev,
+      archived: next,
+      archived_at: next ? new Date().toISOString() : null,
+    }));
+  };
+
   const statusConfig = {
     open: { label: 'Aberto', color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' },
     answered: { label: 'Respondido', color: '#3B82F6', bg: 'rgba(59,130,246,0.1)' },
     closed: { label: 'Fechado', color: '#22C55E', bg: 'rgba(34,197,94,0.1)' },
+  };
+
+  const priorityConfig = {
+    normal: { label: 'Normal', color: '#6B7280', bg: 'rgba(107,114,128,0.12)' },
+    high: { label: 'Alta', color: '#B45309', bg: 'rgba(245,158,11,0.15)' },
+    critical: { label: 'Crítica', color: '#DC2626', bg: 'rgba(239,68,68,0.15)' },
   };
 
   const categoryLabels = {
@@ -120,14 +161,46 @@ function AdminTicketDetail() {
 
       <div className="ticket-detail-meta">
         <span className="ticket-status-badge" style={{ background: st.bg, color: st.color }}>{st.label}</span>
-        <span className="ticket-category" style={{ fontSize: '0.85rem' }}>{categoryLabels[ticket.category]}</span>
+        <span className="ticket-category" style={{ fontSize: '0.85rem' }}>{categoryLabels[ticket.category] || '—'}</span>
+        <span
+          className="ticket-priority-badge"
+          style={{
+            background: (priorityConfig[ticket.priority] || priorityConfig.normal).bg,
+            color: (priorityConfig[ticket.priority] || priorityConfig.normal).color,
+          }}
+        >
+          {(priorityConfig[ticket.priority] || priorityConfig.normal).label}
+        </span>
         <span className="ticket-date">
           <User size={14} /> {ticket.user?.name || ticket.user?.email}
         </span>
         <span className="ticket-date">
           {new Date(ticket.created_at).toLocaleDateString('pt-BR')} às {new Date(ticket.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
         </span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <select
+            value={ticket.priority || 'normal'}
+            onChange={(e) => handlePriorityChange(e.target.value)}
+            title="Urgência do ticket"
+            style={{
+              padding: '0.3rem 0.5rem',
+              borderRadius: '0.4rem',
+              border: '1px solid var(--border)',
+              background: 'var(--background)',
+              color: 'var(--text-main)',
+              fontSize: '0.8rem',
+            }}
+          >
+            <option value="normal">Urgência: Normal</option>
+            <option value="high">Urgência: Alta</option>
+            <option value="critical">Urgência: Crítica</option>
+          </select>
+
+          <button className="btn btn-sm btn-outline" onClick={handleArchiveToggle}>
+            {ticket.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+            {ticket.archived ? 'Restaurar' : 'Arquivar'}
+          </button>
+
           {ticket.status !== 'open' && (
             <button className="btn btn-sm btn-outline" onClick={() => handleStatusChange('open')}>Reabrir</button>
           )}
@@ -136,6 +209,14 @@ function AdminTicketDetail() {
           )}
         </div>
       </div>
+
+      {ticket.archived && (
+        <div className="ticket-archived-banner">
+          <Archive size={14} />
+          Ticket arquivado em {new Date(ticket.archived_at).toLocaleString('pt-BR')}. Ele não aparece nas
+          contagens nem no dashboard, mas o usuário continua vendo o ticket dele.
+        </div>
+      )}
 
       <div className="messages-list">
         {messages.map(msg => (

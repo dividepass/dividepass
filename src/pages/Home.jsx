@@ -261,7 +261,7 @@ export default function Home() {
       .then(({ data }) => { if (data) setGroups(data); });
 
     supabase.from('testimonials')
-      .select('id, user_name, user_role, text, rating')
+      .select('id, user_name, user_role, text, rating, avatar_url')
       .eq('status', 'approved')
       .order('created_at', { ascending: false })
       .limit(6)
@@ -660,7 +660,13 @@ export default function Home() {
                     </div>
                     <p className="testimonial-text">"{testimonial.text}"</p>
                     <div className="testimonial-author">
-                      <div className="testimonial-avatar">{testimonial.user_name?.[0] || '?'}</div>
+                      <div className="testimonial-avatar">
+                        {testimonial.avatar_url ? (
+                          <img src={testimonial.avatar_url} alt={testimonial.user_name || 'Usuário'} />
+                        ) : (
+                          (testimonial.user_name?.[0] || '?')
+                        )}
+                      </div>
                       <div>
                         <strong>{testimonial.user_name}</strong>
                         <span>{testimonial.user_role || 'Usuário'}</span>

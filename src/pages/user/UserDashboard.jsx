@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ChevronLeft, ChevronRight, X, Pin, Star, Download, Smartphone, CheckCircle2, MessageSquare, TrendingUp, ChevronDown, AlertCircle, Info } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, X, Pin, Star, Download, Smartphone, CheckCircle2, MessageSquare, TrendingUp, ChevronDown, AlertCircle, Info, Camera } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
 import { supabase } from '../../lib/supabase';
+import { saveAvatar } from '../../lib/uploadAvatar';
 import ServicesCarousel from '../../components/ServicesCarousel';
 import SubscriptionsCarousel from '../../components/SubscriptionsCarousel';
 import { calculateUserSavings, getSavingsSummary, getAdminAlerts, fmtPercentage } from '../../utils/savingsService';
@@ -145,7 +146,7 @@ function SavingsServiceRow({ item, unavailable, expandedId, onToggle }) {
 }
 
 function UserDashboard() {
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
   const { currentUser, getActiveServices, getAvailableServices, isSubscribedToService, announcements, dismissAnnouncement, groups, streamingServices } = useAppDataContext();
   const { isStandalone, promptInstall } = usePwaInstall();
   const categoryBarRef = useRef(null);
@@ -359,6 +360,52 @@ function UserDashboard() {
   const hasActiveServices = activeServicesAll.length > 0;
   const shouldShowTestimonialCard = testimonialCheckDone && !hasTestimonial && !hideTestimonialCard;
   const shouldShowInstallCard = hasActiveServices && !hideInstallCard && !profile?.pwa_installed_at && !isStandalone;
+
+  // ── Pedido de foto de perfil (primeiro acesso) ──────────────────────
+  // Só aparece para quem ainda não tem avatar. "Agora não" esconde por 30 dias.
+  const avatarPromptKey = profile?.id ? `hide_avatar_prompt_${profile.id}` : null;
+  const [hideAvatarPrompt, setHideAvatarPrompt] = useState(() => {
+    if (!avatarPromptKey) return true;
+    const raw = localStorage.getItem(avatarPromptKey);
+    if (!raw) return false;
+    const ts = Number(raw);
+    return Number.isFinite(ts) && Date.now() - ts < 30 * 24 * 60 * 60 * 1000;
+  });
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+  const avatarInputRef = useRef(null);
+
+  const shouldShowAvatarPrompt = !hideAvatarPrompt && !profile?.avatar_url && !!profile?.id;
+
+  useEffect(() => {
+    if (avatarPromptKey) {
+      setHideAvatarPrompt(localStorage.getItem(avatarPromptKey) !== null);
+    }
+  }, [avatarPromptKey]);
+
+  const handleDismissAvatarPrompt = () => {
+    setHideAvatarPrompt(true);
+    if (avatarPromptKey) localStorage.setItem(avatarPromptKey, String(Date.now()));
+  };
+
+  const handleAvatarFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !profile?.id) return;
+
+    setAvatarUploading(true);
+    setAvatarError('');
+
+    try {
+      await saveAvatar(file, profile.id);
+      await refreshProfile();
+      handleDismissAvatarPrompt();
+    } catch (err) {
+      setAvatarError(err.message || 'Não foi possível enviar a foto.');
+    } finally {
+      setAvatarUploading(false);
+      if (e.target) e.target.value = '';
+    }
+  };
 
   const filteredServices = useMemo(() => {
     let services = availableServices;
@@ -608,6 +655,40 @@ function UserDashboard() {
               </div>
             </>
           )}
+        </section>
+      )}
+
+      {/* Card de foto de perfil: só enquanto o usuário não tem avatar */}
+      {shouldShowAvatarPrompt && (
+        <section className="avatar-prompt-card">
+          <div className="avatar-prompt-icon">
+            <Camera size={22} />
+          </div>
+          <div className="avatar-prompt-content">
+            <strong>Adicione uma foto de perfil</strong>
+            <p>Usuários com foto confiam mais na plataforma — e o seu depoimento aparece com ela na página inicial.</p>
+            {avatarError && <small className="avatar-prompt-error">{avatarError}</small>}
+          </div>
+          <div className="avatar-prompt-action">
+            <button
+              className="btn btn-primary btn-sm avatar-prompt-cta"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={avatarUploading}
+            >
+              <Camera size={15} />
+              {avatarUploading ? 'Enviando...' : 'Enviar foto'}
+            </button>
+            <button className="avatar-prompt-dismiss" onClick={handleDismissAvatarPrompt}>
+              Agora não
+            </button>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleAvatarFile}
+              hidden
+            />
+          </div>
         </section>
       )}
 

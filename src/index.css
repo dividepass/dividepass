@@ -113,9 +113,42 @@ input,
 select,
 textarea {
   font-family: var(--font-text);
+  color: var(--text-main);
+  background-color: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+}
+
+/* Sem isso o menu nativo do navegador abre branco e o texto fica ilegível
+   no tema escuro — as <option> não herdam cor do elemento pai. */
+select option {
+  background-color: var(--surface);
+  color: var(--text-main);
+}
+
+select:focus,
+input:focus,
+textarea:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
 /* Utilitários globais */
+
+/* Tabelas com many colunas estouravam a largura da tela no celular.
+   A classe já era usada no JSX mas nunca recebeu o comportamento de scroll. */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-responsive > table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

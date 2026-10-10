@@ -2779,3 +2779,92 @@
     font-size: 0.7rem;
   }
 }
+
+/* ----------- Pedido de foto de perfil ----------- */
+.avatar-prompt-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.08), rgba(234, 88, 12, 0.05));
+  border: 1px solid rgba(79, 70, 229, 0.2);
+  margin-bottom: 1.5rem;
+}
+
+.avatar-prompt-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(79, 70, 229, 0.12);
+  color: #4F46E5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.avatar-prompt-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.avatar-prompt-content strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  margin-bottom: 0.15rem;
+}
+
+.avatar-prompt-content p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.avatar-prompt-error {
+  display: block;
+  margin-top: 0.35rem;
+  color: #EF4444;
+  font-size: 0.78rem;
+}
+
+.avatar-prompt-action {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.avatar-prompt-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.avatar-prompt-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  text-decoration: underline;
+}
+
+.avatar-prompt-dismiss:hover {
+  color: var(--text-main);
+}
+
+@media (max-width: 640px) {
+  .avatar-prompt-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .avatar-prompt-action {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
