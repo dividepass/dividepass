@@ -8,7 +8,7 @@ import './TestimonialForm.css';
 
 function TestimonialForm() {
   const navigate = useNavigate();
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, refreshProfile, loading: authLoading } = useAuth();
   const [myTestimonials, setMyTestimonials] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -84,6 +84,8 @@ setSubmitting(true);
         currentAvatarUrl = await saveAvatar(photoFile, user.id);
         setUploadingPhoto(false);
         removePhoto();
+        // Mantém o card de foto e o cabeçalho em dia com o novo avatar.
+        if (refreshProfile) await refreshProfile();
       }
 
       const { data: sessionData } = await supabase.auth.getSession();
@@ -118,6 +120,21 @@ setSubmitting(true);
           return;
         }
         throw new Error(data.error || 'Erro ao enviar depoimento.');
+      }
+
+      // A edge function grava o avatar_url do depoimento quando já foi
+      // atualizada. Até lá, gravamos direto: a RLS permite o usuário
+      // atualizar o próprio depoimento enquanto ele está 'pending'.
+      if (currentAvatarUrl && data.testimonial_id) {
+        const { error: avatarErr } = await supabase
+          .from('testimonials')
+          .update({ avatar_url: currentAvatarUrl })
+          .eq('id', data.testimonial_id);
+
+        if (avatarErr) {
+          // Avatar é cosmético: o depoimento e o cupom já estão garantidos.
+          console.error('Não foi possível gravar o avatar no depoimento:', avatarErr);
+        }
       }
 
       setRewardData(data.reward);

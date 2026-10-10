@@ -44,15 +44,11 @@ function Register() {
     setStep(next);
   };
 
-  // Enter avança em vez de submeter o formulário.
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && step < TOTAL_STEPS) {
-      e.preventDefault();
-      handleNext();
-    }
-  };
-
-  const handleNext = () => {
+  // Enter já dispara o onSubmit do <form> (implicit submission), então não
+  // precisa de handler de teclado separado.
+  const handleNext = (e) => {
+    // Sem isso o <form> faz submit nativo e a página recarrega, zerando o wizard.
+    e.preventDefault();
     setError('');
 
     if (step === 1 && name.trim().length < 3) {
@@ -348,7 +344,7 @@ function Register() {
             )}
 
             {step < TOTAL_STEPS ? (
-              <button type="submit" className="btn btn-primary reg-nav-next" onKeyDown={handleKeyDown}>
+              <button type="submit" className="btn btn-primary reg-nav-next">
                 Continuar <ArrowRight size={16} />
               </button>
             ) : (
