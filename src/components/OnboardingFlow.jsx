@@ -1,32 +1,32 @@
 import { useState, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Camera, ArrowRight, ArrowLeft, Loader2, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import { saveAvatar } from '../lib/uploadAvatar';
 import { buildOnboardingPath, pickColumnValues, ONBOARDING_STEPS } from '../lib/onboardingQuestions';
 import PlatformPicker, { NONE_PLATFORM } from './PlatformPicker';
-import './OnboardingGate.css';
+import './OnboardingFlow.css';
 
 const SCREEN_AVATAR = 'avatar';
 const SCREEN_SURVEY = 'survey';
 const SCREEN_DONE = 'done';
 
 /**
- * Onboarding de primeiro acesso: foto (pulado) + pesquisa de qualificação
+ * Conteúdo do onboarding: foto (pulado) + pesquisa de qualificação
  * (obrigatória).
  *
- * Segue o padrão dos gates já existentes (PwaInstallGate, PushNotificationGate):
- * componente montado no UserLayout, cobrindo todas as páginas de /dashboard,
- * com `if (!shouldShow) return null` e conclusão persistida no backend.
+ * É uma página dedicada, não um modal. Com overlay o usuário dispensava
+ * com um clique e nunca mais voltava; como rota, o guard do UserLayout
+ * devolve qualquer tentativa de sair para o dashboard.
  *
  * A pesquisa não tem como ser pulada: `users.onboarding_completed_at` só é
- * gravado ao terminar todas as etapas, e é esse campo que os outros gates
- * leem para não atrapalhar.
+ * gravado ao terminar todas as etapas, e é esse campo que os gates de PWA e
+ * push leem para não atrapalharem.
  */
-export default function OnboardingGate() {
+export default function OnboardingFlow() {
   const { profile, refreshProfile } = useAuth();
-
-  const shouldShow = !!profile && !profile.onboarding_completed_at;
+  const navigate = useNavigate();
 
   const [screen, setScreen] = useState(SCREEN_AVATAR);
   const [index, setIndex] = useState(0);
@@ -47,8 +47,6 @@ export default function OnboardingGate() {
   // A sequência só muda quando a resposta do yes/no muda, então recalcular
   // por render é barato e evita uma lista de passos dessincronizada.
   const path = useMemo(() => buildOnboardingPath(answers), [answers]);
-
-  if (!shouldShow) return null;
 
   const step = path[index];
   const isFirst = index === 0;
@@ -236,8 +234,8 @@ export default function OnboardingGate() {
   const progress = Math.round(((index + 1) / path.length) * 100);
 
   return (
-    <div className="ob-backdrop" role="dialog" aria-modal="true" aria-labelledby="ob-title">
-      <div className="ob-modal">
+    <div className="ob-flow" role="region" aria-labelledby="ob-title">
+      <div className="ob-card">
         {screen === SCREEN_AVATAR && (
           <>
             <div className="ob-icon"><Camera size={26} /></div>
@@ -454,6 +452,11 @@ export default function OnboardingGate() {
             <div className="ob-icon ob-icon-done"><CheckCircle2 size={28} /></div>
             <h2 id="ob-title" className="ob-title">Tudo pronto!</h2>
             <p className="ob-sub">Agora a gente consegue montar as melhores opções para você.</p>
+            <div className="ob-actions">
+              <button className="ob-btn-primary ob-next" onClick={() => navigate('/dashboard')}>
+                Ir para o meu painel <ArrowRight size={16} />
+              </button>
+            </div>
           </>
         )}
       </div>

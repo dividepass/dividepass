@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
 import {
@@ -11,7 +11,6 @@ import { getStoredTheme, getSystemTheme, applyTheme } from '../../lib/themeUtils
 import logoImg from '../../assets/logo.png';
 import PwaInstallGate from '../../components/PwaInstallGate';
 import PushNotificationGate from '../../components/PushNotificationGate';
-import OnboardingGate from '../../components/OnboardingGate';
 import './UserLayout.css';
 
 const APP_VERSION = '1.0.0.2';
@@ -26,6 +25,12 @@ function UserLayout() {
   const { currentUser, getActiveServices } = useAppDataContext();
   const { signOut, profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
+
+  // Enquanto o onboarding não terminou, nada dentro de /dashboard é
+  // acessível. Virou rota dedicada em vez de modal justamente porque um
+  // overlay podia ser dispensado com um clique e o usuário nunca voltava.
+  // O redirect fica depois de todos os hooks (ver o return mais abaixo).
+  const onboardingPending = !!profile && !profile.onboarding_completed_at;
 
   const activeCount = getActiveServices().length;
   const displayName = profile?.nickname || currentUser?.name || 'Usuário';
@@ -77,11 +82,12 @@ function UserLayout() {
     navigate('/login');
   };
 
+  // Depois de todos os hooks: um return antes deles violaria a ordem de
+  // chamada dos hooks e quebraria a página em qualquer re-render.
+  if (onboardingPending) return <Navigate to="/onboarding" replace />;
+
   return (
     <div className="layout-container">
-      {/* Primeiro da lista: o onboarding bloqueia a tela, então nada mais
-          por cima dele enquanto ele estiver ativo. */}
-      <OnboardingGate />
       <PwaInstallGate />
       <PushNotificationGate />
 

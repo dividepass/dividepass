@@ -18,6 +18,7 @@ import PlatformPage from './pages/PlatformPage';
 // User Imports
 import UserLayout from './pages/user/UserLayout';
 import UserDashboard from './pages/user/UserDashboard';
+import OnboardingPage from './pages/user/OnboardingPage';
 import Catalog from './pages/user/Catalog';
 import MyCredentials from './pages/user/MyCredentials';
 import Billing from './pages/user/Billing';
@@ -97,6 +98,11 @@ function App() {
             <Route path="/checkout/:groupSlug" element={<Checkout />} />
             <Route path="/checkout-link/:referenceCode" element={<CheckoutLink />} />
             <Route path="/pesquisa/:slug" element={<Pesquisa />} />
+
+            {/* Onboarding: fora do bloco /dashboard de propósito, para não
+                ter cabeçalho nem menu. O UserLayout redireciona pra cá
+                enquanto onboarding_completed_at estiver nulo. */}
+            <Route path="/onboarding" element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />
 
             {/* SEO Public Pages */}
             <Route path="/sobre" element={<Sobre />} />

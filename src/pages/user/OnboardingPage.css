@@ -1,0 +1,12 @@
+.onboarding-page {
+  min-height: 100vh;
+  background: var(--background);
+}
+
+.onboarding-page-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+}

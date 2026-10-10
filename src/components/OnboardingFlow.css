@@ -1,27 +1,21 @@
-.ob-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  background: rgba(2, 6, 23, 0.72);
-  backdrop-filter: blur(4px);
+.ob-flow {
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
-  overflow-y: auto;
-  animation: obFade 0.2s ease;
+  padding: 1.5rem 1rem;
+  background: var(--background);
 }
 
-.ob-modal {
+.ob-card {
   position: relative;
   width: 100%;
-  max-width: 480px;
+  max-width: 520px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 1rem;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
-  padding: 1.75rem 1.5rem;
-  margin: auto;
+  border-radius: 1.25rem;
+  box-shadow: var(--shadow-sm, 0 10px 30px rgba(0, 0, 0, 0.18));
+  padding: 2rem 1.75rem;
 }
 
 @keyframes obFade {
@@ -312,8 +306,8 @@
 }
 
 @media (max-width: 480px) {
-  .ob-backdrop { padding: 0.5rem; align-items: flex-start; }
-  .ob-modal { padding: 1.25rem 1rem; border-radius: 0.85rem; }
+  .ob-flow { padding: 0.5rem; align-items: flex-start; }
+  .ob-card { padding: 1.25rem 1rem; border-radius: 0.85rem; }
   .ob-title { font-size: 1.02rem; }
   .ob-actions { flex-direction: column-reverse; }
   .ob-next { margin-left: 0; width: 100%; justify-content: center; }
