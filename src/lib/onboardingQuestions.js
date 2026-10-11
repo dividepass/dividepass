@@ -30,16 +30,11 @@ export const ONBOARDING_STEPS = [
   {
     id: 'welcome',
     type: 'info',
-    title: 'O que é a DividePass?',
+    title: 'Bem-vindo ao DividePass!',
     content:
-      'Somos uma plataforma de compartilhamento de assinaturas digitais.\n\n' +
-      'Aqui você entra em grupos já existentes, criados e gerenciados pela ' +
-      'DividePass, ou cria o seu próprio para dividir os custos de serviços ' +
-      'como Netflix, Disney+, Spotify, ChatGPT Plus e muito mais.\n\n' +
-      'Assim você compartilha os custos de assinaturas oficiais e economizar, ' +
-      'com potencial de redução de até 80%, dependendo do serviço e das ' +
-      'condições disponíveis.\n\n' +
-      'Vamos conhecer seus interesses para encontrar as melhores oportunidades para você!',
+      'Compartilhamos assinaturas digitais para você pagar até 80% menos ' +
+      'em serviços como Netflix, Disney+ e Spotify.\n\n' +
+      'Responda rapidinho para a gente encontrar as melhores oportunidades para você.',
   },
 
   {
@@ -59,22 +54,6 @@ export const ONBOARDING_STEPS = [
   },
 
   {
-    id: 'monthly_spend',
-    type: 'single',
-    column: 'monthly_spend_band',
-    title: 'Quanto você gasta por mês com assinaturas?',
-    options: [
-      { value: 'ate-50', label: 'Até R$ 50' },
-      { value: '50-100', label: 'R$ 50 a R$ 100' },
-      { value: '100-200', label: 'R$ 100 a R$ 200' },
-      { value: '200-300', label: 'R$ 200 a R$ 300' },
-      { value: '300-500', label: 'R$ 300 a R$ 500' },
-      { value: '500+', label: 'Acima de R$ 500' },
-      { value: 'nao-sei', label: 'Não sei informar' },
-    ],
-  },
-
-  {
     // Ramificação: quem já compartilha cai em "com quem", quem não cai na
     // barreira. É o único tipo com desvio de próximo passo.
     id: 'already_shares',
@@ -89,7 +68,7 @@ export const ONBOARDING_STEPS = [
     id: 'shares_with',
     type: 'multiple',
     column: 'shares_with',
-    thenNext: 'group_interest',
+    thenNext: 'current_platforms',
     title: 'Com quem você compartilha suas assinaturas?',
     options: [
       { value: 'familia', label: 'Família' },
@@ -104,7 +83,7 @@ export const ONBOARDING_STEPS = [
     id: 'main_barrier',
     type: 'single',
     column: 'main_barrier',
-    thenNext: 'group_interest',
+    thenNext: 'current_platforms',
     title: 'Qual é a maior dificuldade para você começar a compartilhar assinaturas?',
     customField: 'main_barrier_other',
     customOption: 'outro',
@@ -122,25 +101,11 @@ export const ONBOARDING_STEPS = [
   },
 
   {
-    // Pergunta de conversão: separa quem já quer entrar de quem só está
-    // mirando. É o filtro principal do relatório.
-    id: 'group_interest',
-    type: 'single',
-    column: 'group_interest',
-    title: 'Você tem interesse em entrar em um grupo para dividir assinaturas?',
-    options: [
-      { value: 'sim', label: 'Sim, quero entrar em um grupo' },
-      { value: 'talvez', label: 'Talvez, quero conhecer as opções' },
-      { value: 'nao', label: 'Não tenho interesse no momento' },
-    ],
-  },
-
-  {
     id: 'current_platforms',
     type: 'platforms',
     kind: 'current',
     title: 'Quais destas plataformas você utiliza atualmente?',
-    helper: 'Selecione todas as plataformas que você já usa.',
+    helper: 'Marque as que você já usa.',
     categories: [
       ...INTEREST_CATEGORIES.STREAMING,
       ...INTEREST_CATEGORIES.MUSIC,
@@ -156,7 +121,7 @@ export const ONBOARDING_STEPS = [
     type: 'platforms',
     kind: 'interested',
     title: 'Em quais serviços de filmes e séries você teria interesse em entrar em um grupo?',
-    helper: 'Selecione todas as opções que despertam seu interesse.',
+    helper: 'Marque quantas quiser.',
     categories: INTEREST_CATEGORIES.STREAMING,
   },
 
@@ -165,17 +130,8 @@ export const ONBOARDING_STEPS = [
     type: 'platforms',
     kind: 'interested',
     title: 'Quais serviços de música você gostaria de compartilhar?',
-    helper: 'Selecione todas as opções que despertam seu interesse.',
+    helper: 'Marque quantas quiser.',
     categories: INTEREST_CATEGORIES.MUSIC,
-  },
-
-  {
-    id: 'interested_health',
-    type: 'platforms',
-    kind: 'interested',
-    title: 'Quais aplicativos de saúde e bem-estar te interessam?',
-    helper: 'Selecione todas as opções que despertam seu interesse.',
-    categories: INTEREST_CATEGORIES.HEALTH,
   },
 
   {
@@ -192,7 +148,7 @@ export const ONBOARDING_STEPS = [
     type: 'platforms',
     kind: 'interested',
     title: 'Quais ferramentas de inteligência artificial e produtividade te interessam?',
-    helper: 'Selecione todas as opções que despertam seu interesse.',
+    helper: 'Marque quantas quiser.',
     categories: INTEREST_CATEGORIES.AI,
   },
 
@@ -285,6 +241,43 @@ export function pickColumnValues(answers) {
   }
 
   return row;
+}
+
+/**
+ * Reconstroi o objeto `answers` a partir de uma linha de
+ * user_onboarding_profiles — o inverso de pickColumnValues. Usado na
+ * retomada do onboarding para preencher as etapas já respondidas.
+ */
+export function restoreAnswersFromProfile(row) {
+  const answers = {};
+  if (!row) return answers;
+
+  for (const step of ONBOARDING_STEPS) {
+    if (!step.column) continue;
+    const value = row[step.column];
+    if (value === null || value === undefined) continue;
+
+    if (step.type === 'yes_no') {
+      if (typeof value === 'boolean') answers[step.id] = value;
+      continue;
+    }
+    if (step.type === 'multiple') {
+      if (Array.isArray(value) && value.length) answers[step.id] = value;
+      continue;
+    }
+    if (step.type === 'single') {
+      answers[step.id] = value;
+      continue;
+    }
+  }
+
+  // Campo complementar do "Outro motivo".
+  const barrier = ONBOARDING_STEPS.find((s) => s.column === 'main_barrier');
+  if (barrier && answers[barrier.id] === barrier.customOption && row.main_barrier_other) {
+    answers.main_barrier_other = row.main_barrier_other;
+  }
+
+  return answers;
 }
 
 /** Rótulo legível de uma opção, para o relatório e para o perfil. */

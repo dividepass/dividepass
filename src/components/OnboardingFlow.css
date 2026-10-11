@@ -297,29 +297,6 @@
   .ob-invites-row button { width: 100%; justify-content: center; }
 }
 
-.ob-progress-wrap {
-  height: 5px;
-  border-radius: 999px;
-  background: var(--border);
-  overflow: hidden;
-  margin-bottom: 0.5rem;
-}
-
-.ob-progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, var(--primary), var(--action));
-  border-radius: 999px;
-  transition: width 0.3s ease;
-}
-
-.ob-step-count {
-  display: block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 1rem;
-}
-
 .ob-options {
   display: flex;
   flex-direction: column;
@@ -499,19 +476,9 @@
 
 .ob-upload-link:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.ob-note {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  text-align: center;
-  margin: 1rem 0 0;
-}
-
 @media (max-width: 480px) {
   .ob-flow { padding: 0.5rem; align-items: flex-start; }
   .ob-card { padding: 1.25rem 1rem; border-radius: 0.85rem; }
   .ob-title { font-size: 1.02rem; }
-  .ob-actions { flex-direction: column-reverse; }
-  .ob-next { margin-left: 0; width: 100%; justify-content: center; }
-  .ob-btn-ghost { width: 100%; justify-content: center; }
   .ob-avatar-img, .ob-avatar-placeholder { width: 76px; height: 76px; }
 }

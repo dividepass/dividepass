@@ -1,10 +1,10 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, ArrowRight, ArrowLeft, Loader2, AlertCircle, CheckCircle2, Sparkles, Plus, X } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabase';
 import { saveAvatar } from '../lib/uploadAvatar';
-import { buildOnboardingPath, pickColumnValues, ONBOARDING_STEPS } from '../lib/onboardingQuestions';
+import { buildOnboardingPath, pickColumnValues, restoreAnswersFromProfile, ONBOARDING_STEPS } from '../lib/onboardingQuestions';
 import { maskPhone, onlyDigits, isValidPhone } from '../lib/maskPhone';
 import PlatformPicker, { NONE_PLATFORM } from './PlatformPicker';
 import './OnboardingFlow.css';
@@ -53,6 +53,53 @@ export default function OnboardingFlow() {
   const [inviteName, setInviteName] = useState('');
   const [invitePhone, setInvitePhone] = useState('');
   const [inviteError, setInviteError] = useState('');
+
+  // Retomada: carrega o que já foi salvo e pula pra etapa salva.
+  const [resuming, setResuming] = useState(Boolean(profile?.onboarding_step));
+
+  useEffect(() => {
+    if (!profile?.id || !profile?.onboarding_step) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const [pRes, iRes, invRes] = await Promise.all([
+        supabase.from('user_onboarding_profiles').select('*').eq('user_id', profile.id).maybeSingle(),
+        supabase.from('user_onboarding_interests').select('*').eq('user_id', profile.id),
+        supabase.from('user_onboarding_invites').select('*').eq('user_id', profile.id),
+      ]);
+      if (cancelled) return;
+
+      // Respostas escalares.
+      setAnswers(restoreAnswersFromProfile(pRes.data));
+
+      // Plataformas já respondidas: só "current" tem mapeamento direto de
+      // volta — "interested" é salvo sem a categoria, então fica pra
+      // quando refatorarmos com step_id em user_onboarding_interests.
+      const current = (iRes.data || []).filter((i) => i.kind === 'current');
+      if (current.length) {
+        setPlatformPicks((prev) => ({
+          ...prev,
+          current_platforms: current.map((i) => String(i.platform_id)).filter(Boolean),
+        }));
+      }
+
+      setInvites((invRes.data || []).map((iv) => ({ name: iv.name, phone: iv.phone })));
+
+      // Pula direto pra etapa salva.
+      const savedPath = buildOnboardingPath(restoreAnswersFromProfile(pRes.data));
+      const idx = savedPath.findIndex((s) => s.id === profile.onboarding_step);
+      if (idx >= 0) {
+        setScreen(SCREEN_SURVEY);
+        setIndex(idx);
+      }
+
+      setResuming(false);
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id]);
 
   // A sequência só muda quando a resposta do yes/no muda, então recalcular
   // por render é barato e evita uma lista de passos dessincronizada.
@@ -146,7 +193,16 @@ export default function OnboardingFlow() {
   const handleNext = () => {
     if (!validateStep(step)) return;
     setError('');
-    setIndex((i) => Math.min(i + 1, path.length - 1));
+
+    const nextIndex = Math.min(index + 1, path.length - 1);
+    const nextStep = path[nextIndex];
+    setIndex(nextIndex);
+
+    // Grava em segundo plano: respostas + a etapa para onde o usuário foi.
+    // Se falhar, não trava a navegação — a retomada salva de novo depois.
+    persistProgress(nextStep?.id).catch((err) => {
+      console.error('Onboarding: falha ao salvar progresso', err);
+    });
   };
 
   const handleBack = () => {
@@ -210,7 +266,94 @@ export default function OnboardingFlow() {
       setUploading(false);
     }
 
+    // Marca o início e a primeira etapa, pra retomada funcionar mesmo se o
+    // usuário fechar antes do primeiro "Continuar".
+    if (profile?.id) {
+      supabase
+        .from('users')
+        .update({ onboarding_step: ONBOARDING_STEPS[0].id, onboarding_started_at: new Date().toISOString() })
+        .eq('id', profile.id)
+        .then(() => {});
+    }
+
     setScreen(SCREEN_SURVEY);
+  };
+
+  /**
+   * Grava as respostas atuais + a etapa para onde o usuário está indo.
+   * Idempotente: usado a cada "Continuar" (fire-and-forget) e no finish.
+   */
+  const persistProgress = async (nextStepId) => {
+    if (!profile?.id) return;
+
+    const row = pickColumnValues(answers);
+    if (Object.keys(row).length) {
+      const { error: profileErr } = await supabase
+        .from('user_onboarding_profiles')
+        .upsert({ user_id: profile.id, ...row }, { onConflict: 'user_id' });
+      if (profileErr) throw profileErr;
+    }
+
+    // Plataformas são linhas individuais: uma por (usuário, plataforma, tipo).
+    const interestRows = [];
+    for (const s of ONBOARDING_STEPS) {
+      if (s.type !== 'platforms') continue;
+      const picked = platformPicks[s.id] || [];
+      const real = Array.isArray(picked) ? picked.filter((v) => v !== NONE_PLATFORM) : [];
+
+      if (real.length) {
+        const { data: db } = await supabase
+          .from('streaming_services')
+          .select('id, name')
+          .in('id', real);
+        for (const p of db || []) {
+          interestRows.push({
+            user_id: profile.id,
+            platform_id: p.id,
+            platform_name: p.name,
+            kind: s.kind,
+            is_custom: false,
+          });
+        }
+      }
+
+      for (const name of customPicks[s.id] || []) {
+        interestRows.push({
+          user_id: profile.id,
+          platform_id: null,
+          platform_name: name,
+          kind: s.kind,
+          is_custom: true,
+        });
+      }
+    }
+
+    if (interestRows.length) {
+      const { error: intErr } = await supabase
+        .from('user_onboarding_interests')
+        .upsert(interestRows, { onConflict: 'user_id,kind,platform_name', ignoreDuplicates: true });
+      if (intErr) throw intErr;
+    }
+
+    if (invites.length) {
+      const { error: invErr } = await supabase
+        .from('user_onboarding_invites')
+        .upsert(
+          invites.map((i) => ({ user_id: profile.id, name: i.name, phone: i.phone })),
+          { onConflict: 'user_id,phone', ignoreDuplicates: true }
+        );
+      if (invErr) throw invErr;
+    }
+
+    // Marca a etapa e, se ainda não tinha, o início.
+    const { error: userErr } = await supabase
+      .from('users')
+      .update({
+        onboarding_step: nextStepId || null,
+        onboarding_started_at: new Date().toISOString(),
+      })
+      .eq('id', profile.id);
+    if (userErr) throw userErr;
   };
 
   const finish = async () => {
@@ -219,70 +362,16 @@ export default function OnboardingFlow() {
     setError('');
 
     try {
-      const row = pickColumnValues(answers);
-
-      const { error: profileErr } = await supabase
-        .from('user_onboarding_profiles')
-        .upsert({ user_id: profile.id, ...row }, { onConflict: 'user_id' });
-      if (profileErr) throw profileErr;
-
-      // Plataformas são linhas individuais: uma por (usuário, plataforma, tipo).
-      const interestRows = [];
-
-      for (const s of ONBOARDING_STEPS) {
-        if (s.type !== 'platforms') continue;
-        const picked = platformPicks[s.id] || [];
-        const real = picked.filter((v) => v !== NONE_PLATFORM);
-
-        if (real.length) {
-          const { data: db } = await supabase
-            .from('streaming_services')
-            .select('id, name')
-            .in('id', real);
-          for (const p of db || []) {
-            interestRows.push({
-              user_id: profile.id,
-              platform_id: p.id,
-              platform_name: p.name,
-              kind: s.kind,
-              is_custom: false,
-            });
-          }
-        }
-
-        for (const name of customPicks[s.id] || []) {
-          interestRows.push({
-            user_id: profile.id,
-            platform_id: null,
-            platform_name: name,
-            kind: s.kind,
-            is_custom: true,
-          });
-        }
-      }
-
-      if (interestRows.length) {
-        const { error: intErr } = await supabase
-          .from('user_onboarding_interests')
-          .upsert(interestRows, { onConflict: 'user_id,kind,platform_name', ignoreDuplicates: true });
-        if (intErr) throw intErr;
-      }
-
-      if (invites.length) {
-        const { error: invErr } = await supabase
-          .from('user_onboarding_invites')
-          .upsert(
-            invites.map((i) => ({ user_id: profile.id, name: i.name, phone: i.phone })),
-            { onConflict: 'user_id,phone', ignoreDuplicates: true }
-          );
-        if (invErr) throw invErr;
-      }
+      await persistProgress(null);
 
       // A flag vai por último: se algo acima falhar, o gate abre de novo
       // em vez de marcar o onboarding como concluído sem estar.
       const { error: userErr } = await supabase
         .from('users')
-        .update({ onboarding_completed_at: new Date().toISOString() })
+        .update({
+          onboarding_completed_at: new Date().toISOString(),
+          onboarding_step: null,
+        })
         .eq('id', profile.id);
       if (userErr) throw userErr;
 
@@ -296,8 +385,15 @@ export default function OnboardingFlow() {
     }
   };
 
-  const answeredCount = path.filter((s) => s.type !== 'info').length;
-  const progress = Math.round(((index + 1) / path.length) * 100);
+  if (resuming) {
+    return (
+      <div className="ob-flow">
+        <div className="ob-card">
+          <Loader2 size={28} className="spin" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="ob-flow" role="region" aria-labelledby="ob-title">
@@ -363,13 +459,6 @@ export default function OnboardingFlow() {
 
         {screen === SCREEN_SURVEY && step && (
           <>
-            <div className="ob-progress-wrap">
-              <div className="ob-progress-bar" style={{ width: `${progress}%` }} />
-            </div>
-            <span className="ob-step-count">
-              {index + 1} de {path.length}
-            </span>
-
             {step.type !== 'info' && (
               <h2 id="ob-title" className="ob-title ob-question">{step.title}</h2>
             )}
@@ -576,10 +665,6 @@ export default function OnboardingFlow() {
                 )}
               </button>
             </div>
-
-            <p className="ob-note">
-              {answeredCount} perguntas rápidas para a gente entender melhor o que você procura.
-            </p>
           </>
         )}
 

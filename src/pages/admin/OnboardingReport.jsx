@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Target, Loader2, Search, TrendingUp, Share2, CheckCircle2, UserPlus } from 'lucide-react';
+import { Loader2, Search, TrendingUp, Share2, CheckCircle2, UserPlus } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { ONBOARDING_STEPS, labelForValue } from '../../lib/onboardingQuestions';
 import './OnboardingReport.css';
@@ -10,14 +10,6 @@ const INTEREST_KIND_LABEL = {
   interested: 'Plataformas que quer dividir',
 };
 
-// Rótulo curto do badge de interesse: as opções do questionário são frases
-// longas ("Sim, quero entrar em um grupo") e não cabem numa célula de tabela.
-const GROUP_INTEREST_LABELS = {
-  sim: 'Quer entrar',
-  talvez: 'Pode querer',
-  nao: 'Sem interesse',
-};
-
 const INTEREST_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'platforms');
 const SCALAR_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'single' && s.column);
 
@@ -25,11 +17,12 @@ export default function OnboardingReport() {
   const [rows, setRows] = useState([]);
   const [interests, setInterests] = useState([]);
   const [invites, setInvites] = useState([]);
+  const [incomplete, setIncomplete] = useState([]);
+  const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('overview');
   const [search, setSearch] = useState('');
-  const [interestFilter, setInterestFilter] = useState('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -39,13 +32,21 @@ export default function OnboardingReport() {
 
       // Só o completed_at vem do perfil; as respostas estão em user_onboarding_profiles.
       // Select enxuto para não puxar email_verified e cpf de 100+ usuários à toa.
-      const [profilesRes, interestsRes, invitesRes] = await Promise.all([
+      const [profilesRes, interestsRes, invitesRes, incompleteRes, servicesRes] = await Promise.all([
         supabase
           .from('users')
           .select('id, name, email, avatar_url, created_at, onboarding_completed_at')
           .not('onboarding_completed_at', 'is', null),
         supabase.from('user_onboarding_interests').select('*'),
         supabase.from('user_onboarding_invites').select('*'),
+        // Quem começou mas não terminou: started_at preenchido, completed_at nulo.
+        supabase
+          .from('users')
+          .select('id, name, email, onboarding_step, onboarding_started_at')
+          .not('onboarding_started_at', 'is', null)
+          .is('onboarding_completed_at', null),
+        // Para os ícones e cores das plataformas no gráfico.
+        supabase.from('streaming_services').select('id, name, icon_url, color'),
       ]);
 
       if (cancelled) return;
@@ -68,6 +69,8 @@ export default function OnboardingReport() {
       })));
       setInterests(interestsRes.data || []);
       setInvites(invitesRes.data || []);
+      setIncomplete(incompleteRes.data || []);
+      setServices(servicesRes.data || []);
       setError('');
       setLoading(false);
     })();
@@ -159,12 +162,22 @@ export default function OnboardingReport() {
   const platformRanking = useMemo(() => {
     const byKind = { current: new Map(), interested: new Map() };
 
+    // platform_id -> serviço, para ícone e cor.
+    const byId = Object.fromEntries(services.map((s) => [s.id, s]));
+
     for (const i of interests) {
       const bucket = byKind[i.kind];
       if (!bucket) continue;
-      const cur = bucket.get(i.platform_name) || { count: 0, custom: false };
+      const svc = i.platform_id ? byId[i.platform_id] : null;
+      const cur = bucket.get(i.platform_name) || {
+        count: 0,
+        custom: false,
+        icon: svc?.icon_url || null,
+        color: svc?.color || null,
+      };
       cur.count++;
       cur.custom = cur.custom || i.is_custom;
+      if (!cur.icon && svc?.icon_url) { cur.icon = svc.icon_url; cur.color = svc.color; }
       bucket.set(i.platform_name, cur);
     }
 
@@ -176,20 +189,18 @@ export default function OnboardingReport() {
         .map(([name, v]) => ({ name, ...v }))
         .sort((a, b) => b.count - a.count),
     };
-  }, [interests]);
+  }, [interests, services]);
 
   // ── KPIs ───────────────────────────────────────────────────────────────
   const total = rows.length;
-  const wantGroup = rows.filter((r) => r.answers?.group_interest === 'sim').length;
-  const maybeGroup = rows.filter((r) => r.answers?.group_interest === 'talvez').length;
   const alreadyShares = rows.filter((r) => r.answers?.already_shares === true).length;
+  const paysNothing = rows.filter((r) => r.answers?.subscriptions_count_band === 'nenhuma').length;
 
   const stats = [
     { label: 'Onboarding concluído', value: total, icon: <CheckCircle2 size={18} />, tone: 'green' },
-    { label: 'Quer entrar em grupo', value: wantGroup, icon: <Target size={18} />, tone: 'blue' },
-    { label: 'Pode querer', value: maybeGroup, icon: <TrendingUp size={18} />, tone: 'orange' },
     { label: 'Já compartilha', value: alreadyShares, icon: <Share2 size={18} />, tone: 'purple' },
     { label: 'Pessoas indicadas', value: invites.length, icon: <UserPlus size={18} />, tone: 'red' },
+    { label: 'Não paga assinatura', value: paysNothing, icon: <TrendingUp size={18} />, tone: 'orange' },
   ];
 
   // ── Lista ──────────────────────────────────────────────────────────────
@@ -197,16 +208,9 @@ export default function OnboardingReport() {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (q && !`${r.name || ''} ${r.email || ''}`.toLowerCase().includes(q)) return false;
-      if (interestFilter !== 'all') {
-        if (interestFilter === 'none') {
-          if (r.answers?.group_interest) return false;
-        } else if (r.answers?.group_interest !== interestFilter) {
-          return false;
-        }
-      }
       return true;
     });
-  }, [rows, search, interestFilter]);
+  }, [rows, search]);
 
   if (loading) {
     return (
@@ -268,6 +272,12 @@ export default function OnboardingReport() {
             >
               Respostas ({total})
             </button>
+            <button
+              className={`ob-report-tab ${tab === 'incomplete' ? 'active' : ''}`}
+              onClick={() => setTab('incomplete')}
+            >
+              Não concluíram ({incomplete.length})
+            </button>
           </div>
 
           {tab === 'overview' && (
@@ -319,11 +329,18 @@ export default function OnboardingReport() {
                         {bucket.slice(0, 15).map((b) => (
                           <div className="bar-row" key={b.name}>
                             <span className="bar-label">
+                              {b.icon ? (
+                                <img src={b.icon} alt="" className="bar-icon" />
+                              ) : (
+                                <span className="bar-icon" style={{ background: b.color || '#4F46E5' }}>
+                                  {b.name.charAt(0)}
+                                </span>
+                              )}
                               {b.name}
                               {b.custom && <em className="ob-custom-tag">outra</em>}
                             </span>
                             <div className="bar-track">
-                              <div className="bar-fill" style={{ width: `${(b.count / max) * 100}%` }} />
+                              <div className="bar-fill" style={{ width: `${(b.count / max) * 100}%`, background: b.color || undefined }} />
                             </div>
                             <div className="bar-value">
                               <span className="bar-count">{b.count}</span>
@@ -353,17 +370,6 @@ export default function OnboardingReport() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                <select
-                  value={interestFilter}
-                  onChange={(e) => setInterestFilter(e.target.value)}
-                  aria-label="Filtrar por interesse em grupo"
-                >
-                  <option value="all">Todos os interesses</option>
-                  <option value="sim">Quer entrar em grupo</option>
-                  <option value="talvez">Pode querer</option>
-                  <option value="nao">Sem interesse</option>
-                  <option value="none">Não respondeu</option>
-                </select>
               </div>
 
               <table className="history-table">
@@ -375,7 +381,6 @@ export default function OnboardingReport() {
                     ))}
                     <th>Já compartilha</th>
                     <th>Com quem</th>
-                    <th>Interesse</th>
                     <th>Top interesse</th>
                     <th>Convidaria</th>
                   </tr>
@@ -416,11 +421,6 @@ export default function OnboardingReport() {
                                 .join(', ')
                             : '—'}
                         </td>
-                        <td>
-                          <span className={`ob-interest-pill ${row.answers?.group_interest || 'none'}`}>
-                            {GROUP_INTEREST_LABELS[row.answers?.group_interest] || 'Não respondeu'}
-                          </span>
-                        </td>
                         <td>{top ? top.platform_name : '—'}</td>
                         <td>
                           {row.invites?.length ? (
@@ -451,10 +451,70 @@ export default function OnboardingReport() {
               )}
             </div>
           )}
+
+          {tab === 'incomplete' && (
+            <div className="admin-card table-responsive">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Usuário</th>
+                    <th>Parou em</th>
+                    <th>Começou há</th>
+                    <th>Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {incomplete.map((u) => (
+                    <tr key={u.id}>
+                      <td>
+                        <Link to={`/admin/users/${u.id}`} className="link-name">
+                          {u.name || '—'}
+                        </Link>
+                        <span style={{ display: 'block', fontSize: '0.78em', color: 'var(--text-muted)' }}>
+                          {u.email}
+                        </span>
+                      </td>
+                      <td>{stepLabel(u.onboarding_step)}</td>
+                      <td>{u.onboarding_started_at ? formatRelativeTime(u.onboarding_started_at) : '—'}</td>
+                      <td>
+                        <Link to={`/admin/users/${u.id}`} className="btn btn-outline btn-sm">
+                          Ver perfil
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {incomplete.length === 0 && (
+                <div className="empty-table"><p>Ninguém abandonou o onboarding.</p></div>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
   );
+}
+
+/** Rótulo legível da etapa a partir do id salvo em users.onboarding_step. */
+function stepLabel(stepId) {
+  if (!stepId) return '—';
+  const step = ONBOARDING_STEPS.find((s) => s.id === stepId);
+  return step ? step.title : stepId;
+}
+
+/** "há Xmin/h/d" a partir de um timestamp. */
+function formatRelativeTime(dateStr) {
+  if (!dateStr) return '—';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'agora mesmo';
+  if (min < 60) return `há ${min}min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  return `há ${d}d`;
 }
 
 /** Maior contagem primeiro, mas zadas no fim para não sumirem na lista. */

@@ -40,6 +40,7 @@ import ManageGroup from './pages/user/ManageGroup';
 import Wallet from './pages/user/Wallet';
 import MyGroups from './pages/user/MyGroups';
 import MyCards from './pages/user/MyCards';
+import MyCupons from './pages/user/MyCupons';
 
 // Admin Imports
 import AdminLayout from './pages/admin/AdminLayout';
@@ -119,6 +120,7 @@ function App() {
               <Route path="billing" element={<Billing />} />
               <Route path="wallet" element={<Wallet />} />
               <Route path="my-cards" element={<MyCards />} />
+              <Route path="my-cupons" element={<MyCupons />} />
               <Route path="my-groups" element={<MyGroups />} />
               <Route path="my-groups/create" element={<CreateGroup />} />
               <Route path="my-groups/:groupId/manage" element={<ManageGroup />} />

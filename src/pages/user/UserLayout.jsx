@@ -155,6 +155,9 @@ function UserLayout() {
                 <Link onClick={closeMenu} to="/dashboard/my-cards" className={`nav-item nav-sub ${isActive('/dashboard/my-cards')}`}>
                   <CreditCardIcon size={16} />Meus Cartões
                 </Link>
+                <Link onClick={closeMenu} to="/dashboard/my-cupons" className={`nav-item nav-sub ${isActive('/dashboard/my-cupons')}`}>
+                  <Gift size={16} />Meus Cupons
+                </Link>
                 <Link onClick={closeMenu} to="/dashboard/subscription-history" className={`nav-item nav-sub ${isActive('/dashboard/subscription-history')}`}>
                   <History size={16} />Histórico de Assinaturas
                 </Link>
