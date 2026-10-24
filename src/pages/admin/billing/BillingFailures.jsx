@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
-import { Link } from 'react-router-dom';
 import { RefreshCw, Search, AlertTriangle } from 'lucide-react';
 import './BillingFailures.css';
 
@@ -109,15 +108,6 @@ function BillingFailures() {
       <div className="admin-header">
         <h1>Dashboard de Falhas</h1>
         <p>Gerencie cobranças recusadas e reprocessamentos</p>
-      </div>
-
-      <div className="billing-nav-links">
-        <Link to="/admin/billing" className="billing-nav">Dashboard</Link>
-        <Link to="/admin/subscriptions" className="billing-nav">Assinaturas SaaS</Link>
-        <Link to="/admin/wallets" className="billing-nav">Carteiras</Link>
-        <Link to="/admin/billing/calendar" className="billing-nav">Calendário</Link>
-        <Link to="/admin/billing/failures" className="billing-nav active">Falhas</Link>
-        <Link to="/admin/billing/crons" className="billing-nav">Crons</Link>
       </div>
 
       <div className="failures-filters">

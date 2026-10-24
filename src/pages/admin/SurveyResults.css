@@ -1,32 +1,35 @@
+/* Mesmo desenho de aba do relatório de onboarding: sublinhado + cor primária.
+   Duas abas com linguagem diferente no mesmo painel desorientam. */
 .results-tabs {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .tab-btn {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.5rem 1rem;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  color: var(--text-secondary, #9ca3af);
-  border-radius: 0.4rem;
-  font-size: 0.85rem;
+  padding: 0.65rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 
 .tab-btn:hover {
-  border-color: #4F46E5;
-  color: var(--text);
+  color: var(--text-main);
 }
 
 .tab-btn.active {
-  background: rgba(79, 70, 229, 0.15);
-  border-color: #4F46E5;
-  color: #818cf8;
+  color: var(--primary);
+  border-bottom-color: var(--primary);
 }
 
 .header-subtitle {

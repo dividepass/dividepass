@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
-import { Link } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, X, CheckCircle, XCircle, Clock, AlertTriangle, CreditCard } from 'lucide-react';
 import './BillingCalendar.css';
 
@@ -222,15 +221,6 @@ function BillingCalendar() {
       <div className="admin-header">
         <h1>Calendário de Cobranças</h1>
         <p>Cobranças agendadas e histórico por dia</p>
-      </div>
-
-      <div className="billing-nav-links">
-        <Link to="/admin/billing" className="billing-nav">Dashboard</Link>
-        <Link to="/admin/subscriptions" className="billing-nav">Assinaturas SaaS</Link>
-        <Link to="/admin/wallets" className="billing-nav">Carteiras</Link>
-        <Link to="/admin/billing/calendar" className="billing-nav active">Calendário</Link>
-        <Link to="/admin/billing/failures" className="billing-nav">Falhas</Link>
-        <Link to="/admin/billing/crons" className="billing-nav">Crons</Link>
       </div>
 
       <div className="calendar-container">

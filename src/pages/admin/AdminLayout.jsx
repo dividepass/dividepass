@@ -1,5 +1,29 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Activity,
+  ChevronRight,
+  ClipboardList,
+  CreditCard,
+  FileText,
+  Layers,
+  LayoutDashboard,
+  LifeBuoy,
+  ListChecks,
+  LogOut,
+  Megaphone,
+  Menu,
+  PiggyBank,
+  Receipt,
+  Settings,
+  Star,
+  Target,
+  Ticket,
+  TrendingUp,
+  Users,
+  Wallet,
+  X,
+} from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import ThemeToggle from '../../components/ThemeToggle';
 import AdminNotifications from './AdminNotifications';
@@ -8,15 +32,92 @@ import './AdminLayout.css';
 
 const APP_VERSION = '1.0.0.2';
 
+/**
+ * Navegação do admin agrupada por INTENÇÃO DE USO, não por tabela do banco.
+ * Tudo que existia antes continua acessível — e três páginas que eram
+ * inalcançáveis pelo menu entram: Assinaturas, Lista de espera e Carteiras.
+ */
+const NAV_SECTIONS = [
+  {
+    label: 'Operação',
+    items: [
+      { to: '/admin', label: 'Painel', icon: LayoutDashboard, end: true },
+      { to: '/admin/support', label: 'Suporte', icon: LifeBuoy },
+      { to: '/admin/announcements', label: 'Avisos', icon: Megaphone },
+      { to: '/admin/events', label: 'Eventos', icon: Activity },
+    ],
+  },
+  {
+    label: 'Pessoas',
+    items: [
+      { to: '/admin/users', label: 'Usuários', icon: Users },
+      { to: '/admin/onboarding', label: 'Onboarding', icon: Target },
+      { to: '/admin/interest', label: 'Lista de espera', icon: ListChecks },
+      { to: '/admin/surveys', label: 'Pesquisas', icon: ClipboardList },
+      { to: '/admin/testimonials', label: 'Depoimentos', icon: Star },
+    ],
+  },
+  {
+    label: 'Plataforma',
+    items: [
+      { to: '/admin/platforms', label: 'Plataformas', icon: Layers },
+      { to: '/admin/service-plans', label: 'Planos', icon: FileText },
+      { to: '/admin/coupons', label: 'Cupons', icon: Ticket },
+      { to: '/admin/subscriptions', label: 'Assinaturas', icon: CreditCard },
+    ],
+  },
+  {
+    label: 'Financeiro',
+    items: [
+      { to: '/admin/billing', label: 'Cobranças', icon: Wallet },
+      { to: '/admin/wallets', label: 'Carteiras', icon: PiggyBank },
+      { to: '/admin/savings', label: 'Economia', icon: TrendingUp },
+      { to: '/admin/expenses', label: 'Despesas', icon: Receipt },
+    ],
+  },
+  {
+    label: 'Ajustes',
+    items: [
+      { to: '/admin/settings', label: 'Configurações', icon: Settings },
+    ],
+  },
+];
+
+/**
+ * Sub-páginas de seções que são um HUB de verdade. Antes não havia como
+ * sair de /admin/billing/calendar para /admin/billing — a seção era um beco
+ * sem saída.
+ */
+const SECTION_TABS = {
+  '/admin/billing': [
+    { to: '/admin/billing', label: 'Visão geral', end: true },
+    { to: '/admin/billing/calendar', label: 'Calendário' },
+    { to: '/admin/billing/failures', label: 'Falhas' },
+    { to: '/admin/billing/crons', label: 'Crons' },
+  ],
+};
+
+/** Item de menu ativo = o mais específico cujo prefixo casa com a URL. */
+function matchItem(pathname) {
+  let found = null;
+  for (const section of NAV_SECTIONS) {
+    for (const item of section.items) {
+      const hit = item.end
+        ? pathname === item.to
+        : pathname === item.to || pathname.startsWith(item.to + '/');
+      if (hit && (!found || item.to.length > found.item.to.length)) {
+        found = { section, item };
+      }
+    }
+  }
+  return found;
+}
+
 function AdminLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
-
-  const isActive = (path) => {
-    return location.pathname === path ? 'active' : '';
-  };
 
   const closeMenu = () => setMenuOpen(false);
 
@@ -26,48 +127,111 @@ function AdminLayout() {
     navigate('/');
   };
 
+  const current = useMemo(() => matchItem(location.pathname), [location.pathname]);
+  const tabs = current ? SECTION_TABS[current.item.to] : null;
+
   return (
     <div className="admin-layout">
-      {/* Botão Mobile Admin */}
-      <button className="admin-mobile-btn" onClick={() => setMenuOpen(!menuOpen)}>
-        {menuOpen ? '✕' : '☰'}
+      <button
+        className="admin-mobile-btn"
+        onClick={() => setMenuOpen(!menuOpen)}
+        aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'}
+        aria-expanded={menuOpen}
+      >
+        {menuOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
 
-      {menuOpen && <div className="admin-mobile-overlay" onClick={closeMenu}></div>}
+      {menuOpen && <div className="admin-mobile-overlay" onClick={closeMenu} />}
 
       <aside className={`admin-sidebar ${menuOpen ? 'open' : ''}`}>
-        <Link to="/admin" className="admin-logo">
-          <img src={logoImg} alt="DP" className="admin-logo-img" />
-          <span>Admin</span>
+        <Link to="/admin" className="admin-logo" onClick={closeMenu}>
+          <img src={logoImg} alt="" className="admin-logo-img" />
+          <span className="admin-logo-text">
+            <strong>DividePass</strong>
+            <em>Painel admin</em>
+          </span>
         </Link>
-        <nav className="admin-nav">
-          <Link onClick={closeMenu} to="/admin" className={`nav-item ${isActive('/admin')}`}>Dashboard</Link>
-          <Link onClick={closeMenu} to="/admin/users" className={`nav-item ${isActive('/admin/users')}`}>Usuários</Link>
-          <Link onClick={closeMenu} to="/admin/platforms" className={`nav-item ${isActive('/admin/platforms')}`}>Plataformas</Link>
-          <Link onClick={closeMenu} to="/admin/billing" className={`nav-item ${isActive('/admin/billing')}`}>Cobranças 💳</Link>
-          <Link onClick={closeMenu} to="/admin/support" className={`nav-item ${isActive('/admin/support')}`}>Suporte 🛎️</Link>
-          <Link onClick={closeMenu} to="/admin/announcements" className={`nav-item ${isActive('/admin/announcements')}`}>Avisos 📢</Link>
-          <Link onClick={closeMenu} to="/admin/coupons" className={`nav-item ${isActive('/admin/coupons')}`}>Cupons 🏷️</Link>
-          <Link onClick={closeMenu} to="/admin/surveys" className={`nav-item ${isActive('/admin/surveys')}`}>Pesquisas 📝</Link>
-          <Link onClick={closeMenu} to="/admin/onboarding" className={`nav-item ${isActive('/admin/onboarding')}`}>Onboarding 🎯</Link>
-          <Link onClick={closeMenu} to="/admin/testimonials" className={`nav-item ${isActive('/admin/testimonials')}`}>Depoimentos ⭐</Link>
-          <Link onClick={closeMenu} to="/admin/savings" className={`nav-item ${isActive('/admin/savings')}`}>Economia 📈</Link>
-          <Link onClick={closeMenu} to="/admin/service-plans" className={`nav-item ${isActive('/admin/service-plans')}`}>Planos 📋</Link>
-          <Link onClick={closeMenu} to="/admin/events" className={`nav-item ${isActive('/admin/events')}`}>Eventos 📊</Link>
-          <Link onClick={closeMenu} to="/admin/expenses" className={`nav-item ${isActive('/admin/expenses')}`}>Despesas 💰</Link>
-          <Link onClick={closeMenu} to="/admin/settings" className={`nav-item ${isActive('/admin/settings')}`}>Configurações ⚙️</Link>
+
+        <nav className="admin-nav" aria-label="Navegação do admin">
+          {NAV_SECTIONS.map((section, sectionIndex) => (
+            <div
+              className={`admin-nav-group ${sectionIndex > 0 ? 'has-rule' : ''}`}
+              key={section.label}
+            >
+              <span className="admin-nav-group-label">{section.label}</span>
+
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                const active = item.end
+                  ? location.pathname === item.to
+                  : location.pathname === item.to || location.pathname.startsWith(item.to + '/');
+
+                return (
+                  <Link
+                    onClick={closeMenu}
+                    to={item.to}
+                    key={item.to}
+                    className={`nav-item ${active ? 'active' : ''}`}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <Icon size={16} className="nav-item-icon" aria-hidden />
+                    <span>{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
+
         <div className="admin-footer">
           <div className="admin-footer-row">
             <AdminNotifications />
             <ThemeToggle className="sidebar-theme-toggle" />
           </div>
-          <button onClick={handleLogout} className="nav-item logout">Sair do Painel</button>
-          <div style={{ textAlign: 'center', padding: '0.5rem', fontSize: '0.7rem', color: 'var(--text-muted)', opacity: 0.6 }}>v{APP_VERSION}</div>
+          <button onClick={handleLogout} className="nav-item logout">
+            <LogOut size={16} className="nav-item-icon" aria-hidden />
+            <span>Sair do painel</span>
+          </button>
+          <div className="admin-version">v{APP_VERSION}</div>
         </div>
       </aside>
-      
+
       <main className="admin-content">
+        {/* Trilha de contexto + sub-navegação da seção. Vale para todas as
+            22 páginas, sem precisar editar uma por uma. */}
+        <div className="admin-context-bar">
+          <div className="admin-context-trail">
+            {current ? (
+              <>
+                <span className="admin-context-section">{current.section.label}</span>
+                <ChevronRight size={13} className="admin-context-sep" aria-hidden />
+                <span className="admin-context-page">{current.item.label}</span>
+              </>
+            ) : (
+              <span className="admin-context-page">Painel admin</span>
+            )}
+          </div>
+
+          {tabs && (
+            <nav className="admin-context-tabs" aria-label={`Seção ${current.item.label}`}>
+              {tabs.map((tab) => (
+                <Link
+                  key={tab.to}
+                  to={tab.to}
+                  className={`admin-context-tab ${
+                    location.pathname === tab.to ||
+                    (!tab.end && location.pathname.startsWith(tab.to + '/'))
+                      ? 'active'
+                      : ''
+                  }`}
+                >
+                  {tab.label}
+                </Link>
+              ))}
+            </nav>
+          )}
+        </div>
+
         <div className="admin-page-wrap">
           <Outlet />
         </div>

@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
-import { Link } from 'react-router-dom';
 import {
   Clock,
   Play,
@@ -259,15 +258,6 @@ function CronManagement() {
       <div className="admin-header">
         <h1><Clock size={24} /> Gerenciamento de Crons</h1>
         <p>Visualize, ative/desative e execute processos agendados</p>
-      </div>
-
-      <div className="billing-nav-links">
-        <Link to="/admin/billing" className="billing-nav">Dashboard</Link>
-        <Link to="/admin/subscriptions" className="billing-nav">Assinaturas SaaS</Link>
-        <Link to="/admin/wallets" className="billing-nav">Carteiras</Link>
-        <Link to="/admin/billing/calendar" className="billing-nav">Calendário</Link>
-        <Link to="/admin/billing/failures" className="billing-nav">Falhas</Link>
-        <Link to="/admin/billing/crons" className="billing-nav active">Crons</Link>
       </div>
 
       <div className="cron-actions-bar">

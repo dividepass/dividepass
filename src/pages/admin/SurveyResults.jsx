@@ -347,29 +347,21 @@ function SurveyResults() {
 
   if (loading) {
     return (
-      <div className="admin-layout">
-        <div className="admin-content">
-          <div className="admin-loading">
-            <Loader2 size={32} className="spin" />
-            <p>Carregando resultados...</p>
-          </div>
-        </div>
+      <div className="loading-state">
+        <Loader2 size={32} className="spin" />
+        <p>Carregando resultados...</p>
       </div>
     );
   }
 
   if (!survey) {
     return (
-      <div className="admin-layout">
-        <div className="admin-content">
-          <div className="admin-empty">
-            <BarChart3 size={48} />
-            <h3>Pesquisa não encontrada</h3>
-            <button className="back-btn" onClick={() => navigate('/admin/surveys')}>
-              <ArrowLeft size={16} /> Voltar
-            </button>
-          </div>
-        </div>
+      <div className="admin-empty">
+        <BarChart3 size={48} />
+        <h3>Pesquisa não encontrada</h3>
+        <button className="back-btn" onClick={() => navigate('/admin/surveys')}>
+          <ArrowLeft size={16} /> Voltar
+        </button>
       </div>
     );
   }
@@ -377,257 +369,253 @@ function SurveyResults() {
   const completedCount = responses.filter(r => r.completed_at).length;
 
   return (
-    <div className="admin-layout">
-      <div className="admin-content">
-        <div className="admin-page-wrap">
-          <div className="admin-header">
-            <div className="admin-header-left">
-              <button className="back-btn" onClick={() => navigate('/admin/surveys')}>
-                <ArrowLeft size={20} />
-              </button>
-              <div>
-                <h1>{survey.title}</h1>
-                <span className="header-subtitle">
-                  {responses.length} resposta(s) • {completedCount} completa(s)
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="results-tabs">
-            <button
-              className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
-              onClick={() => setActiveTab('overview')}
-            >
-              <BarChart3 size={16} /> Visão Geral
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'responses' ? 'active' : ''}`}
-              onClick={() => setActiveTab('responses')}
-            >
-              <Users size={16} /> Respostas Individuais
-            </button>
-          </div>
-
-          {/* Overview Tab */}
-          {activeTab === 'overview' && (
-            <div className="results-overview">
-            {/* Summary Cards */}
-            <div className="summary-cards">
-              <div className="summary-card">
-                <div className="summary-icon" style={{ background: 'rgba(79, 70, 229, 0.15)' }}>
-                  <Users size={20} color="#818cf8" />
-                </div>
-                <div>
-                  <span className="summary-value">{responses.length}</span>
-                  <span className="summary-label">Total de Respostas</span>
-                </div>
-              </div>
-              <div className="summary-card">
-                <div className="summary-icon" style={{ background: 'rgba(16, 185, 129, 0.15)' }}>
-                  <CheckCircle size={20} color="#10b981" />
-                </div>
-                <div>
-                  <span className="summary-value">{completedCount}</span>
-                  <span className="summary-label">Completaram</span>
-                </div>
-              </div>
-              <div className="summary-card">
-                <div className="summary-icon" style={{ background: 'rgba(234, 88, 12, 0.15)' }}>
-                  <Clock size={20} color="#fb923c" />
-                </div>
-                <div>
-                  <span className="summary-value">
-                    {responses.length > 0
-                      ? Math.round((completedCount / responses.length) * 100)
-                      : 0}%
-                  </span>
-                  <span className="summary-label">Taxa de Conclusão</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Charts per question */}
-            <div className="charts-section">
-              <h2>Resultados por Pergunta</h2>
-              {steps.filter(s => s.step_type === 'question' || s.step_type === 'platforms').length === 0 ? (
-                <div className="no-charts">
-                  <BarChart3 size={32} />
-                  <p>Nenhuma pergunta para exibir gráficos.</p>
-                </div>
-              ) : (
-                steps
-                  .filter(s => s.step_type === 'question' || s.step_type === 'platforms')
-                  .map(step => {
-                    const stats = getStepStats(step);
-                    return (
-                      <div key={step.id} className="chart-card">
-                        <div className="chart-header">
-                          <span className={`step-type-badge ${step.step_type}`}>
-                            {step.step_type === 'platforms' ? 'Plataformas' : step.question_type === 'text_input' ? 'Texto Livre' : step.question_type === 'rating_star' ? '⭐ Avaliação' : 'Pergunta'}
-                          </span>
-                          <h3>{step.title}</h3>
-                          <span className="chart-total">{stats.totalResponses} resposta(s)</span>
-                        </div>
-
-                        {step.question_type === 'rating_star' ? (
-                          <div className="rating-results">
-                            <div className="rating-avg">
-                              <span className="rating-avg-number">{stats.avgRating}</span>
-                              <div className="rating-avg-stars">
-                                {[1, 2, 3, 4, 5].map(s => (
-                                  <span key={s} className={`rating-result-star ${s <= Math.round(Number(stats.avgRating)) ? 'filled' : ''}`}>★</span>
-                                ))}
-                              </div>
-                              <span className="rating-avg-count">{stats.ratedCount} avaliação(ões)</span>
-                            </div>
-                            <div className="chart-bars">
-                              {stats.distribution.map((item, i) => (
-                                <div key={i} className="bar-row">
-                                  <div className="bar-label">
-                                    <span>{item.label}</span>
-                                  </div>
-                                  <div className="bar-track">
-                                    <div className="bar-fill" style={{ width: `${item.percentage}%`, background: '#FBBF24' }} />
-                                  </div>
-                                  <span className="bar-count">{item.value}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : step.question_type === 'text_input' ? (
-                          <div className="text-responses-list">
-                            {(stats.textResponses || []).length === 0 ? (
-                              <p style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Nenhuma resposta de texto.</p>
-                            ) : (
-                              (stats.textResponses || []).map((r, i) => (
-                                <div key={i} className="text-response-item">
-                                  <div className="text-response-avatar">{r.user[0]?.toUpperCase()}</div>
-                                  <div className="text-response-content">
-                                    <span className="text-response-user">{r.user}</span>
-                                    <p className="text-response-text">{r.text}</p>
-                                    <span className="text-response-date">{r.date ? new Date(r.date).toLocaleString('pt-BR') : ''}</span>
-                                  </div>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        ) : (
-                        <div className="chart-bars">
-                          {stats.distribution.map((item, i) => (
-                            <div key={i} className="bar-row">
-                              <div className="bar-label">
-                                {item.icon && <img src={item.icon} alt="" className="bar-icon" />}
-                                <span>{item.label}</span>
-                              </div>
-                              <div className="bar-track">
-                                <div
-                                  className="bar-fill"
-                                  style={{
-                                    width: `${item.percentage}%`,
-                                    background: item.color || '#4F46E5',
-                                  }}
-                                />
-                              </div>
-                              <div className="bar-value">
-                                <span className="bar-count">{item.value}</span>
-                                <span className="bar-pct">{item.percentage}%</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        )}
-                      </div>
-                    );
-                  })
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Individual Responses Tab */}
-        {activeTab === 'responses' && (
-          <div className="responses-section">
-            {responses.length === 0 ? (
-              <div className="admin-empty">
-                <Users size={48} />
-                <h3>Nenhuma resposta ainda</h3>
-                <p>Compartilhe o link da pesquisa para começar a coletar dados.</p>
-              </div>
-            ) : (
-              <div className="responses-list">
-                {responses.map(resp => (
-                  <div key={resp.id} className="response-card">
-                    <div
-                      className="response-header"
-                      onClick={() => setSelectedResponse(
-                        selectedResponse?.id === resp.id ? null : resp
-                      )}
-                    >
-                      <div className="response-info">
-                        <div className="response-avatar">
-                          {(resp.respondent_name || '?')[0].toUpperCase()}
-                        </div>
-                        <div>
-                          <strong>{resp.respondent_name}</strong>
-                          <span className="response-meta">
-                            {resp.respondent_email || 'Sem email'} • {formatDate(resp.created_at)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="response-actions">
-                        <button
-                          className="icon-btn danger"
-                          onClick={(e) => { e.stopPropagation(); handleDeleteResponse(resp.id); }}
-                          title="Excluir"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                        {selectedResponse?.id === resp.id
-                          ? <ChevronUp size={16} />
-                          : <ChevronDown size={16} />
-                        }
-                      </div>
-                    </div>
-
-                    {selectedResponse?.id === resp.id && (
-                      <div className="response-details">
-                        {steps.map(step => {
-                          const answer = resolveAnswer(resp, step);
-                          if (step.step_type === 'info') return null;
-                          const displayValue = formatDisplayValue(answer, step);
-
-                          return (
-                            <div key={step.id} className="answer-row">
-                              <span className="answer-label">{step.title}</span>
-                              <span className="answer-value">{displayValue}</span>
-                            </div>
-                          );
-                        })}
-
-                        {resp.respondent_phone && (
-                          <div className="answer-row">
-                            <span className="answer-label">Telefone</span>
-                            <span className="answer-value">{resp.respondent_phone}</span>
-                          </div>
-                        )}
-                        {resp.respondent_whatsapp && (
-                          <div className="answer-row">
-                            <span className="answer-label">WhatsApp</span>
-                            <span className="answer-value">{resp.respondent_whatsapp}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+    <div className="survey-results-page">
+    <div className="admin-header">
+      <div className="admin-header-left">
+        <button className="back-btn" onClick={() => navigate('/admin/surveys')} aria-label="Voltar para pesquisas">
+          <ArrowLeft size={20} />
+        </button>
+        <div>
+          <h1>{survey.title}</h1>
+          <span className="header-subtitle">
+            {responses.length} resposta(s) • {completedCount} completa(s)
+          </span>
         </div>
       </div>
+    </div>
+
+        {/* Tabs */}
+        <div className="results-tabs">
+          <button
+            className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
+            onClick={() => setActiveTab('overview')}
+          >
+            <BarChart3 size={16} /> Visão Geral
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'responses' ? 'active' : ''}`}
+            onClick={() => setActiveTab('responses')}
+          >
+            <Users size={16} /> Respostas Individuais
+          </button>
+        </div>
+
+        {/* Overview Tab */}
+        {activeTab === 'overview' && (
+          <div className="results-overview">
+          {/* Summary Cards */}
+          <div className="summary-cards">
+            <div className="summary-card">
+              <div className="summary-icon" style={{ background: 'rgba(79, 70, 229, 0.15)' }}>
+                <Users size={20} color="#818cf8" />
+              </div>
+              <div>
+                <span className="summary-value">{responses.length}</span>
+                <span className="summary-label">Total de Respostas</span>
+              </div>
+            </div>
+            <div className="summary-card">
+              <div className="summary-icon" style={{ background: 'rgba(16, 185, 129, 0.15)' }}>
+                <CheckCircle size={20} color="#10b981" />
+              </div>
+              <div>
+                <span className="summary-value">{completedCount}</span>
+                <span className="summary-label">Completaram</span>
+              </div>
+            </div>
+            <div className="summary-card">
+              <div className="summary-icon" style={{ background: 'rgba(234, 88, 12, 0.15)' }}>
+                <Clock size={20} color="#fb923c" />
+              </div>
+              <div>
+                <span className="summary-value">
+                  {responses.length > 0
+                    ? Math.round((completedCount / responses.length) * 100)
+                    : 0}%
+                </span>
+                <span className="summary-label">Taxa de Conclusão</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Charts per question */}
+          <div className="charts-section">
+            <h2>Resultados por Pergunta</h2>
+            {steps.filter(s => s.step_type === 'question' || s.step_type === 'platforms').length === 0 ? (
+              <div className="no-charts">
+                <BarChart3 size={32} />
+                <p>Nenhuma pergunta para exibir gráficos.</p>
+              </div>
+            ) : (
+              steps
+                .filter(s => s.step_type === 'question' || s.step_type === 'platforms')
+                .map(step => {
+                  const stats = getStepStats(step);
+                  return (
+                    <div key={step.id} className="chart-card">
+                      <div className="chart-header">
+                        <span className={`step-type-badge ${step.step_type}`}>
+                          {step.step_type === 'platforms' ? 'Plataformas' : step.question_type === 'text_input' ? 'Texto Livre' : step.question_type === 'rating_star' ? '⭐ Avaliação' : 'Pergunta'}
+                        </span>
+                        <h3>{step.title}</h3>
+                        <span className="chart-total">{stats.totalResponses} resposta(s)</span>
+                      </div>
+
+                      {step.question_type === 'rating_star' ? (
+                        <div className="rating-results">
+                          <div className="rating-avg">
+                            <span className="rating-avg-number">{stats.avgRating}</span>
+                            <div className="rating-avg-stars">
+                              {[1, 2, 3, 4, 5].map(s => (
+                                <span key={s} className={`rating-result-star ${s <= Math.round(Number(stats.avgRating)) ? 'filled' : ''}`}>★</span>
+                              ))}
+                            </div>
+                            <span className="rating-avg-count">{stats.ratedCount} avaliação(ões)</span>
+                          </div>
+                          <div className="chart-bars">
+                            {stats.distribution.map((item, i) => (
+                              <div key={i} className="bar-row">
+                                <div className="bar-label">
+                                  <span>{item.label}</span>
+                                </div>
+                                <div className="bar-track">
+                                  <div className="bar-fill" style={{ width: `${item.percentage}%`, background: '#FBBF24' }} />
+                                </div>
+                                <span className="bar-count">{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : step.question_type === 'text_input' ? (
+                        <div className="text-responses-list">
+                          {(stats.textResponses || []).length === 0 ? (
+                            <p style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Nenhuma resposta de texto.</p>
+                          ) : (
+                            (stats.textResponses || []).map((r, i) => (
+                              <div key={i} className="text-response-item">
+                                <div className="text-response-avatar">{r.user[0]?.toUpperCase()}</div>
+                                <div className="text-response-content">
+                                  <span className="text-response-user">{r.user}</span>
+                                  <p className="text-response-text">{r.text}</p>
+                                  <span className="text-response-date">{r.date ? new Date(r.date).toLocaleString('pt-BR') : ''}</span>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ) : (
+                      <div className="chart-bars">
+                        {stats.distribution.map((item, i) => (
+                          <div key={i} className="bar-row">
+                            <div className="bar-label">
+                              {item.icon && <img src={item.icon} alt="" className="bar-icon" />}
+                              <span>{item.label}</span>
+                            </div>
+                            <div className="bar-track">
+                              <div
+                                className="bar-fill"
+                                style={{
+                                  width: `${item.percentage}%`,
+                                  background: item.color || '#4F46E5',
+                                }}
+                              />
+                            </div>
+                            <div className="bar-value">
+                              <span className="bar-count">{item.value}</span>
+                              <span className="bar-pct">{item.percentage}%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      )}
+                    </div>
+                  );
+                })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Individual Responses Tab */}
+      {activeTab === 'responses' && (
+        <div className="responses-section">
+          {responses.length === 0 ? (
+            <div className="admin-empty">
+              <Users size={48} />
+              <h3>Nenhuma resposta ainda</h3>
+              <p>Compartilhe o link da pesquisa para começar a coletar dados.</p>
+            </div>
+          ) : (
+            <div className="responses-list">
+              {responses.map(resp => (
+                <div key={resp.id} className="response-card">
+                  <div
+                    className="response-header"
+                    onClick={() => setSelectedResponse(
+                      selectedResponse?.id === resp.id ? null : resp
+                    )}
+                  >
+                    <div className="response-info">
+                      <div className="response-avatar">
+                        {(resp.respondent_name || '?')[0].toUpperCase()}
+                      </div>
+                      <div>
+                        <strong>{resp.respondent_name}</strong>
+                        <span className="response-meta">
+                          {resp.respondent_email || 'Sem email'} • {formatDate(resp.created_at)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="response-actions">
+                      <button
+                        className="icon-btn danger"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteResponse(resp.id); }}
+                        title="Excluir"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      {selectedResponse?.id === resp.id
+                        ? <ChevronUp size={16} />
+                        : <ChevronDown size={16} />
+                      }
+                    </div>
+                  </div>
+
+                  {selectedResponse?.id === resp.id && (
+                    <div className="response-details">
+                      {steps.map(step => {
+                        const answer = resolveAnswer(resp, step);
+                        if (step.step_type === 'info') return null;
+                        const displayValue = formatDisplayValue(answer, step);
+
+                        return (
+                          <div key={step.id} className="answer-row">
+                            <span className="answer-label">{step.title}</span>
+                            <span className="answer-value">{displayValue}</span>
+                          </div>
+                        );
+                      })}
+
+                      {resp.respondent_phone && (
+                        <div className="answer-row">
+                          <span className="answer-label">Telefone</span>
+                          <span className="answer-value">{resp.respondent_phone}</span>
+                        </div>
+                      )}
+                      {resp.respondent_whatsapp && (
+                        <div className="answer-row">
+                          <span className="answer-label">WhatsApp</span>
+                          <span className="answer-value">{resp.respondent_whatsapp}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

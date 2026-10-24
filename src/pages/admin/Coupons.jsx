@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Link } from 'react-router-dom';
 import {
   Tag, Plus, Trash2, Loader2, CheckCircle, AlertTriangle,
   Edit3, X, Percent, DollarSign, Users, Calendar, Search,
@@ -242,11 +241,6 @@ function Coupons() {
       <div className="admin-header">
         <h1><Tag size={24} /> Cupons de Desconto</h1>
         <p>Gerencie cupons para entrada e assinaturas</p>
-      </div>
-
-      <div className="billing-nav-links">
-        <Link to="/admin" className="billing-nav">Dashboard</Link>
-        <Link to="/admin/coupons" className="billing-nav active">Cupons</Link>
       </div>
 
       {/* Stats */}

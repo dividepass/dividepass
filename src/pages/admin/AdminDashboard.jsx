@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../../lib/supabase';
 import {
   Users,
   CreditCard,
@@ -9,10 +8,14 @@ import {
   AlertTriangle,
   Activity,
   DollarSign,
-  Shield,
-  Flame,
-  X,
+  ArrowRight,
+  CheckCircle2,
+  Ticket,
+  Wallet,
+  Target,
+  UserPlus,
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 import './AdminDashboard.css';
 
 const CATEGORY_LABELS = {
@@ -99,18 +102,18 @@ function AdminDashboard() {
   });
   const [activities, setActivities] = useState([]);
   const [openTickets, setOpenTickets] = useState([]);
-  const [popupCritical, setPopupCritical] = useState(null);
+  const [criticalTickets, setCriticalTickets] = useState([]);
+  const [pending, setPending] = useState({
+    failedPayments: 0,
+    onboardingPending: 0,
+    couponsExpiring: 0,
+    groupsToApprove: 0,
+    waitlist: 0,
+  });
   const [stats, setStats] = useState({
     usersByRole: {},
     groupsByStatus: {},
   });
-
-  const dismissCritical = (id) => {
-    const seen = JSON.parse(localStorage.getItem('dp_seen_critical_tickets') || '[]');
-    const next = Array.from(new Set([...seen, id]));
-    localStorage.setItem('dp_seen_critical_tickets', JSON.stringify(next));
-    setPopupCritical((prev) => (prev && prev.id === id ? null : prev));
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -123,6 +126,7 @@ function AdminDashboard() {
         const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
         const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
         const last24Hours = new Date(now.getTime() - (24 * 60 * 60 * 1000)).toISOString();
+        const in7Days = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)).toISOString();
 
         const [
           usersRes,
@@ -137,6 +141,11 @@ function AdminDashboard() {
           groupsRes,
           openTicketsRes,
           criticalTicketsRes,
+          failedPaymentsRes,
+          onboardingPendingRes,
+          couponsExpiringRes,
+          groupsToApproveRes,
+          waitlistRes,
         ] = await Promise.all([
           supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'user').maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
           supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active').maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
@@ -150,6 +159,24 @@ function AdminDashboard() {
           supabase.from('groups').select('status'),
           supabase.from('support_tickets').select('id, subject, category, priority, status, created_at, user:users(id, name, email)').eq('archived', false).in('status', ['open', 'answered']).order('created_at', { ascending: true }).limit(50),
           supabase.from('support_tickets').select('id, subject, priority, created_at, user:users(id, name, email)').eq('archived', false).eq('priority', 'critical').in('status', ['open', 'answered']).order('created_at', { ascending: true }),
+          // Pendências da fila do operador: contagens diretas, sem travar linhas.
+          supabase.from('payment_attempts').select('id', { count: 'exact', head: true })
+            .in('status', ['polled_failed', 'webhook_rejected'])
+            .gte('created_at', firstDayOfMonth).lte('created_at', lastDayOfMonth)
+            .then(r => ({ ...r, count: r.count || 0 })),
+          supabase.from('users').select('id', { count: 'exact', head: true })
+            .not('onboarding_started_at', 'is', null).is('onboarding_completed_at', null)
+            .then(r => ({ ...r, count: r.count || 0 })),
+          supabase.from('coupons').select('id', { count: 'exact', head: true })
+            .eq('active', true).not('expires_at', 'is', null).lte('expires_at', in7Days)
+            .then(r => ({ ...r, count: r.count || 0 })),
+          // Grupos criados por usuário que ainda não foram aprovados.
+          supabase.from('groups').select('id', { count: 'exact', head: true })
+            .is('approval_status', null)
+            .then(r => ({ ...r, count: r.count || 0 })),
+          // Lista de espera: gente que quer entrar em um grupo.
+          supabase.from('group_interest').select('id', { count: 'exact', head: true })
+            .then(r => ({ ...r, count: r.count || 0 })),
         ]);
 
         if (cancelled) return;
@@ -221,12 +248,15 @@ function AdminDashboard() {
         });
 
         setStats({ usersByRole: rolesMap, groupsByStatus: groupsMap });
-
         setOpenTickets(openTicketsRes.data || []);
-
-        const seen = new Set(JSON.parse(localStorage.getItem('dp_seen_critical_tickets') || '[]'));
-        const unseen = (criticalTicketsRes.data || []).filter((t) => !seen.has(t.id));
-        setPopupCritical(unseen[0] || null);
+        setCriticalTickets(criticalTicketsRes.data || []);
+        setPending({
+          failedPayments: failedPaymentsRes.count || 0,
+          onboardingPending: onboardingPendingRes.count || 0,
+          couponsExpiring: couponsExpiringRes.count || 0,
+          groupsToApprove: groupsToApproveRes.count || 0,
+          waitlist: waitlistRes.count || 0,
+        });
       } catch (err) {
         console.error('AdminDashboard fetch error:', err);
       } finally {
@@ -242,7 +272,7 @@ function AdminDashboard() {
     return (
       <div className="fade-in">
         <div className="admin-header">
-          <h1>Dashboard Geral</h1>
+          <h1>Painel</h1>
         </div>
         <div className="loading-state">
           <div className="loading-spinner" />
@@ -252,27 +282,107 @@ function AdminDashboard() {
     );
   }
 
+  /**
+   * FILA DO OPERADOR
+   * A tela abre aqui, não nos números. O operador precisa saber primeiro o
+   * que está esperando ele — os números ficam logo abaixo, como contexto.
+   * A ordem é por severidade; item sem pendência não aparece.
+   */
+  const queue = [
+    {
+      id: 'critical-tickets',
+      icon: <AlertTriangle size={17} />,
+      tone: 'error',
+      title: 'Tickets críticos sem resposta',
+      count: criticalTickets.length,
+      action: 'Abrir suporte',
+      to: '/admin/support',
+    },
+    {
+      id: 'failed-payments',
+      icon: <Wallet size={17} />,
+      tone: 'error',
+      title: 'Falhas de pagamento no mês',
+      count: pending.failedPayments,
+      action: 'Ver falhas',
+      to: '/admin/billing/failures',
+    },
+    {
+      id: 'groups-to-approve',
+      icon: <CheckCircle2 size={17} />,
+      tone: 'warning',
+      title: 'Grupos criados por usuário aguardando aprovação',
+      count: pending.groupsToApprove,
+      action: 'Revisar grupos',
+      to: '/admin/platforms',
+    },
+    {
+      id: 'open-tickets',
+      icon: <Ticket size={17} />,
+      tone: 'warning',
+      title: 'Tickets abertos aguardando você',
+      count: metrics.openTickets,
+      action: 'Ver tickets',
+      to: '/admin/support',
+    },
+    {
+      id: 'waitlist',
+      icon: <UserPlus size={17} />,
+      tone: 'info',
+      title: 'Pessoas na lista de espera de grupos',
+      count: pending.waitlist,
+      action: 'Ver lista',
+      to: '/admin/interest',
+    },
+    {
+      id: 'onboarding',
+      icon: <Target size={17} />,
+      tone: 'warning',
+      title: 'Onboarding começado e não concluído',
+      count: pending.onboardingPending,
+      action: 'Ver onboarding',
+      to: '/admin/onboarding',
+    },
+    {
+      id: 'coupons',
+      icon: <AlertTriangle size={17} />,
+      tone: 'info',
+      title: 'Cupons expirando em 7 dias',
+      count: pending.couponsExpiring,
+      action: 'Ver cupons',
+      to: '/admin/coupons',
+    },
+  ].filter((item) => item.count > 0);
+
   const metricCards = [
     {
-      icon: <Users size={20} />,
-      iconClass: 'users',
-      label: 'Total de Usuarios',
-      value: metrics.totalUsers.toLocaleString('pt-BR'),
-      sub: 'contas cadastradas',
+      icon: <DollarSign size={20} />,
+      iconClass: 'revenue',
+      label: 'Receita do mês',
+      value: formatCurrency(metrics.monthlyRevenue),
+      sub: 'pagamentos confirmados',
+    },
+    {
+      icon: <TrendingUp size={20} />,
+      iconClass: 'profit',
+      label: 'Lucro previsto',
+      value: formatCurrency(metrics.expectedProfit),
+      className: metrics.expectedProfit >= 0 ? 'positive' : 'negative',
+      sub: 'receita − custos',
     },
     {
       icon: <CreditCard size={20} />,
       iconClass: 'subscriptions',
-      label: 'Assinaturas Ativas',
+      label: 'Assinaturas',
       value: metrics.activeSubscriptions.toLocaleString('pt-BR'),
-      sub: 'assinaturas ativas',
+      sub: 'em vigor agora',
     },
     {
-      icon: <DollarSign size={20} />,
-      iconClass: 'revenue',
-      label: 'Receita Mensal',
-      value: formatCurrency(metrics.monthlyRevenue),
-      sub: 'pagamentos confirmados',
+      icon: <Users size={20} />,
+      iconClass: 'users',
+      label: 'Usuários',
+      value: metrics.totalUsers.toLocaleString('pt-BR'),
+      sub: 'contas cadastradas',
     },
     {
       icon: <TrendingDown size={20} />,
@@ -282,28 +392,54 @@ function AdminDashboard() {
       sub: 'contas ativas',
     },
     {
-      icon: <TrendingUp size={20} />,
-      iconClass: 'profit',
-      label: 'Lucro Previsto',
-      value: formatCurrency(metrics.expectedProfit),
-      className: metrics.expectedProfit >= 0 ? 'positive' : 'negative',
-      sub: 'receita - custos',
-    },
-    {
       icon: <AlertTriangle size={20} />,
       iconClass: 'tickets',
-      label: 'Tickets Abertos',
+      label: 'Tickets',
       value: metrics.openTickets.toLocaleString('pt-BR'),
-      sub: 'abertos ou em andamento',
+      sub: 'abertos ou em curso',
     },
   ];
 
   return (
     <div className="fade-in admin-dashboard">
-      <div className="admin-header">
-        <h1>Dashboard Geral</h1>
-        <p>Visao geral do sistema em tempo real</p>
-      </div>
+      {/* A fila vem antes dos números: é a pergunta que o operador abre o
+          painel para responder. */}
+      <section className="operator-queue" aria-labelledby="queue-title">
+        <div className="queue-head">
+          <h2 id="queue-title">Fila do operador</h2>
+          {queue.length > 0 ? (
+            <span className="queue-count">{queue.length} pendência{queue.length > 1 ? 's' : ''}</span>
+          ) : (
+            <span className="queue-count queue-count-ok">nada pendente</span>
+          )}
+        </div>
+
+        {queue.length === 0 ? (
+          <div className="queue-empty">
+            <CheckCircle2 size={20} />
+            <div>
+              <strong>Nada esperando você agora.</strong>
+              <span>Sem tickets críticos, sem falhas de pagamento e sem onboarding travado.</span>
+            </div>
+          </div>
+        ) : (
+          <ul className="queue-list">
+            {queue.map((item) => (
+              <li key={item.id}>
+                <button className={`queue-item ${item.tone}`} onClick={() => navigate(item.to)}>
+                  <span className="queue-item-icon" aria-hidden>{item.icon}</span>
+                  <span className="queue-item-main">
+                    <span className="queue-item-title">{item.title}</span>
+                    <span className="queue-item-action">{item.action}</span>
+                  </span>
+                  <span className="queue-item-count">{item.count}</span>
+                  <ArrowRight size={16} className="queue-item-arrow" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <div className="metrics-grid">
         {metricCards.map((card) => (
@@ -361,11 +497,11 @@ function AdminDashboard() {
       )}
 
       <div className="activity-section">
-          <div className="activity-panel">
-            <div className="panel-header">
-             <h2>Atividade Recente (24h)</h2>
-             {activities.length > 0 && <span className="badge">{activities.length}</span>}
-           </div>
+        <div className="activity-panel">
+          <div className="panel-header">
+            <h2>Atividade recente (24h)</h2>
+            {activities.length > 0 && <span className="badge">{activities.length}</span>}
+          </div>
           {activities.length === 0 ? (
             <div className="empty-state">
               <Activity size={32} />
@@ -392,88 +528,43 @@ function AdminDashboard() {
           )}
         </div>
 
+        {/* Grupos por status: substitui o "Resumo rápido", que repetia o
+            total de usuários que já está nos cards acima. */}
         <div className="stats-panel">
           <div className="panel-header">
-            <h2>Resumo Rapido</h2>
+            <h2>Grupos</h2>
+            <button className="support-see-all" onClick={() => navigate('/admin/platforms')}>
+              Ver todos
+            </button>
           </div>
           <div className="stats-grid">
             <div className="stat-row">
               <span className="stat-label">
-                <Shield size={16} /> Administradores
-              </span>
-              <span className="stat-value">{stats.usersByRole.admin || 0}</span>
-            </div>
-            <div className="stat-row">
-              <span className="stat-label">
-                <Users size={16} /> Usuarios
-              </span>
-              <span className="stat-value">{stats.usersByRole.user || 0}</span>
-            </div>
-            <div className="stat-row">
-              <span className="stat-label">
-                <Activity size={16} /> Grupos Abertos
+                <Activity size={16} /> Abertos
               </span>
               <span className="stat-value">{stats.groupsByStatus.open || 0}</span>
             </div>
             <div className="stat-row">
               <span className="stat-label">
-                <CreditCard size={16} /> Grupos Formando
+                <CreditCard size={16} /> Formando
               </span>
               <span className="stat-value">{stats.groupsByStatus.forming || 0}</span>
             </div>
             <div className="stat-row">
               <span className="stat-label">
-                <AlertTriangle size={16} /> Grupos Fechados
+                <CheckCircle2 size={16} /> Fechados
               </span>
               <span className="stat-value">{stats.groupsByStatus.closed || 0}</span>
+            </div>
+            <div className="stat-row">
+              <span className="stat-label">
+                <Users size={16} /> Administradores
+              </span>
+              <span className="stat-value">{stats.usersByRole.admin || 0}</span>
             </div>
           </div>
         </div>
       </div>
-
-      {popupCritical && (
-        <div className="critical-popup-backdrop" onClick={() => dismissCritical(popupCritical.id)}>
-          <div
-            className="critical-popup"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="critical-popup-close"
-              onClick={() => dismissCritical(popupCritical.id)}
-              aria-label="Fechar"
-            >
-              <X size={18} />
-            </button>
-
-            <div className="critical-popup-icon">
-              <Flame size={24} />
-            </div>
-
-            <h3>Ticket crítico aberto</h3>
-            <p className="critical-popup-subject">{popupCritical.subject}</p>
-            <p className="critical-popup-meta">
-              {popupCritical.user?.name || popupCritical.user?.email || 'Usuário'}
-              {' · '}
-              {formatRelativeTime(popupCritical.created_at)}
-            </p>
-
-            <div className="critical-popup-actions">
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  dismissCritical(popupCritical.id);
-                  navigate(`/admin/support/${popupCritical.id}`);
-                }}
-              >
-                Ver ticket
-              </button>
-              <button className="btn btn-outline" onClick={() => dismissCritical(popupCritical.id)}>
-                Depois
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

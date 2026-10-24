@@ -19,33 +19,6 @@
   margin-top: 0.25rem;
 }
 
-.billing-nav-links {
-  display: flex;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.5rem;
-}
-
-.billing-nav {
-  padding: 0.5rem 1.25rem;
-  border-radius: var(--radius-sm);
-  text-decoration: none;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-
-.billing-nav:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.billing-nav.active {
-  background: var(--primary);
-  color: white;
-}
-
 .billing-metrics {
   grid-template-columns: repeat(4, 1fr);
 }
@@ -203,13 +176,7 @@
 @media (max-width: 600px) {
   .billing-metrics {
     grid-template-columns: 1fr;
-  }
-
-  .billing-nav-links {
-    overflow-x: auto;
-    white-space: nowrap;
-  }
-}
+  }}
 
 .billing-force-bar {
   display: flex;

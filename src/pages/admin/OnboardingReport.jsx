@@ -1,6 +1,16 @@
-import { useState, useEffect, useMemo } from 'react';
+import { Fragment, useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, Search, TrendingUp, Share2, CheckCircle2, UserPlus } from 'lucide-react';
+import {
+  Loader2,
+  Search,
+  TrendingUp,
+  Share2,
+  CheckCircle2,
+  UserPlus,
+  Info,
+  ChevronDown,
+  ChevronRight,
+} from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { ONBOARDING_STEPS, labelForValue } from '../../lib/onboardingQuestions';
 import './OnboardingReport.css';
@@ -13,16 +23,25 @@ const INTEREST_KIND_LABEL = {
 const INTEREST_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'platforms');
 const SCALAR_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'single' && s.column);
 
+// Rótulos curtos das colunas da tabela — a pergunta inteira fica no tooltip,
+// porque "Quantas assinaturas você paga atualmente?" não cabe em um <th>.
+const COLUMN_SHORT_LABEL = {
+  subscriptions_count_band: 'Assinaturas',
+  main_barrier: 'Maior barreira',
+};
+
 export default function OnboardingReport() {
   const [rows, setRows] = useState([]);
   const [interests, setInterests] = useState([]);
   const [invites, setInvites] = useState([]);
   const [incomplete, setIncomplete] = useState([]);
   const [services, setServices] = useState([]);
+  const [funnel, setFunnel] = useState({ entered: 0, answered: 0, completed: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('overview');
   const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,46 +49,77 @@ export default function OnboardingReport() {
     (async () => {
       setLoading(true);
 
-      // Só o completed_at vem do perfil; as respostas estão em user_onboarding_profiles.
-      // Select enxuto para não puxar email_verified e cpf de 100+ usuários à toa.
-      const [profilesRes, interestsRes, invitesRes, incompleteRes, servicesRes] = await Promise.all([
+      /*
+       * A coorte vem de QUEM RESPONDEU (user_onboarding_profiles), não de
+       * users.onboarding_completed_at. A flag de conclusão não é gravada por
+       * nenhum usuário hoje — usar ela como filtro deixava a página
+       * inteiramente vazia, escondendo as respostas que existem no banco.
+       */
+      const [usersRes, profilesRes, interestsRes, invitesRes, servicesRes] = await Promise.all([
+        // Select enxuto para não puxar email_verified e cpf de 100+ usuários à toa.
         supabase
           .from('users')
-          .select('id, name, email, avatar_url, created_at, onboarding_completed_at')
-          .not('onboarding_completed_at', 'is', null),
+          .select('id, name, email, avatar_url, created_at, onboarding_started_at, onboarding_completed_at, onboarding_step'),
+        supabase.from('user_onboarding_profiles').select('*'),
         supabase.from('user_onboarding_interests').select('*'),
         supabase.from('user_onboarding_invites').select('*'),
-        // Quem começou mas não terminou: started_at preenchido, completed_at nulo.
-        supabase
-          .from('users')
-          .select('id, name, email, onboarding_step, onboarding_started_at')
-          .not('onboarding_started_at', 'is', null)
-          .is('onboarding_completed_at', null),
         // Para os ícones e cores das plataformas no gráfico.
         supabase.from('streaming_services').select('id, name, icon_url, color'),
       ]);
 
       if (cancelled) return;
 
-      const users = profilesRes.data || [];
+      const users = usersRes.data || [];
+      const answers = profilesRes.data || [];
 
-      const { data: answers } = await supabase.from('user_onboarding_profiles').select('*');
-      if (cancelled) return;
-
-      const answersByUser = Object.fromEntries((answers || []).map((a) => [a.user_id, a]));
+      const answersByUser = Object.fromEntries(answers.map((a) => [a.user_id, a]));
       const invitesByUser = {};
       for (const inv of invitesRes.data || []) {
         (invitesByUser[inv.user_id] = invitesByUser[inv.user_id] || []).push(inv);
       }
 
-      setRows(users.map((u) => ({
-        ...u,
-        answers: answersByUser[u.id] || null,
-        invites: invitesByUser[u.id] || [],
-      })));
+      const started = users.filter((u) => u.onboarding_started_at);
+      const completed = users.filter((u) => u.onboarding_completed_at);
+
+      // Quem respondeu: tem linha de perfil e o usuário existe.
+      const responders = users.filter((u) => answersByUser[u.id]);
+
+      /*
+       * "Entraram" é a união dos três sinais (início, conclusão, respostas
+       * salvas). Cada sinal sozinho conta um recorte diferente do mesmo
+       * público: há quem tenha concluído antes de existir o registro de
+       * início, e há quem tenha deixado respostas sem concluir.
+       */
+      const enteredIds = new Set([
+        ...started.map((u) => u.id),
+        ...completed.map((u) => u.id),
+        ...responders.map((u) => u.id),
+      ]);
+
+      setRows(
+        responders.map((u) => ({
+          ...u,
+          answers: answersByUser[u.id] || null,
+          invites: invitesByUser[u.id] || [],
+        }))
+      );
+
+      // Começou o fluxo mas nunca respondeu nada: é aqui que o operador
+      // consegue agir (reenviar convite, ajustar a oferta).
+      setIncomplete(
+        started
+          .filter((u) => !answersByUser[u.id])
+          .map((u) => ({ ...u, invites: invitesByUser[u.id] || [] }))
+      );
+
+      setFunnel({
+        entered: enteredIds.size,
+        answered: responders.length,
+        completed: completed.length,
+      });
+
       setInterests(interestsRes.data || []);
       setInvites(invitesRes.data || []);
-      setIncomplete(incompleteRes.data || []);
       setServices(servicesRes.data || []);
       setError('');
       setLoading(false);
@@ -197,7 +247,7 @@ export default function OnboardingReport() {
   const paysNothing = rows.filter((r) => r.answers?.subscriptions_count_band === 'nenhuma').length;
 
   const stats = [
-    { label: 'Onboarding concluído', value: total, icon: <CheckCircle2 size={18} />, tone: 'green' },
+    { label: 'Responderam o onboarding', value: total, icon: <CheckCircle2 size={18} />, tone: 'green' },
     { label: 'Já compartilha', value: alreadyShares, icon: <Share2 size={18} />, tone: 'purple' },
     { label: 'Pessoas indicadas', value: invites.length, icon: <UserPlus size={18} />, tone: 'red' },
     { label: 'Não paga assinatura', value: paysNothing, icon: <TrendingUp size={18} />, tone: 'orange' },
@@ -221,6 +271,15 @@ export default function OnboardingReport() {
     );
   }
 
+  const funnelSteps = [
+    { key: 'entered', label: 'Entraram no onboarding', value: funnel.entered },
+    { key: 'answered', label: 'Deixaram respostas salvas', value: funnel.answered },
+    { key: 'completed', label: 'Concluíram', value: funnel.completed },
+  ];
+  const funnelMax = Math.max(1, ...funnelSteps.map((s) => s.value));
+  const dropNoAnswer = Math.max(0, funnel.entered - funnel.answered);
+  const dropNoFinish = Math.max(0, funnel.answered - funnel.completed);
+
   return (
     <div className="fade-in onboarding-report">
       <div className="admin-header">
@@ -234,14 +293,45 @@ export default function OnboardingReport() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      {total === 0 ? (
+      {total === 0 && funnel.entered === 0 ? (
         <div className="admin-card">
           <div className="empty-table">
-            <p>Nenhum usuário concluiu o onboarding ainda.</p>
+            <p>Nenhum usuário entrou no onboarding ainda.</p>
           </div>
         </div>
       ) : (
         <>
+          {/* Funil: de onde o usuário entra até onde ele para. */}
+          <section className="ob-funnel" aria-label="Funil do onboarding">
+            {funnelSteps.map((step) => (
+              <div className="ob-funnel-step" key={step.key}>
+                <div className="ob-funnel-head">
+                  <span className="ob-funnel-label">{step.label}</span>
+                  <span className="ob-funnel-value">
+                    {step.value}
+                    {funnel.entered > 0 && (
+                      <em>{Math.min(100, Math.round((step.value / funnel.entered) * 100))}%</em>
+                    )}
+                  </span>
+                </div>
+                <div className="ob-funnel-track">
+                  <div
+                    className="ob-funnel-fill"
+                    style={{ width: `${(step.value / funnelMax) * 100}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+
+            {(dropNoAnswer > 0 || dropNoFinish > 0) && (
+              <p className="ob-funnel-note">
+                <Info size={14} />
+                {dropNoAnswer > 0 && `${plural(dropNoAnswer, 'pessoa entrou', 'pessoas entraram')} sem deixar resposta.`}
+                {dropNoFinish > 0 && `${plural(dropNoFinish, 'pessoa respondeu', 'pessoas responderam')} e não concluíram.`}
+              </p>
+            )}
+          </section>
+
           <div className="ob-report-stats">
             {stats.map((s) => (
               <div key={s.label} className={`ob-report-stat ${s.tone}`}>
@@ -249,7 +339,7 @@ export default function OnboardingReport() {
                 <div>
                   <span className="ob-report-stat-value">
                     {s.value}
-                    {total > 0 && s.label !== 'Onboarding concluído' && (
+                    {total > 0 && s.label !== 'Responderam o onboarding' && (
                       <em>{Math.round((s.value / total) * 100)}%</em>
                     )}
                   </span>
@@ -259,24 +349,30 @@ export default function OnboardingReport() {
             ))}
           </div>
 
-          <div className="ob-report-tabs">
+          <div className="ob-report-tabs" role="tablist">
             <button
+              role="tab"
+              aria-selected={tab === 'overview'}
               className={`ob-report-tab ${tab === 'overview' ? 'active' : ''}`}
               onClick={() => setTab('overview')}
             >
               Resumo
             </button>
             <button
+              role="tab"
+              aria-selected={tab === 'responses'}
               className={`ob-report-tab ${tab === 'responses' ? 'active' : ''}`}
               onClick={() => setTab('responses')}
             >
               Respostas ({total})
             </button>
             <button
+              role="tab"
+              aria-selected={tab === 'incomplete'}
               className={`ob-report-tab ${tab === 'incomplete' ? 'active' : ''}`}
               onClick={() => setTab('incomplete')}
             >
-              Não concluíram ({incomplete.length})
+              Não responderam ({incomplete.length})
             </button>
           </div>
 
@@ -319,7 +415,7 @@ export default function OnboardingReport() {
                 return (
                   <div className="chart-card" key={step.id}>
                     <div className="chart-header">
-                      <h3>{INTEREST_KIND_LABEL[step.kind]}</h3>
+                      <h3>{step.title}</h3>
                       <span className="chart-total">{bucket.length} serviços</span>
                     </div>
                     {bucket.length === 0 ? (
@@ -370,77 +466,144 @@ export default function OnboardingReport() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
+                <span className="ob-report-count">{filtered.length} de {total}</span>
               </div>
 
               <table className="history-table">
                 <thead>
                   <tr>
                     <th>Usuário</th>
-                    {SCALAR_QUESTIONS.slice(0, 3).map((s) => (
-                      <th key={s.id}>{s.title.slice(0, 28)}...</th>
+                    {SCALAR_QUESTIONS.map((s) => (
+                      <th key={s.id} title={s.title}>
+                        {COLUMN_SHORT_LABEL[s.column] || s.title}
+                      </th>
                     ))}
-                    <th>Já compartilha</th>
-                    <th>Com quem</th>
-                    <th>Top interesse</th>
+                    <th title="Você já compartilha alguma assinatura digital com outras pessoas?">Já compartilha</th>
+                    <th title="Com quem você compartilha suas assinaturas?">Com quem</th>
+                    <th>Interesses</th>
                     <th>Convidaria</th>
+                    <th aria-label="Expandir" />
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((row) => {
                     const mine = interestsByUser[row.id]?.interested || [];
-                    const top = mine.slice().sort((a, b) => a.platform_name.localeCompare(b.platform_name))[0];
+                    const names = mine.map((m) => m.platform_name);
 
                     return (
-                      <tr key={row.id}>
-                        <td>
-                          <Link to={`/admin/users/${row.id}`} className="link-name">
-                            {row.name || '—'}
-                          </Link>
-                          <span style={{ display: 'block', fontSize: '0.78em', color: 'var(--text-muted)' }}>
-                            {row.email}
-                          </span>
-                        </td>
-                        {SCALAR_QUESTIONS.slice(0, 3).map((s) => (
-                          <td key={s.id}>
-                            {row.answers?.[s.column]
-                              ? labelForValue(s, row.answers[s.column])
+                      <Fragment key={row.id}>
+                        <tr>
+                          <td>
+                            <Link to={`/admin/users/${row.id}`} className="link-name">
+                              {row.name || '—'}
+                            </Link>
+                            <span className="ob-cell-sub">{row.email}</span>
+                          </td>
+                          {SCALAR_QUESTIONS.map((s) => (
+                            <td key={s.id}>
+                              {row.answers?.[s.column]
+                                ? labelForValue(s, row.answers[s.column])
+                                : '—'}
+                            </td>
+                          ))}
+                          <td>
+                            {row.answers?.already_shares === true
+                              ? 'Sim'
+                              : row.answers?.already_shares === false
+                                ? 'Não'
+                                : '—'}
+                          </td>
+                          <td>
+                            {(row.answers?.shares_with || []).length
+                              ? row.answers.shares_with
+                                  .map((v) => labelForValue(ONBOARDING_STEPS.find((s) => s.column === 'shares_with'), v))
+                                  .join(', ')
                               : '—'}
                           </td>
-                        ))}
-                        <td>
-                          {row.answers?.already_shares === true
-                            ? 'Sim'
-                            : row.answers?.already_shares === false
-                              ? 'Não'
-                              : '—'}
-                        </td>
-                        <td>
-                          {(row.answers?.shares_with || []).length
-                            ? row.answers.shares_with
-                                .map((v) => labelForValue(ONBOARDING_STEPS.find((s) => s.column === 'shares_with'), v))
-                                .join(', ')
-                            : '—'}
-                        </td>
-                        <td>{top ? top.platform_name : '—'}</td>
-                        <td>
-                          {row.invites?.length ? (
-                            <div className="ob-invite-cells">
-                              {row.invites.map((iv) => (
-                                <a
-                                  key={iv.id}
-                                  href={`https://wa.me/${iv.phone}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="ob-invite-chip"
-                                  title={`Falar com ${iv.name} no WhatsApp`}
-                                >
-                                  {iv.name}
-                                </a>
-                              ))}
-                            </div>
-                          ) : '—'}
-                        </td>
-                      </tr>
+                          <td>
+                            {names.length ? (
+                              <span className="ob-interest-cell">
+                                <strong>{names.length}</strong>
+                                {names.slice(0, 2).join(', ')}
+                                {names.length > 2 && <em> +{names.length - 2}</em>}
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td>
+                            {row.invites?.length ? (
+                              <div className="ob-invite-cells">
+                                {row.invites.map((iv) => (
+                                  <a
+                                    key={iv.id}
+                                    href={`https://wa.me/${iv.phone}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="ob-invite-chip"
+                                    title={`Falar com ${iv.name} no WhatsApp`}
+                                  >
+                                    {iv.name}
+                                  </a>
+                                ))}
+                              </div>
+                            ) : '—'}
+                          </td>
+                          <td>
+                            <button
+                              className="ob-expand-btn"
+                              onClick={() => setExpanded(expanded === row.id ? null : row.id)}
+                              aria-label={expanded === row.id ? 'Fechar respostas' : 'Ver todas as respostas'}
+                              aria-expanded={expanded === row.id}
+                            >
+                              {expanded === row.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                            </button>
+                          </td>
+                        </tr>
+
+                        {expanded === row.id && (
+                          <tr className="ob-detail-row">
+                            <td colSpan={SCALAR_QUESTIONS.length + 6}>
+                              <div className="ob-detail-grid">
+                                {distribution.map((q) => {
+                                  const value = row.answers?.[q.column];
+                                  const isBool = q.column === 'already_shares';
+                                  const isList = q.column === 'shares_with';
+                                  const step = ONBOARDING_STEPS.find((s) => s.column === q.column);
+
+                                  let text = '—';
+                                  if (isBool) {
+                                    text = value === true ? 'Sim' : value === false ? 'Não' : '—';
+                                  } else if (isList && Array.isArray(value) && value.length) {
+                                    text = value.map((v) => labelForValue(step, v)).join(', ');
+                                  } else if (value !== null && value !== undefined && value !== '') {
+                                    text = labelForValue(step, value);
+                                  }
+
+                                  return (
+                                    <div className="ob-detail-item" key={q.key}>
+                                      <span className="ob-detail-q">{q.title}</span>
+                                      <span className="ob-detail-a">{text}</span>
+                                    </div>
+                                  );
+                                })}
+
+                                {mine.length > 0 && (
+                                  <div className="ob-detail-item">
+                                    <span className="ob-detail-q">Plataformas que quer dividir</span>
+                                    <span className="ob-detail-a">{names.join(', ')}</span>
+                                  </div>
+                                )}
+
+                                <div className="ob-detail-item">
+                                  <span className="ob-detail-q">Plataformas que já usa</span>
+                                  <span className="ob-detail-a">
+                                    {(interestsByUser[row.id]?.current || []).map((m) => m.platform_name).join(', ') || '—'}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -458,8 +621,8 @@ export default function OnboardingReport() {
                 <thead>
                   <tr>
                     <th>Usuário</th>
+                    <th>Entrou no onboarding</th>
                     <th>Parou em</th>
-                    <th>Começou há</th>
                     <th>Ação</th>
                   </tr>
                 </thead>
@@ -470,12 +633,10 @@ export default function OnboardingReport() {
                         <Link to={`/admin/users/${u.id}`} className="link-name">
                           {u.name || '—'}
                         </Link>
-                        <span style={{ display: 'block', fontSize: '0.78em', color: 'var(--text-muted)' }}>
-                          {u.email}
-                        </span>
+                        <span className="ob-cell-sub">{u.email}</span>
                       </td>
-                      <td>{stepLabel(u.onboarding_step)}</td>
                       <td>{u.onboarding_started_at ? formatRelativeTime(u.onboarding_started_at) : '—'}</td>
+                      <td>{stepLabel(u.onboarding_step)}</td>
                       <td>
                         <Link to={`/admin/users/${u.id}`} className="btn btn-outline btn-sm">
                           Ver perfil
@@ -487,7 +648,7 @@ export default function OnboardingReport() {
               </table>
 
               {incomplete.length === 0 && (
-                <div className="empty-table"><p>Ninguém abandonou o onboarding.</p></div>
+                <div className="empty-table"><p>Todo mundo que entrou respondeu o questionário.</p></div>
               )}
             </div>
           )}
@@ -497,15 +658,19 @@ export default function OnboardingReport() {
   );
 }
 
+/** Concordância simples de número com o substantivo. */
+function plural(n, singular, pluralForm) {
+  return `${n} ${n === 1 ? singular : pluralForm}`;
+}
+
 /** Rótulo legível da etapa a partir do id salvo em users.onboarding_step. */
 function stepLabel(stepId) {
-  if (!stepId) return '—';
+  if (!stepId) return 'Antes da 1ª pergunta';
   const step = ONBOARDING_STEPS.find((s) => s.id === stepId);
   return step ? step.title : stepId;
 }
 
-/** "há Xmin/h/d" a partir de um timestamp. */
-function formatRelativeTime(dateStr) {
+/** "há Xmin/h/d" a partir de um timestamp. */function formatRelativeTime(dateStr) {
   if (!dateStr) return '—';
   const diff = Date.now() - new Date(dateStr).getTime();
   const min = Math.floor(diff / 60000);
