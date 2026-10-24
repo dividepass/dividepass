@@ -714,6 +714,42 @@ As edge functions chamam 3 funções que **não existem** no banco (`pg_proc` n�
 
 ---
 
+## 12.2 Redesenho do painel admin (2026-10-24)
+
+O pedido foi "melhorar o layout do `/admin/`, tem muita informação solta, melhorar o onboarding e as respostas, foca no design, sem mudar muita coisa".
+
+### O diagnóstico (22 rotas, 15 no menu)
+| Problema | Onde |
+|---|---|
+| 15 links sem hierarquia, com emoji no lugar de ícone | `AdminLayout.jsx` |
+| **3 páginas inalcançáveis pelo menu**: Assinaturas, Lista de espera, Carteiras | rotas `/admin/subscriptions`, `/admin/interest`, `/admin/wallets` |
+| **Cobranças era um beco sem saída**: 4 rotas, nenhum link entre elas | `/admin/billing/*` |
+| A mesma linha de nav repetida em 4 telas de billing + 1 de cupons | `billing-nav-links` |
+| 4 telas **sem `<h1>`** (Coupons, PlatformEvents, SavingsStats, CronManagement) | — |
+| "Resumo rápido" repetia o total de usuários que já estava nos cards | `AdminDashboard.jsx` |
+| Modal de ticket crítico **abria a cada carga** do painel | `AdminDashboard.jsx` |
+| A página de respostas da pesquisa renderizava um **shell admin aninhado** dentro do `Outlet` (sidebar e página duplicadas) | `SurveyResults.jsx` |
+| O relatório de onboarding filtrava por `onboarding_completed_at` — flag de conclusão, não de coorte | `OnboardingReport.jsx` |
+
+### O que mudou
+**Shell** — navegação agrupada em 5 seções (**Operação · Pessoas · Plataforma · Financeiro · Ajustes**) com ícones lucide, item ativo com barra lateral em vez de pílula cheia, e uma **barra de contexto fixa** ("Seção › Página") em todas as páginas. Cobranças ganhou sub-nav (Visão geral · Calendário · Falhas · Crons), que elimina o beco sem saída.
+
+**Fila do Operador** (assinatura do painel) — abre o painel pelo que está esperando decisão, ordenado por severidade, com link direto: tickets críticos, falhas de pagamento no mês, grupos aguardando aprovação, tickets abertos, lista de espera, onboarding não concluído, cupons expirando. Item sem pendência não aparece; sem pendência nenhuma, um estado calmo. **Substitui o modal** que interrompia a cada carregamento.
+
+**Onboarding** — a coorte passa a vir de **quem respondeu** (`user_onboarding_profiles`, 24 pessoas) e não de `onboarding_completed_at` (25 concluídos). Entra um **funil** Entraram (25) → Deixaram respostas (24) → Concluíram (25) com a saída explicada em texto, e a tabela de respostas ganha cabeçalhos legíveis (a pergunta inteira vai no tooltip), coluna de interesses e linha expansível com todas as respostas.
+
+**Respostas da pesquisa** — sai o shell aninhado, a página usa o shell do `AdminLayout` e as abas adoptam o mesmo desenho do resto do painel.
+
+### Verificação
+- `npm run build` limpo.
+- Passada visual no dev server local (`:5199`, apontando para a produção) com conta admin temporária: Painel, Onboarding, Cobranças e o resultado da pesquisa "Pesquisa de utilização" (9 respostas). Conta de teste apagada ao final (auth + `public.users`), ficou **1 admin** (o dono) e **0 contas de teste**.
+- Deploy conferido: o bundle em `dividepass.com` contém a Fila do Operador e o funil novo; `/admin` redireciona para `/login` sem erro de console.
+
+### Decisão
+Os arquivos `SubscriptionEdit.jsx`/`.css` e `Subscriptions.jsx` estavam sendo editados em paralelo durante a sessão (14:11–14:15) e **ficaram de fora do commit** — para não misturar um trabalho em andamento com o redesenho.
+
+---
+
 ## 13. Perguntas em aberto — respondidas
 
 1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam. Em produção existem `BILLING_CRON_SECRET` e `OVERDUE_CRON_SECRET` (rotacionados). **Continua em aberto:** quais jobs estão de fato agendados no `pg_cron`.
