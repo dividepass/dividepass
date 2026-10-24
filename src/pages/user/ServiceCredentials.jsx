@@ -18,14 +18,18 @@ import {
   Settings,
   User,
   MessageCircle,
-  CreditCard
+  CreditCard,
+  X
 } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { logPlatformEvent } from '../../lib/platformEventLogger';
+import { isSubscriptionOverdue } from '../../lib/subscriptionAccess';
+import { formatDateBR } from '../../lib/dateFormat';
 import GroupChat from '../../components/GroupChat';
 import ContactAdminModal from '../../components/ContactAdminModal';
+import SubscriptionRenewalModal from '../../components/SubscriptionRenewalModal';
 import './ServiceCredentials.css';
 
 function ServiceCredentials() {
@@ -53,6 +57,16 @@ function ServiceCredentials() {
   const [verifiedAccess, setVerifiedAccess] = useState(null);
   const [verifyingAccess, setVerifyingAccess] = useState(true);
 
+  // Assinatura que sustenta o acesso a este grupo (inclusive cancelada —
+  // nesse caso ainda é possível reativar pagando de novo).
+  const [accessSubscription, setAccessSubscription] = useState(null);
+  const [accessBlocked, setAccessBlocked] = useState(false);
+  // Distingue a assinatura vencida (renovação em atraso) da assinatura
+  // cancelada: a tag "Vencida" só faz sentido na primeira.
+  const [accessOverdue, setAccessOverdue] = useState(false);
+  const [showBlockedModal, setShowBlockedModal] = useState(false);
+  const [showRenewal, setShowRenewal] = useState(false);
+
   const activeServices = getActiveServices();
   const service = streamingServices.find(s => s.id === serviceId || s.slug === serviceId);
   const isSubscribed = isSubscribedToService(serviceId);
@@ -62,9 +76,12 @@ function ServiceCredentials() {
     ? activeServices.find(item => (item.service.id === serviceId || item.service.slug === serviceId) && item.group.id === groupId)
     : activeServices.find(item => item.service.id === serviceId || item.service.slug === serviceId);
 
-  // Bloquear acesso APENAS quando assinatura foi cancelada ou membro saiu do grupo
+  // Bloquear o acesso quando a assinatura foi cancelada, a pessoa saiu do
+  // grupo — ou, principalmente, quando a renovação venceu: a assinatura
+  // continua "active" no banco, mas o período pago já acabou.
   useEffect(() => {
-    if (!user || !activeService?.id || !activeService?.group?.id) {
+    const targetGroupId = groupId || activeService?.group?.id;
+    if (!user || !targetGroupId) {
       setVerifyingAccess(false);
       return;
     }
@@ -74,36 +91,63 @@ function ServiceCredentials() {
       try {
         const [subRes, memberRes] = await Promise.all([
           supabase.from('user_subscriptions')
-            .select('status')
-            .eq('id', activeService.id)
+            .select('id, status, next_charge_at, expires_at, amount, billing_cycle, custom_cycle_days, custom_cycle_months, group_id')
+            .eq('group_id', targetGroupId)
             .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
             .maybeSingle(),
           supabase.from('group_members')
-            .select('status')
-            .eq('group_id', activeService.group.id)
+            .select('status, payment_status')
+            .eq('group_id', targetGroupId)
             .eq('user_id', user.id)
             .maybeSingle()
         ]);
 
         if (cancelled) return;
 
-        const subStatus = subRes.data?.status;
+        const sub = subRes.data;
         const memberStatus = memberRes.data?.status;
 
         // Se os dados retornaram null (RLS bloqueia ou registro não existe), bloquear acesso
-        if (!subRes.data && !memberRes.data) {
+        if (!sub && !memberRes.data) {
           setVerifiedAccess(false);
           return;
         }
 
-        // Bloqueia se cancelado, saiu, ou se o subscription não existe mais
-        if (subStatus === 'cancelled' || memberStatus === 'cancelled' || memberStatus === 'left' || (!subStatus && subRes.data === null)) {
+        // Saiu do grupo: sem caminho para reativar por aqui.
+        if (memberStatus === 'cancelled' || memberStatus === 'left') {
           setVerifiedAccess(false);
+          setAccessBlocked(false);
+          setAccessOverdue(false);
+          return;
+        }
+
+        setAccessSubscription(sub || null);
+
+        // Assinatura cancelada: o acesso está encerrado, mas a pessoa ainda
+        // está no grupo — dá para reativar pagando de novo.
+        if (sub?.status === 'cancelled') {
+          setVerifiedAccess(false);
+          setAccessBlocked(true);
+          setAccessOverdue(false);
+          return;
+        }
+
+        // Renovação vencida: a assinatura segue ativa no banco, mas o
+        // período pago acabou. As credenciais ficam bloqueadas até a
+        // regularização — e o botão passa a exigir o pagamento.
+        if (isSubscriptionOverdue(sub)) {
+          setVerifiedAccess(true);
+          setAccessBlocked(true);
+          setAccessOverdue(true);
           return;
         }
 
         // Em qualquer outro caso (active, first_attempt, pending, erro, etc.) → libera
         setVerifiedAccess(true);
+        setAccessBlocked(false);
+        setAccessOverdue(false);
       } catch (e) {
         console.error('[ServiceCredentials] verify error:', e);
         // Em caso de erro, BLOQUEAR acesso (fail-closed)
@@ -115,7 +159,7 @@ function ServiceCredentials() {
 
     verify();
     return () => { cancelled = true; };
-  }, [user?.id, activeService?.id, activeService?.group?.id]);
+  }, [user?.id, groupId, activeService?.group?.id]);
 
   // Verificar se o usuário ainda é membro ativo do grupo
   const isStillMember = activeService?.group?.members?.some(m => m.user_id === user?.id && m.status === 'active');
@@ -308,6 +352,25 @@ function ServiceCredentials() {
     );
   }
 
+  // Pagamento de renovação — reaproveitado pelo aviso de acesso bloqueado e
+  // pela tela de acesso negado.
+  const renewalModal = accessSubscription ? (
+    <SubscriptionRenewalModal
+      open={showRenewal}
+      subscription={accessSubscription}
+      group={activeService?.group}
+      amount={Number(accessSubscription.amount || 0)}
+      onClose={() => setShowRenewal(false)}
+      onPaid={() => {
+        setShowRenewal(false);
+        setShowBlockedModal(false);
+        setAccessBlocked(false);
+        setVerifiedAccess(true);
+        refresh?.();
+      }}
+    />
+  ) : null;
+
   if (verifyingAccess) {
     return (
       <div className="fade-in credentials-page">
@@ -330,12 +393,22 @@ function ServiceCredentials() {
           <AlertTriangle size={48} />
           <h2>Acesso Negado</h2>
           <p>
-            Seu acesso ao {service.name} foi encerrado. Sua assinatura foi cancelada ou você saiu do grupo.
+            {accessBlocked && accessSubscription
+              ? `Sua assinatura do ${service.name} foi cancelada. Pague de novo para reativar o acesso.`
+              : `Seu acesso ao ${service.name} foi encerrado. Sua assinatura foi cancelada ou você saiu do grupo.`}
           </p>
-          <Link to={`/dashboard/catalog/${service.slug || service.id}`} className="btn btn-primary">
-            Ver Grupos Disponíveis
-          </Link>
+          <div className="access-denied-actions">
+            {accessBlocked && accessSubscription && (
+              <button className="btn btn-primary" onClick={() => setShowRenewal(true)}>
+                <CreditCard size={16} /> Renovar assinatura
+              </button>
+            )}
+            <Link to={`/dashboard/catalog/${service.slug || service.id}`} className="btn btn-primary">
+              Ver Grupos Disponíveis
+            </Link>
+          </div>
         </div>
+        {renewalModal}
       </div>
     );
   }
@@ -446,6 +519,8 @@ function ServiceCredentials() {
   const myProfile = hasProfiles && group.profiles
     ? group.profiles.find(p => p.assigned_to === user?.id)
     : null;
+  const renewalDate = activeService.next_charge_at || activeService.expires_at || null;
+  const renewalAmount = Number(accessSubscription?.amount || activeService.amount || 0);
 
   return (
     <div key={serviceId} className="fade-in credentials-page">
@@ -521,7 +596,15 @@ function ServiceCredentials() {
           <div className="credential-header-actions">
             <button
               className="btn btn-primary access-credentials-btn"
-              onClick={() => setShowCredentials(!showCredentials)}
+              onClick={() => {
+                // Assinatura vencida ou cancelada: o clique não revela nada —
+                // abre o aviso e força a regularização.
+                if (accessBlocked) {
+                  setShowBlockedModal(true);
+                  return;
+                }
+                setShowCredentials(!showCredentials);
+              }}
             >
               <Shield size={18} />
               {showCredentials ? 'Ocultar Credenciais' : 'Acessar Credenciais'}
@@ -776,18 +859,23 @@ function ServiceCredentials() {
                   <Calendar size={18} />
                   <div>
                     <span>Ativada em</span>
-                    <strong>{new Date(activeService.started_at || activeService.created_at).toLocaleDateString('pt-BR')}</strong>
+                    <strong>{formatDateBR(activeService.started_at || activeService.created_at)}</strong>
                   </div>
                 </div>
                 <div className="credential-meta-item">
                   <RotateCcw size={18} />
                   <div>
                     <span>Renovação</span>
-                    <strong>{activeService.expires_at ? new Date(activeService.expires_at).toLocaleDateString('pt-BR') : ({
-                      monthly: 'Mensal', quarterly: 'Trimestral', semiannual: 'Semestral', annual: 'Anual',
-                      custom: activeService.custom_cycle_months ? `${activeService.custom_cycle_months} meses` : 'Personalizado',
-                      days: activeService.custom_cycle_days ? `${activeService.custom_cycle_days} dias` : 'Diário'
-                    }[activeService.billing_cycle] || 'Mensal')}</strong>
+                    <strong>
+                      {renewalDate
+                        ? formatDateBR(renewalDate)
+                        : ({
+                          monthly: 'Mensal', quarterly: 'Trimestral', semiannual: 'Semestral', annual: 'Anual',
+                          custom: activeService.custom_cycle_months ? `${activeService.custom_cycle_months} meses` : 'Personalizado',
+                          days: activeService.custom_cycle_days ? `${activeService.custom_cycle_days} dias` : 'Diário'
+                        }[activeService.billing_cycle] || 'Mensal')}
+                    </strong>
+                    {accessOverdue && <span className="overdue-tag">Vencida</span>}
                   </div>
                 </div>
               </div>
@@ -810,6 +898,66 @@ function ServiceCredentials() {
       {showChat && (
         <GroupChat groupId={group.id} />
       )}
+
+      {/* Aviso de acesso bloqueado: a renovação em atraso impede o uso das
+          credenciais até a regularização. */}
+      {showBlockedModal && (
+        <div className="ren-modal-overlay" onClick={() => setShowBlockedModal(false)}>
+          <div className="ren-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="ren-modal-close" onClick={() => setShowBlockedModal(false)} aria-label="Fechar">
+              <X size={20} />
+            </button>
+            <div className="ren-modal-header" style={{ color: '#F59E0B' }}>
+              <AlertTriangle size={28} />
+              <div>
+                <h3>{accessOverdue ? 'Renovação em atraso' : 'Assinatura cancelada'}</h3>
+                <p>{service.name} — {group.name}</p>
+              </div>
+            </div>
+            <div className="ren-modal-body">
+              <p className="ren-success-text">
+                {accessOverdue ? (
+                  <>
+                    Você não tem acesso às credenciais porque a renovação venceu em{' '}
+                    <strong>
+                      {renewalDate ? formatDateBR(renewalDate) : '—'}
+                    </strong>.
+                    Regularize agora para voltar a usar o serviço normalmente.
+                  </>
+                ) : (
+                  <>
+                    Você não tem acesso às credenciais porque a sua assinatura do{' '}
+                    <strong>{service.name}</strong> foi cancelada. Pague de novo para reativar
+                    o acesso.
+                  </>
+                )}
+              </p>
+
+              <div className="ren-summary">
+                <span>Total a pagar</span>
+                <strong>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(renewalAmount)}</strong>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-primary ren-confirm-btn"
+                onClick={() => { setShowBlockedModal(false); setShowRenewal(true); }}
+              >
+                <CreditCard size={16} /> Pagar assinatura
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline ren-confirm-btn"
+                onClick={() => setShowBlockedModal(false)}
+              >
+                Agora não
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renewalModal}
 
       {showContactModal && (
         <ContactAdminModal

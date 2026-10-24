@@ -419,6 +419,47 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
   const { card_number, card_holder_name, card_exp_month, card_exp_year, card_cvv, payment_method, id_card: selectedCardId } = body;
   const isPix = payment_method === "pix";
 
+  // ── Renovação ────────────────────────────────────────────────────────────
+  // A pessoa já é assinante do grupo e a renovação está vencida. Aqui o valor
+  // cobrado é o que ela já pagava (o valor da assinatura), e a assinatura
+  // NÃO pode ser rebaixada para "pending": ela está em uso, só a renovação
+  // está atrasada. A data da próxima cobrança só avança depois que o
+  // pagamento é confirmado.
+  const isRenewal = body.renewal === true;
+  let renewalSub: any = null;
+  if (isRenewal) {
+    const { data: existingSub } = await supabaseAdmin
+      .from("user_subscriptions")
+      .select("id, status, amount, billing_cycle, custom_cycle_days, custom_cycle_months, custom_cycle_label, started_at, coupon_id, discount_amount, original_amount, next_charge_at")
+      .eq("group_id", group_id)
+      .eq("user_id", user_id)
+      .maybeSingle();
+    renewalSub = existingSub || null;
+
+    // Sem assinatura existente nao ha o que renovar. Sem esta guarda o fluxo
+    // cairia no caminho de assinatura nova e criaria uma segunda assinatura
+    // (rebaixando o status para "pending"), em vez de renovar a que existe.
+    if (!renewalSub) {
+      return new Response(
+        JSON.stringify({ error: "Assinatura nao encontrada para este grupo." }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log("[create-payment] renewal mode:", {
+      sub_id: renewalSub?.id,
+      status: renewalSub?.status,
+      amount: renewalSub?.amount,
+      cycle: renewalSub?.billing_cycle,
+      next_charge_at: renewalSub?.next_charge_at,
+    });
+  }
+
+  // Sinaliza o modo renovacao de forma independente do valor: uma assinatura
+  // de valor 0 (grupo gratuito) continua sendo renovacao e nao pode cair no
+  // fluxo de assinatura nova.
+  const renewalMode = isRenewal && !!renewalSub;
+
   const { data: userProfile } = await supabaseAdmin
     .from("users")
     .select("customer_id_iopay, name, email, phone")
@@ -467,7 +508,13 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
   const subscriptionAmountBase = Number(group.price_per_slot || 0);
   const subMonths = months ? Number(months) : (cycle === "quarterly" ? 3 : cycle === "semiannual" ? 6 : cycle === "annual" ? 12 : cycle === "custom" ? (Number(body.custom_cycle_months) || 1) : 1);
   const subDays = cycle === "days" ? (Number(body.custom_cycle_days) || 1) : 0;
-  const subscriptionAmount = subDays > 0 ? subscriptionAmountBase : subscriptionAmountBase * subMonths;
+  // Renovação: o valor é o que a pessoa já pagava (gravado na assinatura),
+  // sem multiplicar pelo ciclo. Precisa valer aqui, no escopo externo, porque
+  // o logAttempt (e o totalCombinedAmount) leem esta variavel — e na renewal o
+  // bloco do PIX declara uma homonima local.
+  const subscriptionAmount = renewalMode
+    ? Number(renewalSub?.amount || 0)
+    : (subDays > 0 ? subscriptionAmountBase : subscriptionAmountBase * subMonths);
   const totalCombinedAmount = entranceAmount + subscriptionAmount;
 
   // ---------------------------------------------------------------------
@@ -781,7 +828,8 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
       .eq("group_id", group_id).eq("user_id", user_id).maybeSingle();
 
     // Para combined, não precisa verificar entrance_fee pois é pago junto
-    if (!isCombined) {
+    // Renovação não passa por taxa de entrada: a pessoa já é assinante.
+    if (!isCombined && !isRenewal) {
       if (member?.payment_status === "expired") {
         return new Response(JSON.stringify({ error: "Prazo expirou. Entre novamente no grupo." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -798,13 +846,29 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
       const monthlyPrice = Number(group.price_per_slot || 0);
       const subMonths = months ? Number(months) : (cycle === "quarterly" ? 3 : cycle === "semiannual" ? 6 : cycle === "annual" ? 12 : cycle === "custom" ? (Number(body.custom_cycle_months) || 1) : 1);
       const subDays = cycle === "days" ? (Number(body.custom_cycle_days) || 1) : 0;
-      const subscriptionAmount = subDays > 0 ? monthlyPrice : monthlyPrice * subMonths;
-      const couponRes = await resolveCouponFor(subscriptionAmount, "subscription");
+      // Renovação: cobra o valor que a pessoa já pagava (o valor gravado na
+      // assinatura), sem multiplicar pelo ciclo e sem reaplicar cupom.
+      const renewalAmount = renewalMode ? Number(renewalSub.amount || 0) : 0;
+      const subscriptionAmount = renewalMode
+        ? renewalAmount
+        : (subDays > 0 ? monthlyPrice : monthlyPrice * subMonths);
+      const couponRes = renewalMode
+        ? { ok: true as const, amount: subscriptionAmount, discount: Number(renewalSub?.discount_amount || 0), recurring: true }
+        : await resolveCouponFor(subscriptionAmount, "subscription");
       if (!couponRes.ok) {
         return new Response(
           JSON.stringify({ error: couponRes.error }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
+      }
+      // Na renovação o cupom nao e recalculado (o desconto ja esta gravado na
+      // assinatura), mas o logAttempt precisa do mesmo valor e desconto.
+      if (renewalMode) {
+        authoritativeCoupon.set("subscription", {
+          amount: couponRes.amount,
+          discount: couponRes.discount,
+          recurring: true,
+        });
       }
       const chargedSubscriptionAmount = couponRes.amount;
 
@@ -813,7 +877,12 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
       let subscriptionStoredAmount = chargedSubscriptionAmount;
       let subscriptionDiscountAmount = couponRes.discount;
       let subscriptionCouponId = coupon_id || null;
-      if (coupon_id && !couponRes.recurring) {
+      if (renewalMode) {
+        // Renovação preserva o que já estava gravado na assinatura.
+        subscriptionStoredAmount = subscriptionAmount;
+        subscriptionDiscountAmount = Number(renewalSub?.discount_amount || 0);
+        subscriptionCouponId = renewalSub?.coupon_id || null;
+      } else if (coupon_id && !couponRes.recurring) {
         subscriptionStoredAmount = subscriptionAmount;
         subscriptionDiscountAmount = 0;
         subscriptionCouponId = null;
@@ -856,15 +925,31 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
         }
 
         await supabaseAdmin.from("user_subscriptions").upsert({
-          user_id, group_id, service_id: group.service_id, billing_cycle: cycle, amount: subscriptionStoredAmount,
-          original_amount: subscriptionAmount,
+          user_id, group_id, service_id: group.service_id,
+          billing_cycle: renewalMode ? (renewalSub?.billing_cycle || cycle) : cycle,
+          amount: subscriptionStoredAmount,
+          original_amount: renewalMode ? Number(renewalSub?.original_amount || 0) : subscriptionAmount,
           discount_amount: subscriptionDiscountAmount,
           coupon_id: subscriptionCouponId,
-          status: "pending", gateway: "iopay", payment_method: isPix ? "pix" : "credit_card", gateway_subscription_id: txId, external_reference: externalReference, started_at: new Date().toISOString(),
-          custom_cycle_months: cycle === "custom" ? Number(body.custom_cycle_months) || null : null,
-          custom_cycle_days: cycle === "days" ? Number(body.custom_cycle_days) || null : null,
-          custom_cycle_label: body.custom_cycle_label || null,
-          next_charge_at: nextChargeAt.toISOString(),
+          // Renovação: a assinatura continua como está (é a renovação que está
+          // atrasada, não o acesso) e a próxima cobrança só avança depois que
+          // o pagamento é confirmado.
+          status: renewalMode ? (renewalSub?.status || "active") : "pending",
+          gateway: "iopay", payment_method: isPix ? "pix" : "credit_card", gateway_subscription_id: txId, external_reference: externalReference,
+          started_at: renewalMode ? (renewalSub?.started_at || new Date().toISOString()) : new Date().toISOString(),
+          custom_cycle_months: renewalMode
+            ? (renewalSub?.custom_cycle_months ?? (cycle === "custom" ? Number(body.custom_cycle_months) || null : null))
+            : (cycle === "custom" ? Number(body.custom_cycle_months) || null : null),
+          custom_cycle_days: renewalMode
+            ? (renewalSub?.custom_cycle_days ?? (cycle === "days" ? Number(body.custom_cycle_days) || null : null))
+            : (cycle === "days" ? Number(body.custom_cycle_days) || null : null),
+          // Na renovação o rótulo do ciclo já está gravado na assinatura: o
+          // body da renovação não o envia, e sobrescrever com null apagaria a
+          // configuração do grupo.
+          custom_cycle_label: renewalMode
+            ? (renewalSub?.custom_cycle_label || body.custom_cycle_label || null)
+            : (body.custom_cycle_label || null),
+          ...(renewalMode ? {} : { next_charge_at: nextChargeAt.toISOString() }),
           billing_status: "active",
         }, { onConflict: "user_id, group_id" });
 
@@ -921,13 +1006,26 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
     const monthlyPrice = Number(group.price_per_slot || 0);
     const subMonths = months ? Number(months) : (cycle === "quarterly" ? 3 : cycle === "semiannual" ? 6 : cycle === "annual" ? 12 : cycle === "custom" ? (Number(body.custom_cycle_months) || 1) : 1);
     const subDays = cycle === "days" ? (Number(body.custom_cycle_days) || 1) : 0;
-    const subscriptionAmount = subDays > 0 ? monthlyPrice : monthlyPrice * subMonths;
-    const cardCouponRes = await resolveCouponFor(subscriptionAmount, "subscription");
+    // Renovação: mesmo valor da assinatura, sem multiplicar pelo ciclo.
+    const renewalAmount = renewalMode ? Number(renewalSub.amount || 0) : 0;
+    const subscriptionAmount = renewalMode
+      ? renewalAmount
+      : (subDays > 0 ? monthlyPrice : monthlyPrice * subMonths);
+    const cardCouponRes = renewalMode
+      ? { ok: true as const, amount: subscriptionAmount, discount: Number(renewalSub?.discount_amount || 0), recurring: true }
+      : await resolveCouponFor(subscriptionAmount, "subscription");
     if (!cardCouponRes.ok) {
       return new Response(
         JSON.stringify({ error: cardCouponRes.error }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+    if (renewalMode) {
+      authoritativeCoupon.set("subscription", {
+        amount: cardCouponRes.amount,
+        discount: cardCouponRes.discount,
+        recurring: true,
+      });
     }
     const chargedSubscriptionAmount = cardCouponRes.amount;
 
@@ -935,7 +1033,11 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
     let cardSubscriptionStoredAmount = chargedSubscriptionAmount;
     let cardSubscriptionDiscountAmount = cardCouponRes.discount;
     let cardSubscriptionCouponId = coupon_id || null;
-    if (coupon_id && !cardCouponRes.recurring) {
+    if (renewalMode) {
+      cardSubscriptionStoredAmount = subscriptionAmount;
+      cardSubscriptionDiscountAmount = Number(renewalSub?.discount_amount || 0);
+      cardSubscriptionCouponId = renewalSub?.coupon_id || null;
+    } else if (coupon_id && !cardCouponRes.recurring) {
       cardSubscriptionStoredAmount = subscriptionAmount;
       cardSubscriptionDiscountAmount = 0;
       cardSubscriptionCouponId = null;
@@ -992,18 +1094,28 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
       }
 
       await supabaseAdmin.from("user_subscriptions").upsert({
-        user_id, group_id, service_id: group.service_id, billing_cycle: cycle, amount: cardSubscriptionStoredAmount,
-        original_amount: subscriptionAmount,
+        user_id, group_id, service_id: group.service_id,
+        billing_cycle: renewalMode ? (renewalSub?.billing_cycle || cycle) : cycle,
+        amount: cardSubscriptionStoredAmount,
+        original_amount: renewalMode ? Number(renewalSub?.original_amount || 0) : subscriptionAmount,
         discount_amount: cardSubscriptionDiscountAmount,
         coupon_id: cardSubscriptionCouponId,
-        status: "pending", gateway: "iopay", payment_method: isPix ? "pix" : "credit_card", gateway_subscription_id: txId, external_reference: externalReference, started_at: new Date().toISOString(),
-        custom_cycle_months: cycle === "custom" ? Number(body.custom_cycle_months) || null : null,
-        custom_cycle_days: cycle === "days" ? Number(body.custom_cycle_days) || null : null,
-        custom_cycle_label: body.custom_cycle_label || null,
+        status: renewalMode ? (renewalSub?.status || "active") : "pending",
+        gateway: "iopay", payment_method: isPix ? "pix" : "credit_card", gateway_subscription_id: txId, external_reference: externalReference,
+        started_at: renewalMode ? (renewalSub?.started_at || new Date().toISOString()) : new Date().toISOString(),
+        custom_cycle_months: renewalMode
+          ? (renewalSub?.custom_cycle_months ?? (cycle === "custom" ? Number(body.custom_cycle_months) || null : null))
+          : (cycle === "custom" ? Number(body.custom_cycle_months) || null : null),
+        custom_cycle_days: renewalMode
+          ? (renewalSub?.custom_cycle_days ?? (cycle === "days" ? Number(body.custom_cycle_days) || null : null))
+          : (cycle === "days" ? Number(body.custom_cycle_days) || null : null),
+        custom_cycle_label: renewalMode
+          ? (renewalSub?.custom_cycle_label || body.custom_cycle_label || null)
+          : (body.custom_cycle_label || null),
         card_id: idCard || null,
         card_last4: cardLast4,
         card_brand: cardBrand,
-        next_charge_at: nextChargeAt.toISOString(),
+        ...(renewalMode ? {} : { next_charge_at: nextChargeAt.toISOString() }),
         billing_status: "active",
       }, { onConflict: "user_id, group_id" });
 

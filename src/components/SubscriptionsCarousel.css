@@ -89,6 +89,19 @@
   flex-shrink: 0;
 }
 
+/* Renovação vencida: o serviço continua listado, mas sem acesso. */
+.sac-card.is-overdue {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.sac-card-status.is-overdue {
+  color: #f87171;
+}
+
+.sac-card-status.is-overdue .sac-card-dot {
+  background: #ef4444;
+}
+
 .sac-dots {
   display: flex;
   justify-content: center;

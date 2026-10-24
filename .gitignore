@@ -39,3 +39,6 @@ supabase/*
 
 # Notas/credenciais locais do agente (contem service_role e tokens)
 .maestri/
+
+# Saida temporaria das verificacoes visuais (Playwright)
+.tmp-verify

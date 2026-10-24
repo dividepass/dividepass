@@ -2,12 +2,15 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { useAppDataContext } from '../../contexts/AppDataContext';
+import { isSubscriptionOverdue } from '../../lib/subscriptionAccess';
+import { formatDateBR } from '../../lib/dateFormat';
+import SubscriptionRenewalModal from '../../components/SubscriptionRenewalModal';
 import { X, Calendar, CreditCard, CheckCircle, Clock, AlertCircle, Receipt, QrCode, Copy, Loader2, Eye, EyeOff, Shield, Wallet } from 'lucide-react';
 import './Billing.css';
 
 function Billing() {
   const { user } = useAuth();
-  const { activeSubscriptions, loading: appLoading } = useAppDataContext();
+  const { activeSubscriptions, loading: appLoading, refresh } = useAppDataContext();
 
   // Definidos fora do componente: evita depender de identificador recriado a cada render
   const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe'];
@@ -35,6 +38,9 @@ function Billing() {
   const [elapsed, setElapsed] = useState(0);
   const pollingRef = useRef(null);
   const timerRef = useRef(null);
+
+  // Renovação: assinatura vencida que precisa de um novo pagamento.
+  const [renewTarget, setRenewTarget] = useState(null);
 
   const fetchPayments = async () => {
     if (!user) return;
@@ -161,6 +167,17 @@ function Billing() {
     return map;
   }, [invoices]);
 
+  // Início do dia — usado para decidir se uma fatura já venceu.
+  const todayStart = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  const openRenewal = (sub, amount) => {
+    setRenewTarget({ subscription: sub, group: sub.group, amount });
+  };
+
   // Cartões são carregados sob demanda, ao abrir o modal de pagamento
   useEffect(() => {
     if (payTarget && GATEWAYS_WITH_CARD.includes(activeGateway) && savedCards.length === 0) {
@@ -176,7 +193,7 @@ function Billing() {
   }, []);
 
   const formatCurrency = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
-  const formatDate = (dateString) => dateString ? new Date(dateString).toLocaleDateString('pt-BR') : '-';
+  const formatDate = (dateString) => formatDateBR(dateString);
 
   const getStatusClass = (status) => {
     if (status === 'paid' || status === 'pago') return 'pago';
@@ -338,14 +355,26 @@ function Billing() {
                 const nextCharge = sub.next_charge_at ? new Date(sub.next_charge_at) : null;
                 const cycleDue = !!nextCharge && nextCharge <= new Date();
 
-                // Sem fatura mas com ciclo vencido: a cobrança não foi gerada.
-                // Mostramos como pendente usando o valor da assinatura.
-                const isPending = billing
-                  ? billing.status === 'pending' || billing.status === 'overdue'
-                  : cycleDue;
-                const isOverdue = billing ? billing.status === 'overdue' : cycleDue;
+                // A assinatura vencida é o que manda no acesso: por mais que
+                // exista uma fatura antiga já paga, quem não renovou continua
+                // sem acesso — e precisa de um caminho para voltar a pagar.
+                const subOverdue = isSubscriptionOverdue(sub);
+                const isOverdue = subOverdue || billing?.status === 'overdue';
+                const isPending = isOverdue || (billing ? billing.status === 'pending' : cycleDue);
+
+                // Só as faturas já vencidas entram no valor a pagar: as
+                // faturas de ciclos futuros continuam pendentes de propósito.
+                const overdueInvoices = (billing?.invoices || []).filter(
+                  (i) => i.due_date && new Date(`${i.due_date}T00:00:00`).getTime() <= todayStart.getTime()
+                );
+                const renewalTotal = overdueInvoices.length
+                  ? overdueInvoices.reduce((sum, i) => sum + Number(i.amount || 0), 0)
+                  : Number(sub.amount || 0);
+
                 const dueDate = billing?.dueDate || sub.next_charge_at || sub.expires_at;
-                const total = billing ? billing.total : Number(sub.amount || 0);
+                const total = isOverdue
+                  ? renewalTotal
+                  : (billing ? billing.total : Number(sub.amount || 0));
                 const canPay = !!billing?.invoices?.length;
 
                 return (
@@ -378,12 +407,20 @@ function Billing() {
                     {isPending && (
                       <div className="billing-sub-pending-box">
                         <span className="billing-sub-pending-label">
-                          {billing?.count > 1
-                            ? `${billing.count} faturas em aberto`
-                            : 'Total a pagar'}
+                          {isOverdue
+                            ? (overdueInvoices.length > 1 ? `${overdueInvoices.length} faturas vencidas` : 'Total a pagar')
+                            : (billing?.count > 1 ? `${billing.count} faturas em aberto` : 'Total a pagar')}
                         </span>
                         <span className="billing-sub-pending-total">{formatCurrency(total)}</span>
-                        {canPay ? (
+                        {isOverdue ? (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm billing-sub-pay-btn"
+                            onClick={() => openRenewal(sub, renewalTotal)}
+                          >
+                            <Wallet size={14} /> Pagar assinatura
+                          </button>
+                        ) : canPay ? (
                           <button
                             type="button"
                             className="btn btn-primary btn-sm billing-sub-pay-btn"
@@ -746,6 +783,19 @@ function Billing() {
           </div>
         </div>
       )}
+
+      {/* Renovação da assinatura vencida */}
+      <SubscriptionRenewalModal
+        open={!!renewTarget}
+        subscription={renewTarget?.subscription}
+        group={renewTarget?.group}
+        amount={renewTarget?.amount}
+        onClose={() => setRenewTarget(null)}
+        onPaid={() => {
+          fetchPayments();
+          refresh?.();
+        }}
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isSubscriptionOverdue } from '../lib/subscriptionAccess';
 import './SubscriptionsCarousel.css';
 
 const PAGE_SIZE = 4;
@@ -87,28 +88,35 @@ export default function SubscriptionsCarousel({ items }) {
             <div key={pageIndex} className="sac-page">
               {items
                 .slice(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE)
-                .map(({ service, group }) => (
-                  <button
-                    key={group.id}
-                    type="button"
-                    className="sac-card"
-                    onClick={() => openCredentials(service, group)}
-                    style={{ '--service-color': service.color }}
-                  >
-                    <div className="sac-card-logo" style={{ backgroundColor: service.color }}>
-                      {service.icon_url ? (
-                        <img src={service.icon_url} alt={service.name} />
-                      ) : (
-                        service.icon
-                      )}
-                    </div>
-                    <span className="sac-card-name">{service.fullName || service.name}</span>
-                    <span className="sac-card-status">
-                      <span className="sac-card-dot" />
-                      Ativo
-                    </span>
-                  </button>
-                ))}
+                .map((item) => {
+                  const { service, group } = item;
+                  // A assinatura continua ativa no banco, mas a renovação
+                  // vencida significa que o acesso já foi pago só até a data.
+                  const overdue = isSubscriptionOverdue(item);
+
+                  return (
+                    <button
+                      key={group.id}
+                      type="button"
+                      className={`sac-card ${overdue ? 'is-overdue' : ''}`}
+                      onClick={() => openCredentials(service, group)}
+                      style={{ '--service-color': service.color }}
+                    >
+                      <div className="sac-card-logo" style={{ backgroundColor: service.color }}>
+                        {service.icon_url ? (
+                          <img src={service.icon_url} alt={service.name} />
+                        ) : (
+                          service.icon
+                        )}
+                      </div>
+                      <span className="sac-card-name">{service.fullName || service.name}</span>
+                      <span className={`sac-card-status ${overdue ? 'is-overdue' : ''}`}>
+                        <span className="sac-card-dot" />
+                        {overdue ? 'Vencida' : 'Ativo'}
+                      </span>
+                    </button>
+                  );
+                })}
             </div>
           ))}
         </div>

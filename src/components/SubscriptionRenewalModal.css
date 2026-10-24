@@ -1,0 +1,369 @@
+/* ===========================================================================
+   Modal de renovação de assinatura
+   ---------------------------------------------------------------------------
+   Mesma linguagem visual do painel de cobrança (overlay, cartão, opções de
+   método), mas isolado: o modal de fatura e o de renovação são fluxos
+   diferentes e podem evoluir separadamente.
+   ========================================================================= */
+
+.ren-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.ren-modal {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.ren-modal-close {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 0.5rem;
+  background: var(--surface-soft, rgba(148, 163, 184, 0.12));
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ren-modal-close:hover {
+  color: var(--text-main);
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.ren-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 1.15rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--primary);
+}
+
+.ren-modal-header.is-success {
+  color: #22c55e;
+}
+
+.ren-modal-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.ren-modal-header p {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.ren-modal-body {
+  padding: 1.15rem 1.25rem 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ------------------------------- aviso ----------------------------------- */
+.ren-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  background: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.ren-warning svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ------------------------------ métodos ---------------------------------- */
+.ren-method-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ren-method {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.8rem 0.9rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--border);
+  background: var(--surface-soft, rgba(148, 163, 184, 0.07));
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.ren-method:hover {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.ren-method.active {
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.12);
+  color: var(--primary);
+}
+
+.ren-method span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.ren-method strong {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.ren-method.active strong {
+  color: var(--primary);
+}
+
+.ren-method small {
+  font-size: 0.74rem;
+  color: var(--text-soft);
+}
+
+/* ------------------------------ cartões ---------------------------------- */
+.ren-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ren-cards-title {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-soft);
+}
+
+.ren-card-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.84rem;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.ren-card-row.selected {
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.12);
+  color: var(--primary);
+}
+
+.ren-card-number {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.ren-card-brand {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--text-soft);
+}
+
+.ren-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-soft);
+}
+
+/* ------------------------------- resumo ---------------------------------- */
+.ren-summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 1rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 0.65rem;
+  background: var(--surface-soft, rgba(148, 163, 184, 0.08));
+  font-size: 0.85rem;
+}
+
+.ren-summary span {
+  color: var(--text-muted);
+}
+
+.ren-summary strong {
+  color: var(--text-main);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------- PIX ----------------------------------- */
+.ren-pix-body {
+  align-items: center;
+}
+
+.ren-qrcode {
+  width: 220px;
+  height: 220px;
+  border-radius: 0.75rem;
+  background: #fff;
+  padding: 8px;
+}
+
+.ren-copy-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ren-copy-section label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-soft);
+}
+
+.ren-copy-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ren-copy-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--text-main);
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.ren-polling-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.ren-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.ren-error svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ren-secure-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-soft);
+  text-align: center;
+}
+
+.ren-success-text {
+  margin: 0;
+  font-size: 0.87rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.ren-confirm-btn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.ren-confirm-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* O app tem varias regras globais de `.btn-outline` (algumas de paginas do
+   admin vazam para o usuario inteiro). O botao secundario do modal declara
+   as cores aqui para nao depender de qual delas vence o conflito. */
+.ren-confirm-btn.btn-outline {
+  background: var(--surface);
+  color: var(--text-main);
+  border: 1px solid var(--border-strong);
+}
+
+.ren-confirm-btn.btn-outline:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #FFFFFF;
+}
+
+@media (max-width: 520px) {
+  .ren-modal {
+    max-width: 100%;
+  }
+
+  .ren-qrcode {
+    width: 180px;
+    height: 180px;
+  }
+}

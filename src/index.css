@@ -39,6 +39,10 @@
   --text-main: #FFFFFF;
   --text-muted: #94A3B8;
   --text-soft: #64748B;
+  /* `--text` e o atalho usado por varios components (ex.: .btn-outline).
+     Sem ele, `var(--text, #e2e8f0)` caia sempre no fallback claro e o texto
+     sumia no tema claro. */
+  --text: #E2E8F0;
   --border: #334155;
   --border-strong: #475569;
   --ring: rgba(79, 70, 229, 0.3);
@@ -59,6 +63,7 @@
   --text-main: #0F172A;
   --text-muted: #64748B;
   --text-soft: #94A3B8;
+  --text: #0F172A;
   --border: #E2E8F0;
   --border-strong: #CBD5E1;
   --ring: rgba(79, 70, 229, 0.2);

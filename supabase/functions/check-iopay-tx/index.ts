@@ -374,6 +374,44 @@ async function confirmIOPayment(
     return { success: false, error: "subscription error: " + e.message };
   }
 
+  // Fatura vencida do ciclo que está sendo pago: precisa ser quitada, senão
+  // continua aparecendo como pendente no painel de cobrança mesmo depois do
+  // pagamento. A fatura do próximo ciclo (vencimento futuro) fica pendente de
+  // propósito.
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const { data: dueInvoices } = await supabaseAdmin
+      .from("invoices")
+      .select("id, amount")
+      .eq("group_id", group_id)
+      .eq("user_id", user_id)
+      .eq("status", "pending")
+      .lte("due_date", today);
+
+    const due = dueInvoices || [];
+    if (due.length > 0) {
+      const paidAmount = Number(amount);
+      const dueTotal = due.reduce((sum, i) => sum + Number(i.amount || 0), 0);
+
+      // O pagamento cobre exatamente as faturas vencidas: quando a soma bate,
+      // quita todas; caso contrário, só a fatura de mesmo valor.
+      const toSettle = Math.abs(dueTotal - paidAmount) < 0.01
+        ? due
+        : due.filter((i) => Math.abs(Number(i.amount) - paidAmount) < 0.01);
+
+      for (const inv of toSettle) {
+        const { error: invErr } = await supabaseAdmin
+          .from("invoices")
+          .update({ status: "paid", paid_at: new Date().toISOString() })
+          .eq("id", inv.id);
+        if (invErr) console.error("[confirmIOPayment] invoice settle error:", invErr);
+        else console.log(`[confirmIOPayment] fatura vencida quitada: ${inv.id} (${inv.amount})`);
+      }
+    }
+  } catch (e: any) {
+    console.error("[confirmIOPayment] invoices settle exception:", e);
+  }
+
   // group_members: update existing row, or upsert if missing — CRITICAL
   try {
     const { data: existingMember, error: selErr } = await supabaseAdmin
@@ -816,7 +854,7 @@ export default {
       // Check DB directly: is it already confirmed?
       const { data: sub } = await supabaseAdmin
         .from("user_subscriptions")
-        .select("id, status, billing_cycle, custom_cycle_days, custom_cycle_months, amount")
+        .select("id, status, billing_cycle, custom_cycle_days, custom_cycle_months, amount, next_charge_at, expires_at")
         .eq("group_id", group_id)
         .eq("user_id", user_id)
         .order("created_at", { ascending: false })
@@ -833,12 +871,22 @@ export default {
       const paymentType = await resolvePaymentType(supabaseAdmin, bodyPaymentType, group_id, user_id, member?.payment_status);
       console.log(`[check-iopay-tx] STEP 6: resolved_type=${paymentType} sub_status=${sub?.status} member_payment=${member?.payment_status}`);
 
+      // Uma assinatura vencida continua "active" no banco: o status só muda
+      // quando o acesso é encerrado de vez. Sem esta checagem, a renovação de
+      // uma assinatura vencida era tratada como "já confirmada" e o
+      // next_charge_at nunca avançava — o usuário pagava e continuava
+      // vencido, sem acesso e sem fatura quitada.
+      const renewalRef = sub?.next_charge_at || sub?.expires_at || null;
+      const renewalIsOverdue = renewalRef
+        ? new Date(renewalRef).getTime() < Date.now()
+        : false;
+
       // Already confirmed in DB?
       // For subscription: only consider active if the SUBSCRIPTION itself is active, not just the entrance
       // For entrance: check if entrance is already paid
       let alreadyConfirmedInDB = false;
       if (paymentType === "subscription") {
-        alreadyConfirmedInDB = sub?.status === "active" && member?.payment_status === "active";
+        alreadyConfirmedInDB = sub?.status === "active" && member?.payment_status === "active" && !renewalIsOverdue;
       } else if (paymentType === "entrance") {
         alreadyConfirmedInDB = member?.payment_status === "entrance_paid" || member?.payment_status === "active";
       } else {
