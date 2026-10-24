@@ -1,58 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
-  Loader2, Activity, Trash2, CreditCard, UserPlus, UserMinus,
-  CheckCircle, XCircle, DollarSign, RefreshCw, Search, Users,
-  Wallet, ArrowDownRight, User, Settings, Tag, AlertTriangle, Clock, Mail,
-  Eye, ExternalLink
+  Loader2, Activity, Trash2, CreditCard, UserPlus,
+  DollarSign, RefreshCw, Search, Users, X,
+  Wallet, Eye
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import EventLog from './EventLog';
+import {
+  EVENT_META, LOG_FILTERS, LOG_FILTER_VALUES, PERIODS, TABLE_FILTERS, periodStart,
+} from './eventLogMeta';
 import './PlatformEvents.css';
-
-const EVENT_TYPES = [
-  { value: 'all', label: 'Todos' },
-  { value: 'group_approved', label: 'Grupos Ativos', isList: true },
-  { value: 'user_registered', label: 'Cadastros' },
-  { value: 'user_login', label: 'Logins' },
-  { value: 'group_created', label: 'Grupos Criados' },
-  { value: 'group_rejected', label: 'Grupos Recusados' },
-  { value: 'group_deleted', label: 'Grupos Removidos' },
-  { value: 'checkout_opened', label: 'Checkouts Abertos' },
-  { value: 'member_joined', label: 'Membros Ingressaram' },
-  { value: 'member_left', label: 'Membros Saíram' },
-  { value: 'email_code_requested', label: 'Códigos Solicitados' },
-  { value: 'payment', label: 'Pagamentos' },
-  { value: 'subscription_cancelled', label: 'Assinaturas Canceladas' },
-  { value: 'withdrawal_requested', label: 'Saques Solicitados' },
-  { value: 'withdrawal_approved', label: 'Saques Aprovados' },
-  { value: 'withdrawal_rejected', label: 'Saques Recusados' },
-  { value: 'refund', label: 'Reembolsos' },
-  { value: 'info', label: 'Informativos' },
-];
-
-const EVENT_ICONS = {
-  user_registered: <User size={14} />,
-  user_login: <User size={14} />,
-  group_created: <Users size={14} />,
-  group_deleted: <Trash2 size={14} />,
-  group_approved: <CheckCircle size={14} />,
-  group_rejected: <XCircle size={14} />,
-  checkout_opened: <CreditCard size={14} />,
-  subscription_cancelled: <CreditCard size={14} />,
-  member_joined: <UserPlus size={14} />,
-  member_left: <UserMinus size={14} />,
-  email_code_requested: <Mail size={14} />,
-  payment: <DollarSign size={14} />,
-  refund: <RefreshCw size={14} />,
-  info: <Activity size={14} />,
-  withdrawal_requested: <Wallet size={14} />,
-  withdrawal_approved: <CheckCircle size={14} />,
-  withdrawal_rejected: <XCircle size={14} />,
-};
+import './EventLog.css';
 
 function PlatformEvents() {
   const navigate = useNavigate();
-  const [events, setEvents] = useState([]);
   const [groups, setGroups] = useState([]);
   const [users, setUsers] = useState([]);
   const [deletedGroups, setDeletedGroups] = useState([]);
@@ -74,7 +36,12 @@ function PlatformEvents() {
   const [modalSuccess, setModalSuccess] = useState('');
   const [modalError, setModalError] = useState('');
   const [modalInfo, setModalInfo] = useState('');
+  const [viewCounts, setViewCounts] = useState({});
+  const [period, setPeriod] = useState('7d');
+  const [stats, setStats] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
 
+  const isLogView = LOG_FILTER_VALUES.includes(filter);
   const isGroupsList = filter === 'group_approved';
   const isUsersList = filter === 'user_registered';
   const isCreatedGroupsList = filter === 'group_created';
@@ -361,48 +328,8 @@ function PlatformEvents() {
         } else if (!cancelled) {
           setCancelledSubs([]);
         }
-      } else {
-        let query = supabase
-          .from('platform_events')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(200);
-
-        if (filter !== 'all') {
-          query = query.eq('event_type', filter);
-        }
-
-        const { data, error } = await query;
-        if (!cancelled && !error) {
-          const parsed = (data || []).map(ev => {
-            try {
-              const meta = typeof ev.metadata === 'string' ? JSON.parse(ev.metadata) : (ev.metadata || {});
-              return { ...ev, parsed_meta: meta };
-            } catch { return { ...ev, parsed_meta: {} }; }
-          });
-
-          const userIds = [...new Set(parsed.map(e => e.parsed_meta?.user_id || e.created_by).filter(Boolean))];
-          const groupIds = [...new Set(parsed.map(e => e.parsed_meta?.group_id).filter(Boolean))];
-
-          const [usersRes, groupsRes] = await Promise.all([
-            userIds.length ? supabase.from('users').select('id, name, email').in('id', userIds) : { data: [] },
-            groupIds.length ? supabase.from('groups').select('id, name, slug, owner_id').in('id', groupIds) : { data: [] },
-          ]);
-
-          const userMap = {};
-          (usersRes.data || []).forEach(u => userMap[u.id] = u);
-          const groupMap = {};
-          (groupsRes.data || []).forEach(g => groupMap[g.id] = g);
-
-          const enriched = parsed.map(ev => ({
-            ...ev,
-            user: userMap[ev.parsed_meta?.user_id || ev.created_by] || null,
-            group: groupMap[ev.parsed_meta?.group_id] || null,
-          }));
-
-          setEvents(enriched);
-        }
       }
+      /* O registro bruto de eventos tem o próprio carregamento (<EventLog/>). */
 
       setLoading(false);
     };
@@ -411,23 +338,72 @@ function PlatformEvents() {
     return () => { cancelled = true; };
   }, [filter]);
 
-  const filteredEvents = events.filter(ev => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    const meta = ev.parsed_meta || {};
-    return (
-      ev.title?.toLowerCase().includes(q) ||
-      ev.message?.toLowerCase().includes(q) ||
-      ev.event_type?.toLowerCase().includes(q) ||
-      ev.created_by?.toLowerCase().includes(q) ||
-      meta.user_id?.toLowerCase().includes(q) ||
-      meta.group_id?.toLowerCase().includes(q) ||
-      meta.group_name?.toLowerCase().includes(q) ||
-      meta.gateway?.toLowerCase().includes(q) ||
-      meta.email?.toLowerCase().includes(q) ||
-      String(meta.amount)?.includes(q)
-    );
-  });
+  /* Contagem de cada consulta de dados — uma leitura HEAD por filtro, em
+     paralelo. Serve para o chip mostrar o tamanho real e ficar desligado
+     quando não há nada para consultar. */
+  useEffect(() => {
+    let cancelled = false;
+
+    const head = async (key, table, apply) => {
+      let query = supabase.from(table).select('id', { count: 'exact', head: true });
+      if (apply) query = apply(query);
+      const { count } = await query;
+      return [key, count || 0];
+    };
+
+    (async () => {
+      const results = await Promise.all([
+        head('user_registered', 'users'),
+        head('group_approved', 'groups', q => q.eq('approval_status', 'approved').eq('status', 'open')),
+        head('group_created', 'groups', q => q.eq('approval_status', 'pending')),
+        head('group_rejected', 'groups', q => q.eq('approval_status', 'rejected')),
+        head('group_deleted', 'platform_events', q => q.eq('event_type', 'group_deleted')),
+        head('member_joined', 'platform_events', q => q.eq('event_type', 'member_joined')),
+        head('member_left', 'platform_events', q => q.eq('event_type', 'member_left')),
+        head('payment', 'payment_attempts'),
+        head('withdrawal_requested', 'wallet_withdrawals'),
+        head('refund', 'payment_attempts', q => q.or('status.eq.refunded,payment_type.eq.refund')),
+        head('subscription_cancelled', 'user_subscriptions', q => q.eq('status', 'cancelled')),
+      ]);
+      if (cancelled) return;
+      setViewCounts(Object.fromEntries(results));
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
+
+  /* Tipo + data de todo o histórico: basta para contar por tipo dentro do
+     período escolhido, sem brings de volta o metadata inteiro. */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('platform_events')
+        .select('event_type, created_at')
+        .limit(5000);
+      if (cancelled) return;
+      setStats(data || []);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const counts = useMemo(() => {
+    const since = periodStart(period);
+    const byType = {};
+    let inPeriod = 0;
+    for (const row of stats) {
+      if (since && new Date(row.created_at) < new Date(since)) continue;
+      inPeriod += 1;
+      byType[row.event_type] = (byType[row.event_type] || 0) + 1;
+    }
+    return { byType, inPeriod, total: stats.length };
+  }, [stats, period]);
+
+  /* A busca do registro recarrega o período — espera a digitação parar. */
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchQuery(search.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const filteredGroups = groups.filter(g => {
     if (!search) return true;
@@ -521,50 +497,11 @@ function PlatformEvents() {
     );
   });
 
-  const formatTime = (dateStr) => {
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now - d;
-    const diffMin = Math.floor(diffMs / 60000);
-    const diffH = Math.floor(diffMin / 60);
-    const diffD = Math.floor(diffH / 24);
-
-    if (diffMin < 1) return 'Agora';
-    if (diffMin < 60) return `${diffMin}min atrás`;
-    if (diffH < 24) return `${diffH}h atrás`;
-    if (diffD < 7) return `${diffD}d atrás`;
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-  };
-
   const formatFullDate = (dateStr) => {
     return new Date(dateStr).toLocaleString('pt-BR', {
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
-  };
-
-  const getMetadataSummary = (metadata) => {
-    if (!metadata) return null;
-    try {
-      const meta = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
-      const items = [];
-      if (meta.amount) items.push(`R$ ${Number(meta.amount).toFixed(2)}`);
-      if (meta.group_name) items.push(meta.group_name);
-      if (meta.payment_type) items.push(meta.payment_type === 'entrance' ? 'Adesão' : 'Assinatura');
-      if (meta.gateway) items.push(meta.gateway);
-      if (meta.reason) items.push(meta.reason);
-      if (meta.email) items.push(meta.email);
-      return items.length > 0 ? items.join(' · ') : null;
-    } catch { return null; }
-  };
-
-  const getGroupMembers = async (groupId) => {
-    const { count } = await supabase
-      .from('group_members')
-      .select('id', { count: 'exact', head: true })
-      .eq('group_id', groupId)
-      .eq('status', 'active');
-    return count || 0;
   };
 
   const cycleLabel = (cycle) => ({
@@ -577,7 +514,7 @@ function PlatformEvents() {
         <div>
           <h1><Activity size={24} /> {
             isGroupsList ? 'Grupos Ativos' :
-            isCreatedGroupsList ? 'Grupos Criados' :
+            isCreatedGroupsList ? 'Aguardando Aprovação' :
             isRejectedGroupsList ? 'Grupos Recusados' :
             isDeletedGroupsList ? 'Grupos Removidos' :
             isUsersList ? 'Usuários Cadastrados' :
@@ -589,10 +526,12 @@ function PlatformEvents() {
             'Eventos da Plataforma'
           }</h1>
           <p style={{ color: '#9ca3af', marginTop: 4 }}>
-            {isGroupsList
+            {isLogView
+              ? 'Tudo que aconteceu na plataforma, em ordem cronológica.'
+              : isGroupsList
               ? `${filteredGroups.length} grupo${filteredGroups.length !== 1 ? 's' : ''} ativo${filteredGroups.length !== 1 ? 's' : ''}`
               : isCreatedGroupsList
-              ? `${filteredGroups.length} grupo${filteredGroups.length !== 1 ? 's' : ''} pendente${filteredGroups.length !== 1 ? 's' : ''}`
+              ? `${filteredGroups.length} grupo${filteredGroups.length !== 1 ? 's' : ''} aguardando aprovação`
               : isRejectedGroupsList
               ? `${filteredGroups.length} grupo${filteredGroups.length !== 1 ? 's' : ''} recusado${filteredGroups.length !== 1 ? 's' : ''}`
               : isDeletedGroupsList
@@ -609,52 +548,120 @@ function PlatformEvents() {
               ? `${filteredRefunds.length} reembolso${filteredRefunds.length !== 1 ? 's' : ''}`
               : isCancelledSubsList
               ? `${filteredCancelledSubs.length} assinatura${filteredCancelledSubs.length !== 1 ? 's' : ''} cancelada${filteredCancelledSubs.length !== 1 ? 's' : ''}`
-              : `${filteredEvents.length} evento${filteredEvents.length !== 1 ? 's' : ''} encontrado${filteredEvents.length !== 1 ? 's' : ''}`
+              : ''
             }
           </p>
         </div>
       </div>
 
-      {/* Search */}
-      <div className="pe-search">
-        <Search size={18} />
-        <input
-          type="text"
-          placeholder={
-            isGroupsTable ? 'Buscar por nome, slug, proprietário...' :
-            isDeletedGroupsList ? 'Buscar por nome do grupo...' :
-            isUsersList ? 'Buscar por nome, email, telefone...' :
-            isMembersList ? 'Buscar por usuário, grupo...' :
-            isPaymentsList ? 'Buscar por usuário, grupo, gateway, status...' :
-            isWithdrawalsList ? 'Buscar por usuário, status, método...' :
-            isRefundsList ? 'Buscar por usuário, grupo, gateway...' :
-            isCancelledSubsList ? 'Buscar por usuário, grupo...' :
-            'Buscar eventos...'
-          }
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      {/* Registro de eventos — filtros do log, com a contagem do período */}
+      <div className="ev-chips-block">
+        <span className="ev-chips-label">Registro de eventos</span>
+        <div className="ev-chips">
+          {LOG_FILTERS.map(f => {
+            const Icon = f.value === 'all' ? Activity : EVENT_META[f.value]?.icon;
+            const count = f.value === 'all' ? counts.inPeriod : (counts.byType[f.value] || 0);
+            const empty = count === 0;
+            const active = isLogView && filter === f.value;
+            return (
+              <button
+                key={f.value}
+                className={`ev-chip ${active ? 'active' : ''} ${empty ? 'is-empty' : ''}`}
+                onClick={() => { setFilter(f.value); setSearch(''); }}
+                disabled={empty && !active}
+                title={empty ? 'Nenhum evento registrado' : undefined}
+              >
+                {Icon && <Icon size={13} />}
+                <span>{f.label}</span>
+                <span className="ev-chip-count">{count}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Filters */}
-      <div className="pe-filters">
-        {EVENT_TYPES.map(et => (
-          <button
-            key={et.value}
-            className={`pe-filter-btn ${filter === et.value ? 'active' : ''}`}
-            onClick={() => { setFilter(et.value); setSearch(''); }}
-          >
-            {EVENT_ICONS[et.value]}
-            {et.label}
-          </button>
-        ))}
+      {/* Consultas de dados — cada chip mostra o tamanho real da consulta */}
+      <div className="ev-chips-block">
+        <span className="ev-chips-label">Consultas de dados</span>
+        <div className="ev-chips">
+          {TABLE_FILTERS.map(tf => {
+            const Icon = tf.icon;
+            const count = viewCounts[tf.value];
+            const empty = count === 0;
+            const active = filter === tf.value;
+            return (
+              <button
+                key={tf.value}
+                className={`ev-chip ${active ? 'active' : ''} ${empty ? 'is-empty' : ''}`}
+                onClick={() => { setFilter(tf.value); setSearch(''); }}
+                disabled={empty && !active}
+                title={empty ? 'Nada para consultar' : undefined}
+              >
+                <Icon size={13} />
+                <span>{tf.label}</span>
+                {count !== undefined && <span className="ev-chip-count">{count}</span>}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {loading ? (
+      {/* Busca + período */}
+      <div className="ev-toolbar">
+        <div className="ev-search">
+          <Search size={16} />
+          <input
+            type="text"
+            placeholder={
+              isLogView ? 'Buscar por título, usuário, grupo, gateway, id...' :
+              isGroupsTable ? 'Buscar por nome, slug, proprietário...' :
+              isDeletedGroupsList ? 'Buscar por nome do grupo...' :
+              isUsersList ? 'Buscar por nome, email, telefone...' :
+              isMembersList ? 'Buscar por usuário, grupo...' :
+              isPaymentsList ? 'Buscar por usuário, grupo, gateway, status...' :
+              isWithdrawalsList ? 'Buscar por usuário, status, método...' :
+              isRefundsList ? 'Buscar por usuário, grupo, gateway...' :
+              isCancelledSubsList ? 'Buscar por usuário, grupo...' :
+              'Buscar...'
+            }
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {search && (
+            <button className="ev-search-clear" onClick={() => setSearch('')} aria-label="Limpar busca">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {isLogView && (
+          <div className="ev-period" role="group" aria-label="Período">
+            {PERIODS.map(p => (
+              <button
+                key={p.value}
+                className={period === p.value ? 'active' : ''}
+                onClick={() => setPeriod(p.value)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {loading && !isLogView ? (
         <div className="pe-loading">
           <Loader2 size={20} className="spin" />
           Carregando...
         </div>
+      ) : isLogView ? (
+        /* ==================== REGISTRO DE EVENTOS ==================== */
+        <EventLog
+          type={filter}
+          search={searchQuery}
+          period={period}
+          counts={counts}
+        />
       ) : isGroupsTable ? (
         /* ==================== GROUPS TABLE (Ativos / Criados / Recusados) ==================== */
         filteredGroups.length === 0 ? (
@@ -1301,84 +1308,10 @@ function PlatformEvents() {
           </div>
         )
       ) : (
-        /* ==================== EVENTS LIST ==================== */
-        filteredEvents.length === 0 ? (
-          <div className="pe-empty">
-            <Activity size={48} />
-            <p>Nenhum evento encontrado.</p>
-          </div>
-        ) : (
-          <div className="pe-list">
-            {filteredEvents.map(ev => {
-              const metaSummary = getMetadataSummary(ev.parsed_meta || ev.metadata);
-              const meta = ev.parsed_meta || {};
-              return (
-                <div key={ev.id} className="pe-card">
-                  <div className={`pe-card-icon pe-badge-${ev.event_type}`}>
-                    {EVENT_ICONS[ev.event_type] || <Activity size={14} />}
-                  </div>
-                  <div className="pe-card-content">
-                    <div className="pe-card-header">
-                      <span className="pe-card-title">{ev.title}</span>
-                      <span className="pe-card-time" title={formatFullDate(ev.created_at)}>
-                        {formatTime(ev.created_at)}
-                      </span>
-                    </div>
-                    {ev.message && (
-                      <p className="pe-card-message">
-                        {ev.user && ev.message.includes(ev.user.name || '__none__') ? (
-                          <>
-                            {ev.message.split(ev.user.name).map((part, i) => (
-                              <span key={i}>
-                                {part}
-                                {i < ev.message.split(ev.user.name).length - 1 && (
-                                  <a className="pe-link" onClick={() => navigate(`/admin/users/${ev.user.id}`)} title="Ver usuário">{ev.user.name}</a>
-                                )}
-                              </span>
-                            ))}
-                          </>
-                        ) : ev.user ? (
-                          <>
-                            {ev.message.split(new RegExp(`(${ev.user.name}|${ev.user.email})`, 'gi')).map((part, i) => {
-                              const isUser = part === ev.user.name || part.toLowerCase() === ev.user.email?.toLowerCase();
-                              return isUser ? (
-                                <a key={i} className="pe-link" onClick={() => navigate(`/admin/users/${ev.user.id}`)} title="Ver usuário">{part}</a>
-                              ) : (
-                                <span key={i}>{part}</span>
-                              );
-                            })}
-                          </>
-                        ) : ev.message}
-                      </p>
-                    )}
-                    <div className="pe-card-footer">
-                      <span className={`pe-badge pe-badge-${ev.event_type}`}>
-                        {ev.event_type?.replace(/_/g, ' ')}
-                      </span>
-                      {ev.group && (
-                        <a className="pe-link pe-link-group" onClick={() => navigate(`/admin/groups/${ev.group.id}/edit`)} title="Ver grupo">
-                          {ev.group.name}
-                        </a>
-                      )}
-                      {meta.amount && (
-                        <span className="pe-meta-summary">R$ {Number(meta.amount).toFixed(2)}</span>
-                      )}
-                      {meta.payment_type && (
-                        <span className="pe-meta-summary">{meta.payment_type === 'entrance' ? 'Adesão' : 'Assinatura'}</span>
-                      )}
-                      {meta.discount_amount > 0 && (
-                        <span className="pe-meta-summary pe-meta-discount">-R$ {Number(meta.discount_amount).toFixed(2)}</span>
-                      )}
-                      {meta.gateway && (
-                        <span className="pe-meta-summary">{meta.gateway}</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )
+        <div className="pe-empty">
+          <Activity size={48} />
+          <p>Nenhum registro encontrado.</p>
+        </div>
       )}
 
       {/* Payment Detail Viewer */}

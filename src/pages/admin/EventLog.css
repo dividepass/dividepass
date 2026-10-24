@@ -1,0 +1,557 @@
+/* ===========================================================================
+   Registro de eventos
+   ---------------------------------------------------------------------------
+   O log é lido em camadas: barra de controle (busca + período), filtro por
+   tipo com contagem, contagem do resultado, e por fim o registro agrupado por
+   dia. Cada camada responde uma pergunta diferente e fica visualmente
+   separada para o operador não precisar adivinhar onde cada coisa está.
+   ========================================================================= */
+
+.ev-root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --------------------------------- toolbar -------------------------------- */
+.ev-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.ev-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.85rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ev-search:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.ev-search svg {
+  color: var(--text-soft);
+  flex-shrink: 0;
+}
+
+.ev-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-size: 0.88rem;
+  font-family: inherit;
+}
+
+.ev-search input::placeholder {
+  color: var(--text-soft);
+}
+
+.ev-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ev-search-clear:hover {
+  color: var(--text-main);
+}
+
+/* Controle de período — segmentado, igual à sub-nav do painel. */
+.ev-period {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  flex-shrink: 0;
+}
+
+.ev-period button {
+  padding: 0.34rem 0.7rem;
+  border: none;
+  border-radius: 0.45rem;
+  background: none;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ev-period button:hover {
+  color: var(--text-main);
+}
+
+.ev-period button.active {
+  background: var(--surface);
+  color: var(--primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
+}
+
+/* ------------------------------ filtro por tipo --------------------------- */
+.ev-chips-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.ev-chips-label {
+  font-size: 0.63rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--text-soft);
+  padding-top: 0.45rem;
+  flex-shrink: 0;
+}
+
+.ev-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.ev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.34rem 0.6rem;
+  border-radius: 2rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.ev-chip:hover:not(:disabled) {
+  color: var(--text-main);
+  border-color: var(--border-strong);
+}
+
+.ev-chip.active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.ev-chip:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.ev-chip-count {
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 0.05rem 0.35rem;
+  border-radius: 1rem;
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-muted);
+}
+
+.ev-chip.active .ev-chip-count {
+  background: rgba(79, 70, 229, 0.2);
+  color: var(--primary);
+}
+
+.ev-chip.is-empty .ev-chip-count {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+/* --------------------------------- stats ---------------------------------- */
+.ev-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.ev-stats-main strong {
+  color: var(--text-main);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-stats-main em {
+  font-style: normal;
+  color: var(--text-main);
+}
+
+.ev-stats-sub {
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------- dias ----------------------------------- */
+.ev-days {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.ev-day-head {
+  position: sticky;
+  top: 54px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0;
+  margin-bottom: 0.4rem;
+  background: var(--background);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-soft);
+}
+
+.ev-day-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+.ev-day-count {
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 0.05rem 0.4rem;
+  border-radius: 1rem;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+}
+
+.ev-day-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+/* ---------------------------------- linha --------------------------------- */
+.ev-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.ev-row:hover {
+  border-color: var(--border-strong);
+}
+
+.ev-row.is-open {
+  border-color: var(--primary);
+}
+
+.ev-row-main {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: start;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  cursor: pointer;
+  outline: none;
+}
+
+.ev-row-main:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+.ev-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.ev-row-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.35;
+}
+
+.ev-row-message {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.ev-row-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.ev-fmt {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.ev-fmt.is-discount {
+  color: var(--economy);
+  font-weight: 600;
+}
+
+/* Horário: monoespaçado e tabular para a coluna não dançar. */
+.ev-row-time {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.ev-row-time time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+}
+
+.ev-row-time em {
+  font-style: normal;
+  font-size: 0.68rem;
+  color: var(--text-soft);
+}
+
+.ev-row-caret {
+  color: var(--text-soft);
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  transition: transform 0.2s ease;
+}
+
+.ev-row.is-open .ev-row-caret {
+  transform: rotate(180deg);
+}
+
+/* ------------------------------- detalhe ---------------------------------- */
+.ev-row-detail {
+  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+  padding: 0.85rem;
+}
+
+.ev-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 0.75rem 1.25rem;
+}
+
+.ev-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.ev-detail-item label {
+  font-size: 0.63rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-soft);
+}
+
+.ev-detail-item span {
+  font-size: 0.8rem;
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.ev-detail-item span.is-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.ev-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.ev-ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.32rem 0.7rem;
+  border-radius: 0.45rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ev-ghost-btn:hover {
+  color: var(--text-main);
+  border-color: var(--border-strong);
+}
+
+/* ------------------------------ carregar mais ------------------------------ */
+.ev-more-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 1.25rem 0 0.5rem;
+}
+
+.ev-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1.1rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.ev-more-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.ev-more-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ev-more-hint {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------- tons ----------------------------------- */
+.ev-tone-blue   { --ev-bg: #1e3a5f; --ev-fg: #93c5fd; }
+.ev-tone-green  { --ev-bg: #052e16; --ev-fg: #6ee7b7; }
+.ev-tone-red    { --ev-bg: #450a0a; --ev-fg: #fca5a5; }
+.ev-tone-amber  { --ev-bg: #451a03; --ev-fg: #fcd34d; }
+.ev-tone-violet { --ev-bg: #3b0764; --ev-fg: #d8b4fe; }
+.ev-tone-cyan   { --ev-bg: #0c4a6e; --ev-fg: #7dd3fc; }
+.ev-tone-slate  { --ev-bg: #1f2937; --ev-fg: #cbd5e1; }
+
+.ev-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--ev-bg);
+  color: var(--ev-fg);
+}
+
+.ev-type-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: 1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--ev-bg);
+  color: var(--ev-fg);
+}
+
+/* ------------------------------- responsivo ------------------------------- */
+@media (max-width: 860px) {
+  .ev-chips-block {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .ev-chips-label {
+    padding-top: 0;
+  }
+
+  .ev-row-main {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .ev-row-time {
+    grid-column: 2 / -1;
+    align-items: flex-start;
+    flex-direction: row;
+    gap: 0.4rem;
+  }
+
+  .ev-row-caret {
+    grid-row: 1;
+    grid-column: 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .ev-period {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .ev-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
