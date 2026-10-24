@@ -637,6 +637,80 @@ git add -A && git commit -m "fix(security): …" && git push origin main
 | 8 | `update_subscription_statuses` (coluna `updated_at` inexistente) e `loadGroup()` em `ManageGroup.jsx:338` |
 | 9 | **Descompasso do cupom na adesão**: o front mostra o valor com desconto, o servidor cobra o valor cheio — mantive o valor original de propósito, para não alterar cobrança dentro de um patch de segurança |
 | 10 | Os handlers **stripe/asaas/mercadopago/pagarme** ainda usam `final_amount` do body e estão quebrados por TDZ — precisam do mesmo tratamento do IO Pay (hoje `active_gateway = iopay`) |
+| 11 | **Upgrade para o plano Pro** (ou aceitar o aviso) para habilitar a **proteção de senha vazada** — a Management API devolve `HTTP 402: available on Pro Plans and up` no plano Free |
+| 12 | **Criar `add_referral_points`, `increment_coupon_uses` e `exec_sql`** no banco — as edge functions já as chamam e hoje falham em silêncio: pontos de indicação nunca creditados, contador de uso do cupom nunca incrementado, painel de crons e o SQL do survey degradados |
+| 13 | **`Wallets.jsx:120-136`**: o front insere `wallet_transactions` com amount **positivo** e chama `credit_wallet` com amount **negativo** → o extrato mostra **2 linhas por saque**. O saldo **não** é descontado 2× (a trava de idempotência segura o 2º clique), mas o sinal precisa ser alinhado |
+
+---
+
+## 12.1 Security Advisor do Supabase — 8 issues resolvidos (2026-10-24)
+
+### O que o painel mostrava
+O painel do Supabase acusava **"Advisor found 8 issues"**, todos `SECURITY / CRITICAL / Security Definer View`.
+Rodando o advisor oficial pela CLI (`supabase db advisors --type security --linked`), o quadro real era de **70 achados**:
+
+| Lint | Qtd. | Nível | Situação |
+|---|---|---|---|
+| `security_definer_view` | 8 | ERROR | ✅ **zerado** |
+| `function_search_path_mutable` | 24 | WARN | ✅ **zerado** |
+| `anon_security_definer_function_executable` | 18 | WARN | ✅ 17 zerados (resta `is_admin`, por necessidade) |
+| `authenticated_security_definer_function_executable` | 18 | WARN | ✅ 13 zerados (restam 4 usadas pelo app + `is_admin`) |
+| `extension_in_public` (`pg_net`) | 1 | WARN | ⚠️ aceito (ver abaixo) |
+| `auth_leaked_password_protection` | 1 | WARN | ⚠️ exige plano Pro |
+
+Os "8 issues" do painel são exatamente os 8 `ERROR` (as views). Os WARN ficam agrupados em outra faixa do painel.
+
+### Causa raiz das 8 views
+As 8 views (`v_group_spots`, `v_admin_financial_summary`, `v_user_active_services`, `survey_stats`, `survey_platform_options`, `v_billing_today`, `v_billing_calendar`, `v_billing_failures`) foram criadas por `postgres` (superuser) **sem `security_invoker`**. View em Postgres roda com os privilégios do dono, então **ignora o RLS das tabelas base**.
+
+Medido em produção com a chave `anon` (HTTP 200, vazando de verdade):
+- `v_user_active_services` → **`login_email` + `login_password`** das contas compartilhadas dos grupos (ex.: `grupo3@dividepass.com` / `Globoplay@1234`);
+- `v_admin_financial_summary` → receita, custo, lucro e total de usuários;
+- `v_group_spots` → todos os grupos e vagas ocupadas;
+- `survey_stats` → todas as pesquisas e respostas.
+
+**Nenhuma das 8 é usada pelo app** (nem pelo front, nem por edge function) — são código morto do schema.
+
+### Correção aplicada (seção 9 de `database/fix-p0-security.sql`)
+1. **`ALTER VIEW … SET (security_invoker = true)`** em todas as 8 + `REVOKE ALL … FROM anon, authenticated` + `GRANT SELECT … TO service_role`.
+2. **`search_path` fixo** em todas as 23 funções de `public` que não tinham um (`public, extensions, pg_temp` — `public` primeiro para que `users` continue apontando para `public.users`, e não `auth.users`).
+3. **Matriz de `EXECUTE`** reescrita: triggers, event triggers e helpers saem da superfície de RPC; o que o app usa continua com `authenticated`; `is_admin()` **mantém** `EXECUTE` para `anon`/`authenticated` porque é usada em 33 policies (várias com `roles={public}`).
+4. **`credit_wallet`**: buraco de dinheiro + ambiguidade (ver abaixo).
+
+### O buraco de dinheiro no `credit_wallet` (não estava no advisor)
+Duas coisas ao mesmo tempo, ambas medidas em produção:
+
+- **Overload ambíguo.** O `CREATE OR REPLACE` da seção 8.2 mudou a aridade de 5 → 6 params, o que no Postgres **cria uma sobrecarga** em vez de substituir. As duas coexistem e o PostgREST respondia **PGRST203 (ambiguidade)** — o "marcar saque como pago" do painel admin (`Wallets.jsx:130`, que chama com 5 params) estava quebrado.
+- **`anon` podia creditar saldo em qualquer wallet.** O `REVOKE … FROM PUBLIC` da seção 8.2 removeu só o grant *implícito*; os grants **explícitos** para `anon`/`authenticated` (vindos do `GRANT ALL ON ALL FUNCTIONS IN SCHEMA public` do setup) continuaram. Uma chamada anon com 6 params executava o corpo `SECURITY DEFINER` (chegava até a FK).
+
+Correção: `DROP FUNCTION credit_wallet(uuid,numeric,text,text,uuid)` (a de 6 tem `p_group_id` com `DEFAULT`, então as chamadas de 5 params continuam resolvendo — sem ambiguidade) + a função passou a **autorizar o chamador**: só `service_role` (edge functions) ou admin (painel). Os 3 caminhos foram testados:
+
+| Chamador | Resultado |
+|---|---|
+| `anon` | ❌ bloqueado (`42501 permission denied`) |
+| autenticado comum | ❌ `42501 credit_wallet: somente service_role ou admin` |
+| `service_role` | ✅ credita (testado em rollback) |
+| admin (JWT `app_metadata.role=admin`) | ✅ credita (testado em rollback) |
+
+### Verificação
+| Verificação | Resultado |
+|---|---|
+| `supabase db advisors --type security --linked` | 70 → **8 achados** (os 8 ERROR zerados) |
+| `node scripts/verify-p0.mjs` | **30/30 PASS**, 0 FAIL (sem regressão) |
+| `node scripts/verify-advisor.mjs` (novo) | **14/14 PASS** — 8 views bloqueadas para anônimo, `credit_wallet` sem PGRST203 e barrando não-admin, `ensure_my_referral_code`/`admin_get_user_private`/`create_testimonial` íntegros |
+| Caminhos legítimos do `credit_wallet` | `service_role` ✅, admin ✅, usuário comum ❌ — zero resíduo (rollback) |
+
+### Os 8 WARN que sobraram (e por que ficam)
+1. **`is_admin()` executável por `anon`/`authenticated`** — obrigatório: é usada dentro de 33 policies, várias com `roles={public}` (o anônimo também as avalia). Revogar quebraria todas.
+2. **`admin_get_user_private`, `create_testimonial`, `credit_wallet`, `ensure_my_referral_code` executáveis por `authenticated`** — são exatamente as 4 que o front chama (`UserDetail.jsx:80`, `Wallets.jsx:130`, `Share.jsx:47`). Todas já validam o chamador **no corpo** (`is_admin()` ou `auth.uid() = p_user_id`). O lint é "executável", não "vulnerável".
+3. **`pg_net` instalado em `public`** — o lint só olha `pg_extension.extnamespace`. Medido: o `pg_net` **não tem nenhum objeto em `public`** (12 funções + 3 tabelas estão no schema `net`, que não é exposto pelo PostgREST). A extensão **não é relocatable** (`ALTER EXTENSION … SET SCHEMA` → *"does not support SET SCHEMA"*) e a única forma seria `DROP` + `CREATE`, o que derruba a fila de requests pendentes do `pg_net` e põe em risco os 2 cron jobs (`check-entrance-deadline`, `process-recurring-billing`) que chamam `net.http_post`. Risco de cobrança > ganho de 1 WARN.
+4. **Senha vazada (HaveIBeenPwned)** — a Management API responde **HTTP 402**: *"Configuring leaked password protection via HaveIBeenPwned.org is available on Pro Plans and up."*. O projeto está no plano **Free** → só resolve com upgrade.
+
+### Achado novo (não corrigido — fora do escopo de segurança)
+As edge functions chamam 3 funções que **não existem** no banco (`pg_proc` não retorna nenhuma):
+- `add_referral_points` — `confirm-payment/index.ts:468,712` → **pontos de indicação nunca são creditados**;
+- `increment_coupon_uses` — `manage-coupons/index.ts:311` → **contador de uso do cupom nunca incrementa**;
+- `exec_sql` — `manage-crons/index.ts:41,96` e `manage-survey/index.ts:455` → **listar/toggle de cron e o SQL do survey degradam** (o `.catch()` engole o erro).
 
 ---
 

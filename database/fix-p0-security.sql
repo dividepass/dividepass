@@ -739,9 +739,256 @@ COMMENT ON FUNCTION public.credit_wallet(uuid, numeric, text, text, uuid, uuid) 
 
 
 -- =============================================================================
--- 9. CHECKPOINT
+-- 9. VIEWS SECURITY DEFINER + GRANTS DE FUNCAO (advisor do Supabase)
 -- =============================================================================
--- Aplicados por este script: S1, S2, S3, S4, S6, S7, S8, S9, S13
+-- O advisor acusou "Security Definer View" nas 8 views do schema. O problema
+-- e real, nao cosmetico: view criada por `postgres` roda com os privilegios do
+-- owner (superuser) e portanto BURLAM o RLS das tabelas base.
+--
+-- Medido em PRODUCAO antes desta correcao (chave anon, HTTP 200):
+--   v_user_active_services      -> login_email + login_password da conta
+--                                   compartilhada dos grupos
+--                                   (ex.: grupo3@dividepass.com / Globoplay@1234)
+--   v_admin_financial_summary   -> receita, custo, lucro e total de usuarios
+--   v_group_spots               -> todos os grupos e vagas ocupadas
+--   survey_stats                -> todas as pesquisas e respostas
+--
+-- Nenhuma das 8 views e usada pelo app (nem pelo front, nem por edge function):
+-- sao codigo morto do schema. Entao:
+--   1. REVOKE de anon/authenticated (nao quebra nada no app);
+--   2. security_invoker = true (Postgres 15+): a view passa a respeitar o RLS
+--      da tabela base mesmo que alguem conceda o grant de novo.
+--
+-- INVENTARIO COMPLETO DO ADVISOR (medido com `supabase db advisors --type
+-- security --linked`, 70 achados no total):
+--   8  ERROR  security_definer_view                     -> 9.1 (as 8 views)
+--   24 WARN   function_search_path_mutable              -> 9.3
+--   18 WARN   anon_security_definer_function_executable -> 9.4
+--   18 WARN   authenticated_security_definer_function_executable -> 9.4
+--   1  WARN   extension_in_public (pg_net)              -> fora do escopo (cron)
+--   1  WARN   auth_leaked_password_protection           -> config do Auth (API)
+-- Os 8 issues que aparecem no painel do Supabase sao os 8 ERROR (views).
+-- =============================================================================
+
+DO $$
+DECLARE
+  v text;
+BEGIN
+  FOREACH v IN ARRAY ARRAY[
+    'v_group_spots', 'v_admin_financial_summary', 'v_user_active_services',
+    'survey_stats', 'survey_platform_options',
+    'v_billing_today', 'v_billing_calendar', 'v_billing_failures'
+  ] LOOP
+    IF EXISTS (
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname = v AND c.relkind = 'v'
+    ) THEN
+      EXECUTE format('ALTER VIEW public.%I SET (security_invoker = true)', v);
+      EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon, authenticated', v);
+      EXECUTE format('GRANT SELECT ON TABLE public.%I TO service_role', v);
+      RAISE NOTICE 'view %: security_invoker=on, anon/authenticated revogados', v;
+    END IF;
+  END LOOP;
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- 9.2 credit_wallet: buraco de dinheiro via RPC + overload ambiguo
+-- -----------------------------------------------------------------------------
+-- Dois problemas no mesmo lugar:
+--
+-- (a) O `CREATE OR REPLACE` da secao 8.2 NAO substituiu a funcao antiga: como a
+--     aridade mudou (5 -> 6 parametros), o Postgres criou um OVERLOAD. A
+--     versao antiga (5 args) ficou viva, sem `search_path` e SEM a trava de
+--     idempotencia.
+-- (b) O `REVOKE ... FROM PUBLIC` da secao 8.2 removeu so o grant implicito de
+--     PUBLIC. Os grants EXPLICITOS para `anon` e `authenticated` (vindos do
+--     `GRANT ALL ON ALL FUNCTIONS IN SCHEMA public` do setup) continuaram:
+--     `anon` conseguia chamar `credit_wallet` por RPC e creditar saldo em
+--     qualquer wallet (confirmado em producao: a chamada chegou ate a FK).
+--
+-- A correcao:
+--   1. drop da versao de 5 args — a de 6 tem `p_group_id` com DEFAULT, entao
+--      as chamadas de 5 args continuam resolvendo (e sem ambiguidade, o que
+--      restaura o "marcar saque como pago" do painel admin, que usa 5 params);
+--   2. a funcao passa a AUTORIZAR O CHAMADOR: so `service_role` (edge
+--      functions) ou um admin (painel admin) podem creditar;
+--   3. REVOKE de PUBLIC e anon.
+-- -----------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS public.credit_wallet(uuid, numeric, text, text, uuid);
+
+CREATE OR REPLACE FUNCTION public.credit_wallet(
+    p_user_id UUID, p_amount DECIMAL, p_description TEXT,
+    p_reference_type TEXT DEFAULT NULL, p_reference_id UUID DEFAULT NULL,
+    p_group_id UUID DEFAULT NULL
+) RETURNS VOID AS $$
+BEGIN
+    -- Autorizacao do chamador: service_role (edge functions) ou admin (painel).
+    IF (auth.jwt() ->> 'role') IS DISTINCT FROM 'service_role'
+       AND NOT public.is_admin() THEN
+        RAISE EXCEPTION 'credit_wallet: somente service_role ou admin'
+            USING ERRCODE = '42501';
+    END IF;
+
+    -- Idempotencia: nao creditar duas vezes a mesma referencia.
+    IF p_reference_id IS NOT NULL THEN
+        PERFORM 1
+        FROM public.wallet_transactions
+        WHERE reference_id = p_reference_id
+          AND reference_type IS NOT DISTINCT FROM p_reference_type
+          AND amount = p_amount
+          AND description IS NOT DISTINCT FROM p_description;
+        IF FOUND THEN
+            RAISE NOTICE 'credit_wallet: referencia % ja creditada - ignorando', p_reference_id;
+            RETURN;
+        END IF;
+    END IF;
+
+    INSERT INTO public.user_wallets (user_id, balance, total_earned, updated_at)
+    VALUES (p_user_id, p_amount, p_amount, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET
+        balance = public.user_wallets.balance + p_amount,
+        total_earned = public.user_wallets.total_earned + p_amount,
+        updated_at = NOW();
+
+    INSERT INTO public.wallet_transactions (user_id, type, amount, description, reference_type, reference_id, group_id, status, created_at)
+    VALUES (p_user_id, 'credit', p_amount, p_description, p_reference_type, p_reference_id, p_group_id, 'completed', NOW());
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION public.credit_wallet(uuid, numeric, text, text, uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.credit_wallet(uuid, numeric, text, text, uuid, uuid) TO authenticated, service_role;
+
+COMMENT ON FUNCTION public.credit_wallet(uuid, numeric, text, text, uuid, uuid) IS
+  'Credita a wallet. Idempotente por (reference_id, reference_type, amount, description). Aceita apenas service_role ou admin.';
+
+-- -----------------------------------------------------------------------------
+-- 9.3 search_path fixo nas demais funcoes SECURITY DEFINER
+-- -----------------------------------------------------------------------------
+-- Com search_path mutavel, um atacante que consiga criar um objeto com o
+-- mesmo nome em outro schema pode sequestrar a funcao. O advisor marca isso
+-- como "Function Search Path Mutable".
+-- -----------------------------------------------------------------------------
+-- O advisor (lint 0011) marca QUALQUER funcao de schema de usuario sem
+-- `search_path` fixo — nao apenas as SECURITY DEFINER. Medido em producao:
+-- 24 funcoes sem search_path proprio.
+--
+-- Valor escolhido: `public, extensions, pg_temp`.
+--   * `public` primeiro  -> nomes como `users`, `groups` continuam apontando
+--     para as tabelas do app (e NAO para auth.users);
+--   * `extensions`       -> funcoes de pgcrypto/uuid-ossp (digem `extensions.`)
+--     continuam resolvendo sem qualificacao;
+--   * `pg_temp` por ultimo -> objeto temporario nunca sombreia public.
+ALTER FUNCTION public.auto_assign_credential()             SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.auto_assign_profile()                SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.auto_generate_service_slug()         SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.calculate_next_charge(text, integer) SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.check_expired_entrances()             SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.check_group_capacity()                SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.generate_group_slug()                 SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.generate_reference_code()             SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.generate_referral_code(uuid)          SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.generate_service_slug(text)           SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.generate_survey_slug()                SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.get_billing_metrics(date, date)       SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.log_payment_activity()                SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.notify_group_members_on_leave()        SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.release_credential()                  SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.release_profile()                     SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.touch_onboarding_profile_updated_at() SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.update_billing_cycles_updated_at()    SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.update_coupons_updated_at()            SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.update_group_profiles_updated_at()     SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.update_subscription_statuses()        SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.update_support_tickets_updated_at()    SET search_path = public, extensions, pg_temp;
+ALTER FUNCTION public.update_updated_at_column()            SET search_path = public, extensions, pg_temp;
+
+-- -----------------------------------------------------------------------------
+-- 9.4 EXECUTE das funcoes: quem pode chamar o que
+-- -----------------------------------------------------------------------------
+-- Triggers e event triggers nunca sao chamados via /rest/v1/rpc: sao invocados
+-- pelo proprio Postgres no momento do INSERT/UPDATE/DELETE.
+--
+-- Medido em PRODUCAO (sonda com tabela descartavel): o privilege de EXECUTE de
+-- uma trigger function NAO e re-checado no disparo — a checagem acontece
+-- apenas no CREATE TRIGGER. Portanto revogar EXECUTE de anon/authenticated
+-- destas funcoes NAO quebra nenhum trigger — e ainda tira da superficie
+-- publica de RPC funcoes que rodam com bypass de RLS.
+REVOKE ALL ON FUNCTION public.auto_assign_credential()        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.auto_assign_profile()           FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.release_credential()            FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.release_profile()               FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.guard_duplicate_paid_payment()  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.guard_group_privileged_fields() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.rls_auto_enable()               FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.handle_auth_user_updated()      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.handle_new_user()               FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.handle_user_role_update()       FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sync_user_role_to_auth()        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.check_group_capacity()          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.log_payment_activity()          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.notify_group_members_on_leave() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.generate_reference_code()       FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.generate_group_slug()           FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.auto_generate_service_slug()   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.generate_survey_slug()          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.generate_referral_code(uuid)    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.calculate_next_charge(text, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.update_updated_at_column()      FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.touch_onboarding_profile_updated_at() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.update_billing_cycles_updated_at()    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.update_coupons_updated_at()          FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.update_group_profiles_updated_at()   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.update_support_tickets_updated_at()  FROM PUBLIC, anon, authenticated;
+
+-- generate_service_slug e a UNICA funcao que precisa de EXECUTE de um papel
+-- comum: auto_generate_service_slug (trigger, SECURITY INVOKER) chama
+-- generate_service_slug(NEW.name) e por isso roda com o papel de quem fez o
+-- INSERT em streaming_services. Revogar de authenticated quebraria o cadastro
+-- de servico.
+REVOKE ALL ON FUNCTION public.generate_service_slug(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.generate_service_slug(text) TO authenticated, service_role;
+
+-- Manutencao/cron: so service_role. Antes, qualquer anonimo podia chamar e
+-- marcar membros como overdue/cancelled em massa.
+REVOKE ALL ON FUNCTION public.update_subscription_statuses() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.update_subscription_statuses() TO service_role;
+
+-- SECURITY INVOKER: rodam com os privilegios do chamador, entao o RLS ja
+-- limita. Ainda assim, anon nao tem por que chamar.
+REVOKE ALL ON FUNCTION public.check_expired_entrances()   FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.get_billing_metrics(date, date) FROM PUBLIC, anon;
+
+-- Somente admin — o corpo ja exige public.is_admin().
+REVOKE ALL ON FUNCTION public.admin_get_user_private(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_get_user_private(uuid) TO authenticated, service_role;
+
+-- Somente o proprio usuario autenticado — o corpo ja compara com auth.uid().
+REVOKE ALL ON FUNCTION public.ensure_my_referral_code() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.ensure_my_referral_code() TO authenticated, service_role;
+
+REVOKE ALL ON FUNCTION public.create_testimonial(uuid, text, text, text, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.create_testimonial(uuid, text, text, text, integer) TO authenticated, service_role;
+
+-- is_admin() NAO pode perder EXECUTE: e usada dentro de 33 policies, varias
+-- delas com roles={public} (ou seja, o anon tambem a avalia). Manter EXECUTE
+-- para anon e authenticated e uma excecao consciente ao lint 0028/0029 —
+-- revogar aqui quebraria todas as policies que a usam.
+GRANT EXECUTE ON FUNCTION public.is_admin() TO anon, authenticated, service_role;
+
+-- Rede de seguranca: service_role e o papel das edge functions e precisa de
+-- EXECUTE em tudo, mesmo depois dos REVOKEs acima.
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+
+-- O DROP da sobrecarga de 5 args do credit_wallet precisa chegar ao cache de
+-- schema do PostgREST; sem isso ele continua vendo as duas overloads e
+-- devolve PGRST203 (ambiguidade) no "marcar saque como pago" do painel admin.
+NOTIFY pgrst, 'reload schema';
+
+-- =============================================================================
+-- 10. CHECKPOINT
+-- =============================================================================
+-- Aplicados por este script: S1, S2, S3, S4, S6, S7, S8, S9, S13 + advisor
+--   (8 views SECURITY DEFINER, grants de funcao, search_path mutavel)
 -- Pendentes (exigem deploy de edge function / ajuste de front):
 --   S10 senha SMTP/IMAP no git -> rotacao manual no servidor de e-mail
 --   S11 assinatura HMAC nos webhooks -> patch de edge function
