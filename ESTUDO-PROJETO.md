@@ -874,6 +874,80 @@ O banco não guarda a pergunta de origem do interesse, então uma plataforma dig
 
 ---
 
+## 12.5 Assinatura vencida: pagamento, bloqueio de credenciais e tag (2026-10-24)
+
+### O pedido
+Três telas, uma regra só:
+1. `/dashboard/billing` — assinatura vencida ganha um **botão dentro do card** ("Pagar assinatura") que gera um pagamento novo (PIX ou crédito) e só atualiza a assinatura **depois** da confirmação.
+2. `/dashboard/credentials/[slug]?group=[id]` — com assinatura vencida **ou cancelada**, clicar em "Acessar Credenciais" **não revela nada**: abre um popup explicando a falta de acesso e força o pagamento.
+3. Dashboard → "Minhas Assinaturas" — serviço com renovação vencida ganha a tag **"Vencida"**.
+
+### O diagnóstico: "vencida" não é um status
+O banco tem 7 assinaturas `status = 'active'` com `next_charge_at` no passado. O status **não muda** quando a renovação atrasa — ele só muda quando o acesso é encerrado de vez. Então "vencida" tem de ser derivada da **data**, não do status:
+
+```js
+// src/lib/subscriptionAccess.js
+isSubscriptionOverdue(sub)   // active + next_charge_at/expires_at no passado
+subscriptionAccessState(sub) // active | overdue | cancelled | pending
+```
+
+Regra única, compartilhada pelo card de cobrança, pela página de credenciais e pelo carrossel do dashboard — antes cada tela calculava por conta própria.
+
+### O bug de fundo: colunas que o código escreve e o banco não tem
+O sintoma mais visível era o da imagem de referência ("Cobrança ainda não gerada — contate o administrador do grupo"). A causa não era a tela: **nenhuma fatura era criada**.
+
+O PostgREST valida o payload de cada `insert`/`upsert`/`update` contra o schema real. Coluna inexistente → `400 PGRST204` → **a gravação inteira é perdida**, e como os handlers não checam o retorno do `upsert`, nada aparece na tela. Três colunas faltavam no schema de produção:
+
+| tabela | coluna | quem escrevia | efeito |
+|---|---|---|---|
+| `user_subscriptions` | `payment_method` | 7 arquivos | assinatura nunca criada/ativada |
+| `user_subscriptions` | `custom_cycle_label` | 5 handlers | idem (mesmo payload) |
+| `invoices` | `payment_method` | `create-payment` | **fatura nunca criada** |
+
+> `check-iopay-tx` também *lía* `payment_method` na assinatura: o `select` falhava, `subInfo` vinha `null`, o ciclo caía no default "monthly" e o `confirmIOPayment` nunca confirmava nada. **O fluxo de assinatura do gateway ativo estava quebrado em produção** — e a renovação dependia dele.
+
+Correção: `database/fix-missing-write-columns.sql` (colunas aditivas, nullable, nenhum dado existente alterado). Para que não volte a acontecer, `scripts/audit-write-columns.mjs` extrai as chaves de todo `insert`/`upsert`/`update` das functions e compara com o `information_schema` — hoje: **0 problemas reais**.
+
+### A renovação
+`create-payment` ganhou o modo `renewal: true` (o front manda no body):
+- cobra o **valor gravado na assinatura** (`sub.amount`), não `price_per_slot × meses` — no Spotify semiannual é R$ 12,90, não R$ 77,40;
+- **não rebaixa** a assinatura para `pending` (ela está em uso; só a renovação está atrasada) e **não avança** `next_charge_at` antes da confirmação;
+- preserva `started_at`, `coupon_id`, `discount_amount`, `original_amount` e o ciclo personalizado (`custom_cycle_months/days/label`);
+- recusa (404) renovar quem não tem assinatura — sem isso o fluxo cairia em "assinatura nova" e criaria uma segunda linha.
+
+`check-iopay-tx` foi corrigido em dois pontos:
+- o atalho "já confirmada" (`sub.status === 'active' && member.payment_status === 'active'`) **curto-circuitava a renovação**: o status continuava `active` durante o atraso, então o poll respondia "já pago" e a renovação nunca era aplicada. Agora ele só curto-circuita se **não** estiver vencida;
+- ao confirmar, a **fatura vencida** é baixada: busca as `invoices` pendentes com `due_date <= hoje` do par (usuário, grupo) e quita se a soma bater com o valor pago (ou a de mesmo valor). Fatura de ciclo futuro continua pendente.
+
+`src/components/SubscriptionRenewalModal.jsx` é o modal: PIX (QR + copia-e-cola) ou cartão salvo, polling de `check-iopay-tx` a cada 10s por até 10min e o aviso "a assinatura só é atualizada depois que o pagamento for confirmado".
+
+### Consequência colateral: o valor do log
+`logAttempt` roda no **escopo externo** do handler, onde `subscriptionAmount` valia `price_per_slot × meses`; o bloco do PIX declara uma homonima local. Na renovação o registro em `payment_attempts` gravava R$ 77,40 enquanto o gateway cobrava R$ 12,90. A correção foi tornar o valor externo renewal-aware e alimentar o `authoritativeCoupon` (que já existia para exatamente esse problema de escopo).
+
+### O bug de fuso horário (afetava a tela entregue)
+`new Date("2026-04-09")` é meia-noite **UTC**: no Brasil (UTC-3) o dia da cobrança aparecia como **08/04/2026**. Afetava o "Vencimento" do card e a "Renovação" das credenciais. `src/lib/dateFormat.js` resolve: string só com data → mostra o dia exato; timestamptz em meia-noite UTC → usa o dia em UTC; qualquer outro instante → fuso do navegador. E `isSubscriptionOverdue` passou a tratar `expires_at` (coluna `DATE`) como válido **até o fim do dia**.
+
+### O `.btn-outline` invisível
+O botão "Agora não" do popup estava branco sobre branco. Causa: várias folhas de CSS do admin definem `.btn-outline { color: var(--text, #e2e8f0) }` e o CSS é global — mas **`--text` nunca foi definido** em lugar nenhum, então o fallback claro vencia em toda a tela clara. 43 usos em 7 arquivos. Corrigido definindo `--text` nos dois temas em `src/index.css` (mais o botão do modal com seletores próprios, para não depender de qual regra global vence).
+
+### Verificação
+- `npm run build` limpo.
+- `scripts/verify-overdue-ui.mjs` (Playwright, dev server `:5199`): **15/15** — tag "Vencida", botão "Pagar assinatura", "TOTAL A PAGAR R$ 12,90", a nota "Cobrança ainda não gerada" **sumiu**, vencimento 09/04/2026, popup "Renovação em atraso" com o total e sem revelar a senha, tag "Vencida" no carrossel, zero erro de console.
+- `scripts/verify-renewal-checkout.mjs`: PIX gerado com **R$ 12,90**, código copia-e-cola, polling ativo e o aviso de confirmação.
+- Banco depois da criação do PIX: assinatura segue `active` com `next_charge_at` intacto (2026-04-09), `payment_attempts.amount = 12.90`, fatura do ciclo futuro criada (2027-04-24) e a fatura vencida ainda pendente (é baixada na confirmação).
+- `check-iopay-tx` respondendo `status=pending, confirmed=false, amount=12.9` para a transação de teste (o estado correto antes de pagar).
+- **Não pago**: confirmar a renovação exige dinheiro real. A transição para "renovada" só acontece com o pagamento de fato.
+
+### Pendências que sobraram desta rodada
+- **`payment_attempts.final_amount` não existe** (a coluna é `original_amount`/`discount_amount`). O `check-iopay-tx` faz `select("coupon_id, original_amount, discount_amount, final_amount")` → o `select` inteiro falha e cai no `catch`, então o valor já descontado do cupom nunca é lido. O valor final continua correto porque vem do gateway; o que se perde é a conferência do desconto no histórico. Correção: derivar `final = original - discount` (ou adicionar a coluna).
+- **`coupons.status`**: o código de cupom grava `status` numa tabela que só tem `active` (booleano). Não quebrou o iopay (que recalcula o desconto pela tabela `coupons`), mas `manage-coupons`/`check-iopay-tx` escrevem num campo que não existe.
+- **Pagamento real não exercitado**: confirmar a renovação exige pagar um PIX de verdade. O caminho até o "pagamento gerado" está verificado; o "confirmado → assinatura renovada" precisa de uma transação paga de fato.
+
+### Decisão
+"Assinatura vencida" é um estado **derivado da data**, não do `status` — e essa derivação mora em um arquivo só (`src/lib/subscriptionAccess.js`). A renovação não rebaixa nem avança a assinatura: o acesso continua como está e **a data só anda depois que o dinheiro entra**. O popup de credenciais não é um aviso: é o lugar onde o pagamento é forçado.
+
+---
+
 ## 13. Perguntas em aberto — respondidas
 
 1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam. Em produção existem `BILLING_CRON_SECRET` e `OVERDUE_CRON_SECRET` (rotacionados). **Continua em aberto:** quais jobs estão de fato agendados no `pg_cron`.
