@@ -23,6 +23,46 @@ function walk(dir, out = []) {
   return out;
 }
 
+/**
+ * Remove comentarios do codigo, preservando literais de string.
+ *
+ * Sem isso, o texto depois de `//` vira "chave" do payload (ex.:
+ * `amount: x, // IMPORTANTE: ...` produz a chave `IMPORTANTE`).
+ */
+function stripComments(src) {
+  let out = '';
+  let i = 0;
+  const len = src.length;
+  while (i < len) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      let j = i + 1;
+      while (j < len) {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src[j] === quote) { j++; break; }
+        j++;
+      }
+      out += src.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '/') {
+      while (i < len && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      i += 2;
+      while (i < len && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 /** Extrai as chaves de topo do objeto literal que começa em `start`. */
 function topLevelKeys(src, start) {
   const keys = [];
@@ -53,8 +93,12 @@ function topLevelKeys(src, start) {
     }
     if (depth === 1 && c === ':') {
       const raw = src.slice(keyStart, i);
-      const m = raw.match(/([A-Za-z_$][\w$]*)\s*$/);
-      if (m) keys.push(m[1]);
+      // Ternario dentro do valor (`x: cond ? a : b`) nao e chave: o "a"/"b"
+      // depois do segundo ":" nao e coluna nenhuma.
+      if (!raw.includes('?')) {
+        const m = raw.match(/([A-Za-z_$][\w$]*)\s*$/);
+        if (m) keys.push(m[1]);
+      }
       sawKey = true;
       continue;
     }
@@ -77,7 +121,7 @@ const usage = new Map(); // table -> Map(column -> Set(files))
 const fromRe = /\.from\(\s*['"`]([a-z_]+)['"`]\s*\)/g;
 
 for (const file of files) {
-  const src = readFileSync(file, 'utf8');
+  const src = stripComments(readFileSync(file, 'utf8'));
   let m;
   fromRe.lastIndex = 0;
   while ((m = fromRe.exec(src)) !== null) {
@@ -89,8 +133,13 @@ for (const file of files) {
     const chained = after.match(/^[\s.]*?\.(insert|upsert|update)\s*\(/);
     if (!chained) continue;
     const callStart = m.index + m[0].length + chained.index + chained[0].length;
-    const braceStart = src.indexOf('{', callStart);
-    if (braceStart === -1 || braceStart - callStart > 200) continue;
+    // O payload precisa ser um literal de objeto: `update(updates)` nao
+    // permite saber as colunas por leitura (e o objeto literal mais proximo
+    // seria de outra chamada, gerando falso positivo).
+    const payloadStart = src.slice(callStart).match(/^\s*/)[0].length + callStart;
+    if (src[payloadStart] !== '{') continue;
+    const braceStart = payloadStart;
+    if (braceStart - callStart > 200) continue;
     const keys = topLevelKeys(src, braceStart);
     if (!usage.has(table)) usage.set(table, new Map());
     const colMap = usage.get(table);
