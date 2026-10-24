@@ -750,6 +750,52 @@ Os arquivos `SubscriptionEdit.jsx`/`.css` e `Subscriptions.jsx` estavam sendo ed
 
 ---
 
+## 12.3 Registro de eventos reescrito (2026-10-24)
+
+Segundo pedido: *"arrume principalmente também os logs dos eventos"*, na rota `/admin/events`.
+
+### O diagnóstico
+
+`platform_events` tem **952 eventos** e 14 tipos reais. O log exibia isso assim:
+
+| Problema | Consequência |
+|---|---|
+| `.limit(200)` fixo, sem paginação | 752 eventos inalcançáveis, sem nenhuma indicação de que faltava algo |
+| Lista plana, sem data | 952 linhas sem noção de quando aconteceu |
+| `formatTime` devolvendo "2h atrás" | coluna de tempo desalinhada e sem valor absoluto |
+| **3 tipos sem ícone, sem label e sem cor**: `manual_info`, `manual_urgent`, `group_alert` | apareciam como texto cru (`manual info`), sem identidade visual |
+| Metadata resumida em uma linha (`getMetadataSummary`) | os ids e a transação do gateway ficavam invisíveis |
+| Busca encadeando `.toLowerCase()` em `meta.user_id`, `meta.group_id`… | quebrava se o metadata viesse como string ou o campo faltasse |
+| 17 chips de filtro em uma fileira só, sem contagem | "informação solta" — não dava para saber o tamanho de cada visão |
+| 6 filtros sem nenhum dado possível (`wallet_withdrawals` = 0, `payment_attempts` refunded = 0, `groups` rejected = 0, `info` = 0, `withdrawal_approved` = 0, `withdrawal_rejected` = 0) | vazios sem explicação — parecia bug |
+
+### O que mudou
+
+**Registro único de tipo** (`eventLogMeta.js`) — cada tipo tem label, ícone lucide e um **tom de cor** (blue = conta, green = dinheiro, amber = atenção, red = problema, violet = cobrança, cyan = comunicação, slate = ruído). Antes o tipo vivia espalhado em três lugares e três tipos ficavam de fora.
+
+**Leitura em camadas** (EventLog.jsx) — o log se lê de cima para baixo, cada camada respondendo uma pergunta:
+1. **Filtro** — dois grupos rotulados, sempre visíveis: *Registro de eventos* (8 tipos do log) e *Consultas de dados* (11 tabelas). Cada chip traz a **contagem real**; os que não têm dados ficam visíveis, apagados e desligados.
+2. **Busca + período** — 24 horas / 7 dias / 30 dias / Tudo (antes não havia filtro de data nenhum).
+3. **Resultado** — linha de contagem ("61 resultados para 'jaine' · 952 no período · 952 no histórico").
+4. **Registro** — agrupado por dia com cabeçalho sticky (Hoje / Ontem / 09 de out), horário monoespaçado e tabular (`24/10 · 14:02:37`) com o tempo absoluto no hover, chip de tipo colorido, e **linha expansível** com o metadata em grade chave/valor legível (`Valor` → `R$ 71,40`, `Tipo de cobrança` → `Assinatura`) + botão **Copiar JSON**.
+
+**Paginação real** — "carregar mais 120 eventos" no fim da lista, com "120 de 952 carregados". Com busca ativa, o período inteiro é carregado de uma vez (limite de 2000) para o resultado ser completo.
+
+**Busca normalizada** — monta um texto do evento inteiro (título, mensagem, tipo, autor, usuário, grupo e o JSON do metadata) e procura dentro dele. Qualquer valor funciona, em qualquer formato; não quebra mais.
+
+### Correção de navegação encontrada no caminho
+A primeira versão renderizava os chips de tabela **apenas fora da visão de log** — o que deixava as 7 tabelas (grupos, usuários, pagamentos, saques, reembolsos, cancelamentos, entradas/saídas) **inalcançáveis**: a única forma de sair do log era voltar para "Todos", que também é log. Os dois grupos passaram a ser renderizados juntos, sempre.
+
+### Verificação
+- `npm run build` limpo.
+- Passada visual no dev server local (`:5199`) com a sessão admin já ativa: log com agrupamento por dia, cabeçalho sticky, linha expansível (metadata + Copiar JSON + Ver usuário/Ver grupo), busca ("iopay" → 6 resultados), troca de período (7 dias → Tudo) e troca para a tabela de Pagamentos (488 no chip, 200 carregadas na tabela).
+- Chips com a contagem conferida contra o banco: `user_login` 277, `email_code_requested` 223, `checkout_opened` 154, `user_registered` 85, `payment` 77, `member_joined` 67, `group_approved` 19, `member_left` 15, `subscription_cancelled` 15, `group_deleted` 6, `group_created` 6, `manual_info` 6, `manual_urgent` 1, `group_alert` 1 — total 952. Tabelas: `payment_attempts` 488, `users` 94, `groups` 23 (15 ativos), `wallet_withdrawals` 0, `groups` rejected 0.
+
+### Decisão
+O nome "Grupos criados" era enganoso — a consulta filtra `approval_status = 'pending'`. Virou **"Aguardando aprovação"** (no chip e no `<h1>`). `withdrawal_approved` e `withdrawal_rejected` saíram da interface: não têm eventos nem tabela própria, e o status de cada saque já aparece na tabela de Saques. As tabelas em si não foram mexidas — só o caminho até elas e o que aparece ao redor.
+
+---
+
 ## 13. Perguntas em aberto — respondidas
 
 1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam. Em produção existem `BILLING_CRON_SECRET` e `OVERDUE_CRON_SECRET` (rotacionados). **Continua em aberto:** quais jobs estão de fato agendados no `pg_cron`.
