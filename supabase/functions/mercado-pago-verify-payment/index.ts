@@ -18,6 +18,31 @@ export default {
 
       const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
+      // ---------------------------------------------------------------------
+      // AUTENTICACAO (S12) — PRIMEIRO, antes de qualquer validacao de payload
+      // ---------------------------------------------------------------------
+      // Esta function consulta/confirmar um pagamento no Mercado Pago. Sem
+      // JWT, qualquer um com um payment_id ou external_reference via a
+      // situacao de pagamento de outra pessoa.
+      // ---------------------------------------------------------------------
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+      if (!token) {
+        return new Response(
+          JSON.stringify({ error: "Não autenticado" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(token);
+      if (authError || !authData?.user) {
+        return new Response(
+          JSON.stringify({ error: "Token inválido" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const { payment_id, external_reference } = await req.json();
 
       if (!payment_id && !external_reference) {

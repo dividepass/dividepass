@@ -24,6 +24,23 @@ export default {
         return new Response("Asaas not configured", { status: 503 });
       }
 
+      // ---------------------------------------------------------------------
+      // ASSINATURA DO WEBHOOK (S11)
+      // ---------------------------------------------------------------------
+      // A Asaas assina os webhooks com o header `asaas-access-token`, que
+      // precisa ser igual ao token de API configurado. Sem esta checagem, um
+      // POST forjado com o `payment.id` de outra pessoa ativaria a vaga.
+      // Falhar FECHADO: sem token configurado, o webhook e recusado.
+      // ---------------------------------------------------------------------
+      const webhookToken = req.headers.get("asaas-access-token") || "";
+      if (!webhookToken || webhookToken !== asaasApiKey) {
+        console.error("[asaas-webhook] token de assinatura ausente ou inválido — webhook rejeitado");
+        return new Response(
+          JSON.stringify({ error: "Assinatura inválida" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
       const baseUrl = asaasEnv === "production"
         ? "https://api.asaas.com"
         : "https://sandbox.asaas.com/api/v3";

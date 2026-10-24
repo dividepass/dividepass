@@ -1,9 +1,43 @@
 import { confirmPayment } from "../confirm-payment/index.ts";
+import { getGatewaySettings } from "../create-payment/handlers/settings.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+/**
+ * Verificacao da assinatura do webhook Pagar.me.
+ *
+ * O Pagar.me assina com HMAC-SHA1 do corpo cru usando o secret token da
+ * conta, enviado no header `X-Hub-Signature`.
+ */
+async function verifyPagarmeSignature(
+  payload: string,
+  header: string,
+  secret: string,
+): Promise<boolean> {
+  if (!secret || !header) return false;
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  const expected = Array.from(new Uint8Array(mac))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  if (header.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < header.length; i++) {
+    diff |= header.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  return diff === 0;
+}
 
 export default {
   fetch: async (req: Request) => {
@@ -12,7 +46,34 @@ export default {
     }
 
     try {
-      const body = await req.json();
+      // ---------------------------------------------------------------------
+      // ASSINATURA DO WEBHOOK (S11)
+      // ---------------------------------------------------------------------
+      // Sem a verificacao do HMAC, qualquer POST forjado com um
+      // `data.id` + `metadata` bastava para ativar a vaga de alguem.
+      // Falhar FECHADO quando o secret nao esta configurado.
+      // ---------------------------------------------------------------------
+      const settings = await getGatewaySettings();
+      const secretKey = (settings.pagarme_secret_key || Deno.env.get("PAGARME_SECRET_KEY") || "").trim();
+
+      if (!secretKey) {
+        console.error("[pagarme-webhook] PAGARME_SECRET_KEY não configurado — webhook recusado");
+        return new Response("Webhook secret not configured", { status: 503 });
+      }
+
+      const rawBody = await req.text();
+      const signature = req.headers.get("x-hub-signature") || "";
+
+      const validSignature = await verifyPagarmeSignature(rawBody, signature, secretKey);
+      if (!validSignature) {
+        console.error("[pagarme-webhook] assinatura inválida — webhook rejeitado");
+        return new Response(
+          JSON.stringify({ error: "Assinatura inválida" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const body = JSON.parse(rawBody);
       console.log("PagarMe webhook event:", body.type, body.id);
 
       // V5 webhook structure: { id, type, data: { id: "ch_xxx", status: "paid", ... } }

@@ -608,9 +608,36 @@ export default {
       const supabaseServiceKey = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
       console.log(`[check-iopay-tx] STEP 1b: SUPABASE_URL=${supabaseUrl ? "set" : "EMPTY"} SERVICE_ROLE_KEY=${supabaseServiceKey ? "set" : "EMPTY"}`);
 
+      // ---------------------------------------------------------------------
+      // AUTENTICACAO (S12) — PRIMEIRO, antes de qualquer validacao de payload
+      // ---------------------------------------------------------------------
+      // Esta function consulta o status de uma transacao no gateway IO Pay e
+      // pode voidar transacoes (action=cancel). Sem JWT, qualquer um com um
+      // transaction_id ou reference_code via a situacao financeira de outra
+      // pessoa. O cancelamento continua exigindo, alem disso, que o chamador
+      // seja o dono do pagamento (checado mais abaixo).
+      // ---------------------------------------------------------------------
+      const authHeader = req.headers.get("authorization") || req.headers.get("Authorization") || "";
+      const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+      if (!jwt) {
+        return new Response(JSON.stringify({ error: "Não autenticado" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const authClient = createClient(supabaseUrl, supabaseServiceKey);
+      const { data: { user: caller } } = await authClient.auth.getUser(jwt);
+      if (!caller) {
+        return new Response(JSON.stringify({ error: "Token inválido" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       const body = await req.json();
       const { transaction_id, action, group_id, user_id, payment_type: bodyPaymentType, billing_cycle: bodyBillingCycle, custom_cycle_days: bodyCustomDays, custom_cycle_months: bodyCustomMonths } = body;
-
       console.log(`[check-iopay-tx] STEP 2: REQUEST tx=${transaction_id} action=${action} group=${group_id} user=${user_id} type=${bodyPaymentType} cycle=${bodyBillingCycle}`);
 
       if (!transaction_id) {
@@ -637,13 +664,33 @@ export default {
       }
 
       if (action === "cancel") {
+        // -----------------------------------------------------------------
+        // AUTENTICACAO DO CANCELAMENTO (S12 / B12)
+        // -----------------------------------------------------------------
+        // O cancelamento faz VOID de uma transacao no gateway IO Pay e marca
+        // o pagamento do par grupo/usuario como expirado. Sem esta checagem,
+        // qualquer pessoa com um transaction_id podia estornar a transacao de
+        // outra pessoa.
+        // O token ja foi validado no topo da function (caller). Aqui so
+        // conferimos que quem pede o cancelamento e o dono do pagamento.
+        // -----------------------------------------------------------------
+        const cancelAdmin = authClient;
+        const cancelCaller = caller;
+
+        // O cancelamento so pode ser pedido por quem e o dono do pagamento.
+        if (user_id && user_id !== cancelCaller.id) {
+          return new Response(JSON.stringify({ error: "Sem permissão para cancelar este pagamento" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         await fetch(`${baseUrl}v1/transaction/void/${transaction_id}`, {
           method: "POST",
           headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
         });
         if (group_id && user_id) {
-          const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-          await supabaseAdmin.from("group_members").update({ payment_status: "expired" }).eq("group_id", group_id).eq("user_id", user_id);
+          await cancelAdmin.from("group_members").update({ payment_status: "expired" }).eq("group_id", group_id).eq("user_id", user_id);
         }
         return Response.json({ cancelled: true }, { headers: corsHeaders });
       }

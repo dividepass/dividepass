@@ -180,7 +180,7 @@ function PlatformEvents() {
       } else if (isUsersList) {
         const { data: usersData, error } = await supabase
           .from('users')
-          .select('*')
+          .select('id, name, email, phone, avatar_url, created_at')
           .order('created_at', { ascending: false });
 
         if (!cancelled && !error) {

@@ -652,6 +652,20 @@ export default {
         if (caller) callerId = caller.id;
       }
 
+      // ---------------------------------------------------------------------
+      // AUTENTICACAO OBRIGATORIA (S12 / B13)
+      // ---------------------------------------------------------------------
+      // Antes a checagem de membro ficava DENTRO de `if (callerId)`: sem JWT
+      // nao havia checagem nenhuma e a funciao logava na IMAP do grupo e
+      // devolvia o codigo de verificacao — a credencial da assinatura
+      // compartilhada. Agora, sem chamador identificado, retorna 401.
+      if (!callerId) {
+        return new Response(JSON.stringify({ error: "Não autenticado" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       const body = await req.json();
       const { group_id } = body;
 
@@ -662,7 +676,8 @@ export default {
         });
       }
 
-      if (callerId) {
+      // Checagem de vinculo com o grupo — sempre, para todo chamador.
+      {
         const { data: member } = await supabaseAdmin
           .from("group_members").select("id")
           .eq("group_id", group_id).eq("user_id", callerId).eq("status", "active").maybeSingle();
@@ -679,12 +694,7 @@ export default {
 
       const { data: group, error: groupError } = await supabaseAdmin
         .from("groups")
-        .select(`
-          email_code_enabled, email_imap_server, email_imap_port,
-          email_imap_user, email_imap_password, email_allowed_senders,
-          email_code_patterns, email_body_keywords, email_subject_includes,
-          email_ai_enabled, service_id
-        `)
+        .select(`email_code_enabled, service_id`)
         .eq("id", group_id)
         .single();
 
@@ -702,16 +712,36 @@ export default {
         });
       }
 
-      if (!group.email_imap_server || !group.email_imap_user || !group.email_imap_password) {
+      // A credencial IMAP foi movida para `group_mailboxes` (RLS por admin).
+      // Ler direto de `groups` nao e mais possivel.
+      const { data: mailbox, error: mailboxError } = await supabaseAdmin
+        .from("group_mailboxes")
+        .select(`
+          email_imap_server, email_imap_port,
+          email_imap_user, email_imap_password, email_allowed_senders,
+          email_code_patterns, email_body_keywords, email_subject_includes,
+          email_ai_enabled
+        `)
+        .eq("group_id", group_id)
+        .maybeSingle();
+
+      if (mailboxError || !mailbox) {
         return new Response(JSON.stringify({ error: "Configuração de e-mail incompleta para este grupo" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      const imapPort = group.email_imap_port || 993;
-      const allowedSenders = group.email_allowed_senders || [];
-      const subjectIncludes = group.email_subject_includes || [];
+      if (!mailbox.email_imap_server || !mailbox.email_imap_user || !mailbox.email_imap_password) {
+        return new Response(JSON.stringify({ error: "Configuração de e-mail incompleta para este grupo" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const imapPort = mailbox.email_imap_port || 993;
+      const allowedSenders = mailbox.email_allowed_senders || [];
+      const subjectIncludes = mailbox.email_subject_includes || [];
 
       const { data: groqSetting } = await supabaseAdmin
         .from("app_settings")
@@ -731,22 +761,22 @@ export default {
       }
 
       const groupConfig: GroupConfig = {
-        email_code_patterns: group.email_code_patterns || [],
-        email_body_keywords: group.email_body_keywords || [],
+        email_code_patterns: mailbox.email_code_patterns || [],
+        email_body_keywords: mailbox.email_body_keywords || [],
         email_subject_includes: subjectIncludes,
-        email_ai_enabled: group.email_ai_enabled === true && !!groqApiKey,
+        email_ai_enabled: mailbox.email_ai_enabled === true && !!groqApiKey,
         email_allowed_senders: allowedSenders,
       };
 
       const conn = await Deno.connectTls({
-        hostname: group.email_imap_server,
+        hostname: mailbox.email_imap_server,
         port: imapPort,
       });
 
       const client = new ImapClient(conn);
       try {
         await client.connect();
-        await client.login(group.email_imap_user, group.email_imap_password);
+        await client.login(mailbox.email_imap_user, mailbox.email_imap_password);
         await client.selectInbox();
 
         const allUids = await client.searchAll();

@@ -7,6 +7,65 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+/**
+ * Verificacao da assinatura do webhook Stripe.
+ *
+ * O header `Stripe-Signature` tem o formato:
+ *   t=<unix timestamp>,v1=<hmac_sha256("{t}.{body}", secret)>
+ *
+ * A assinatura cobre o timestamp + "." + corpo cru, entao o body precisa ser
+ * lido como texto ANTES de qualquer parse.
+ */
+async function verifyStripeSignature(
+  payload: string,
+  header: string,
+  secret: string,
+  toleranceSeconds = 300,
+): Promise<boolean> {
+  if (!secret || !header) return false;
+
+  const parts = header.split(",");
+  const timestamp = parts.find((p) => p.trim().startsWith("t="))?.trim().slice(2);
+  const signatures = parts
+    .filter((p) => p.trim().startsWith("v1="))
+    .map((p) => p.trim().slice(3));
+
+  if (!timestamp || signatures.length === 0) return false;
+
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts)) return false;
+
+  // Protecao contra replay: assinatura antiga demais e rejeitada.
+  if (Math.abs(Date.now() / 1000 - ts) > toleranceSeconds) return false;
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${timestamp}.${payload}`),
+  );
+  const expected = Array.from(new Uint8Array(mac))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  // Comparacao em tempo constante
+  for (const sig of signatures) {
+    if (sig.length !== expected.length) continue;
+    let diff = 0;
+    for (let i = 0; i < sig.length; i++) {
+      diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+    }
+    if (diff === 0) return true;
+  }
+  return false;
+}
+
 export default {
   fetch: async (req: Request) => {
     if (req.method === "OPTIONS") {
@@ -24,11 +83,31 @@ export default {
         return new Response("Stripe not configured", { status: 503 });
       }
 
+      // ---------------------------------------------------------------------
+      // ASSINATURA DO WEBHOOK (S11 / B9)
+      // ---------------------------------------------------------------------
+      // Antes o segredo era lido e NUNCA verificado ("security via obscurity"),
+      // e `supabaseAdmin` nem existia fora dos `case` — ReferenceError -> 500
+      // em todo `checkout.session.completed`.
+      // ---------------------------------------------------------------------
+      if (!stripeWebhookSecret) {
+        console.error("[stripe-webhook] STRIPE_WEBHOOK_SECRET não configurado — recusando webhook");
+        return new Response("Webhook secret not configured", { status: 503 });
+      }
+
       const body = await req.text();
       const sig = req.headers.get("stripe-signature") || "";
 
-      // Verify webhook signature (simplified - in production use stripe.webhooks.constructEvent)
-      // For now, we trust the webhook endpoint security via obscurity
+      const validSignature = await verifyStripeSignature(body, sig, stripeWebhookSecret);
+      if (!validSignature) {
+        console.error("[stripe-webhook] assinatura inválida — webhook rejeitado");
+        return new Response(
+          JSON.stringify({ error: "Assinatura inválida" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
       const event = JSON.parse(body);
 
@@ -79,8 +158,6 @@ export default {
           const customerId = invoice.customer;
 
           if (subscriptionId) {
-            const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
             const { data: sub } = await supabaseAdmin
               .from("user_subscriptions")
               .select("group_id, user_id")
@@ -122,8 +199,6 @@ export default {
           const subscriptionId = invoice.subscription;
 
           if (subscriptionId) {
-            const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
             const { data: sub } = await supabaseAdmin
               .from("user_subscriptions")
               .select("group_id, user_id")

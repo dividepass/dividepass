@@ -17,19 +17,43 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const authHeader = req.headers.get("Authorization");
-    let isAdmin = false;
-    let userId = null;
+    // ---------------------------------------------------------------------
+    // AUTENTICACAO (S12) — obrigatoria para TODAS as acoes
+    // ---------------------------------------------------------------------
+    // Antes, a function aceitava chamada sem token e `isAdmin` simplesmente
+    // ficava false. As acoes de admin caiavam no guard, mas `ensure-columns`
+    // (que executa DDL em survey_steps) nao tinha guard nenhum — qualquer um
+    // podia rodar DDL pela function. Alem disso, o admin era reconhecido so
+    // pelo metadata do JWT, ignorando public.users.role (fonte de verdade
+    // depois do unico public.is_admin()).
+    // ---------------------------------------------------------------------
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-    if (authHeader) {
-      const token = authHeader.replace("Bearer ", "");
-      const { data: { user } } = await supabase.auth.getUser(token);
-      if (user) {
-        userId = user.id;
-        const role = user.app_metadata?.role || user.user_metadata?.role;
-        isAdmin = role === "admin";
-      }
+    if (!token) {
+      return new Response(JSON.stringify({ error: "Não autenticado" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
+
+    const { data: { user } } = await supabase.auth.getUser(token);
+    if (!user) {
+      return new Response(JSON.stringify({ error: "Token inválido" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const userId = user.id;
+
+    const { data: userRow } = await supabase
+      .from("users")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const isAdmin = userRow?.role === "admin" || user.app_metadata?.role === "admin";
 
     const url = new URL(req.url);
     const action = url.searchParams.get("action");
@@ -421,6 +445,13 @@ serve(async (req) => {
 
     // ==================== ENSURE BRANCH COLUMNS ====================
     if (action === "ensure-columns") {
+      // Esta acao roda DDL — exige admin.
+      if (!isAdmin) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       const { error } = await supabase.rpc("exec_sql", {
         sql: `
           DO $$ BEGIN

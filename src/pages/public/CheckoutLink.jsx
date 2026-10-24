@@ -51,7 +51,7 @@ function CheckoutLink() {
       try {
         const { data, error: dbErr } = await supabase
           .from('custom_charges')
-          .select('*')
+          .select('id, reference_code, amount, description, payment_method, status, gateway_transaction_id, pix_copy_paste, pix_qrcode_url, pix_qrcode_base64, expires_at, created_at')
           .eq('reference_code', referenceCode)
           .maybeSingle();
 

@@ -115,9 +115,43 @@ Deno.serve(async (req: Request) => {
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = await req.json();
-    const { amount, description, payment_method, admin_id } = body;
+    const { amount, description, payment_method } = body;
     const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "";
     const ua = req.headers.get("user-agent") || "";
+
+    // ---------------------------------------------------------------------
+    // AUTENTICACAO ADMIN OBRIGATORIA (S12)
+    // ---------------------------------------------------------------------
+    // Antes o `admin_id` vinha do body e nao havia checagem nenhuma: qualquer
+    // pessoa criava cobrancas no nome de um admin. Agora o chamador precisa
+    // ser admin e o admin_id vem do token.
+    // ---------------------------------------------------------------------
+    const authHeader = req.headers.get("authorization") || "";
+    const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (!jwt) {
+      return new Response(JSON.stringify({ error: "Não autenticado" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(jwt);
+    if (authError || !authData?.user) {
+      return new Response(JSON.stringify({ error: "Token inválido" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const { data: adminProfile } = await supabaseAdmin
+      .from("users")
+      .select("role")
+      .eq("id", authData.user.id)
+      .maybeSingle();
+
+    const isAdmin =
+      (authData.user.app_metadata && authData.user.app_metadata.role === "admin") ||
+      (adminProfile && adminProfile.role === "admin");
+
+    if (!isAdmin) {
+      return new Response(JSON.stringify({ error: "Permissão negada" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const admin_id = authData.user.id;
 
     if (!amount || amount <= 0) {
       return new Response(JSON.stringify({ error: "Valor inválido" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });

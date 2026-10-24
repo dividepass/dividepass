@@ -80,7 +80,15 @@ export default {
       }
 
       // Parse external reference from reference_id
-      const externalRef = transactionData.reference_id || referenceId || "";
+      //
+      // SEGURANCA (S11): o IO Pay nao assina seus webhooks, entao a unica
+      // garantia de que a requisicao e legítima vem da propria transacao no
+      // gateway. Por isso:
+      //   1. a referencia vem SEMPRE da transacao (nunca do body), e
+      //   2. a transacao precisa existir no banco como tentativa de pagamento
+      //      (payment_attempts) — a tabela passou a ser service_role-only
+      //      justamente para que o transaction_id nao seja publico.
+      const externalRef = transactionData.reference_id || "";
       const parts = externalRef.split(":");
 
       if (parts.length < 3) {
@@ -93,12 +101,52 @@ export default {
       const paymentType = parts[2] as "entrance" | "subscription" | "combined";
 
       const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+      // A transacao precisa ter sido criada por nos (payment_attempts).
+      // Sem isso, qualquer transaction_id valido do gateway IO Pay — inclusive
+      // de outra loja — poderia ser jogado no webhook para ativar uma vaga.
+      const { data: attempt } = await supabaseAdmin
+        .from("payment_attempts")
+        .select("id, gateway_transaction_id, external_reference, user_id, group_id")
+        .eq("gateway_transaction_id", transactionId)
+        .maybeSingle();
+
+      if (!attempt) {
+        console.error(
+          "[iopay-webhook] transacao sem pagamento registrado — webhook ignorado:",
+          transactionId,
+        );
+        return Response.json({ received: true }, { headers: corsHeaders });
+      }
+
+      // A referencia da transacao precisa ser a mesma que gravamos na tentativa.
+      if (
+        attempt.external_reference &&
+        externalRef &&
+        attempt.external_reference !== externalRef
+      ) {
+        console.error(
+          "[iopay-webhook] referencia divergente entre tentativa e gateway — webhook ignorado",
+        );
+        return Response.json({ received: true }, { headers: corsHeaders });
+      }
+
       const { data: subInfo } = await supabaseAdmin
         .from("user_subscriptions")
         .select("billing_cycle, custom_cycle_days, custom_cycle_months, payment_method")
         .eq("group_id", groupId)
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
+        .maybeSingle();
+
+      // O grupo precisa ser carregado: antes esta linha usava `group?.billing_cycle`
+      // sem que `group` existisse no escopo -> ReferenceError -> HTTP 500 -> o
+      // pagamento nunca era confirmado (acontecia quando NAO havia assinatura
+      // para o par grupo/usuario, por exemplo em pagamento so de taxa de adesao).
+      const { data: group } = await supabaseAdmin
+        .from("groups")
+        .select("billing_cycle, custom_cycle_days, custom_cycle_months")
+        .eq("id", groupId)
         .maybeSingle();
 
       const rawStatus = String(transactionData.status || body.status || "pending").toLowerCase().trim();

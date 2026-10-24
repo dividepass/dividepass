@@ -66,15 +66,26 @@ function UserDetail() {
       try {
         const { data, error: supabaseError } = await supabase
           .from('users')
-          .select('*')
+          .select('id, name, email, phone, nickname, avatar_url, birthdate, role, status, email_verified, last_login_at, created_at, updated_at, pwa_installed_at, push_notifications_enabled_at, onboarding_completed_at, onboarding_step, onboarding_started_at')
           .eq('id', userId)
           .single();
 
         if (supabaseError) throw supabaseError;
 
+        // Campos sensiveis (cpf, ids de gateway, dados de marketing) foram
+        // revogados para `authenticated` — o admin os le por uma funcao
+        // SECURITY DEFINER que so responde para admin.
+        let user = data;
+        try {
+          const { data: priv } = await supabase.rpc('admin_get_user_private', { p_user_id: userId });
+          if (priv && priv.length > 0) user = { ...data, ...priv[0] };
+        } catch (e) {
+          console.warn('[UserDetail] campos privados indisponíveis:', e?.message);
+        }
+
         if (!cancelled) {
-          setUser(data);
-          setForm(data);
+          setUser(user);
+          setForm(user);
         }
       } catch (err) {
         if (!cancelled) setError(err.message);

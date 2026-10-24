@@ -10,7 +10,8 @@ function verifyWebhookSignature(
   signature: string | null,
   secret: string,
 ): boolean {
-  if (!signature || !secret) return true;
+  // Fail-closed: sem signature ou sem secret a validacao falha.
+  if (!signature || !secret) return false;
 
   const encoder = new TextEncoder();
   const keyData = encoder.encode(secret);
@@ -53,16 +54,38 @@ export default {
 
       const rawBody = await req.text();
 
-      if (webhookSecret) {
-        const signature = req.headers.get("resend-signature") || "";
-        const isValid = await verifyWebhookSignature(rawBody, signature, webhookSecret);
-        if (!isValid) {
-          console.error("Invalid webhook signature");
-          return new Response("Invalid signature", {
-            status: 401,
-            headers: corsHeaders,
-          });
-        }
+      // ---------------------------------------------------------------------
+      // SEGURANCA (S12): fail-closed
+      // ---------------------------------------------------------------------
+      // Antes, `verifyWebhookSignature` devolvia TRUE quando o secret nao
+      // estava configurado — ou seja, qualquer POST forjado era aceito e
+      // gravava email_logs (bounces/complaints falsos, poluindo a trilha de
+      // entrega). Agora: sem secret configurado a function nem responde, e
+      // sem assinatura valida o pedido e recusado.
+      // ---------------------------------------------------------------------
+      if (!webhookSecret) {
+        console.error("RESEND_WEBHOOK_SECRET nao configurado — webhook recusado");
+        return new Response("Webhook not configured", {
+          status: 503,
+          headers: corsHeaders,
+        });
+      }
+
+      const signature = req.headers.get("resend-signature") || "";
+      if (!signature) {
+        return new Response("Missing signature", {
+          status: 401,
+          headers: corsHeaders,
+        });
+      }
+
+      const isValid = await verifyWebhookSignature(rawBody, signature, webhookSecret);
+      if (!isValid) {
+        console.error("Invalid webhook signature");
+        return new Response("Invalid signature", {
+          status: 401,
+          headers: corsHeaders,
+        });
       }
 
       const event = JSON.parse(rawBody);

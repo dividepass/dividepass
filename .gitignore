@@ -36,3 +36,6 @@ supabase/*
 !supabase/functions
 
 .vercel
+
+# Notas/credenciais locais do agente (contem service_role e tokens)
+.maestri/

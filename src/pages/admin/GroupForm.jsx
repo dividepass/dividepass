@@ -333,7 +333,7 @@ function GroupForm() {
       try {
         if (!cancelled) setLoading(true);
 
-        const [servicesRes, groupRes, credsRes, profilesRes, membersRes] = await Promise.all([
+        const [servicesRes, groupRes, credsRes, profilesRes, membersRes, mailboxRes] = await Promise.all([
           supabase.from('streaming_services').select('id, name, full_name').order('name'),
           isEditing
             ? supabase.from('groups').select('*, owner:owner_id (id, name, email)').eq('id', groupId).single()
@@ -346,6 +346,10 @@ function GroupForm() {
             : Promise.resolve({ data: null }),
           isEditing
             ? supabase.from('group_members').select('user_id, status, payment_status, created_at, user:user_id (id, name, email)').eq('group_id', groupId).order('created_at')
+            : Promise.resolve({ data: null }),
+          // A credencial IMAP foi movida para `group_mailboxes` (RLS por admin).
+          isEditing
+            ? supabase.from('group_mailboxes').select('*').eq('group_id', groupId).maybeSingle()
             : Promise.resolve({ data: null }),
         ]);
 
@@ -396,37 +400,42 @@ function GroupForm() {
 
           if (group) {
             setEmailCodeEnabled(group.email_code_enabled || false);
-            setEmailAddress(group.email_address || '');
-            setEmailImapServer(group.email_imap_server || '');
-            setEmailImapPort(group.email_imap_port || 993);
-            setEmailImapUser(group.email_imap_user || '');
-            setEmailImapPassword(group.email_imap_password || '');
+          }
+
+          // Configuracao de e-mail/IMAP vive em `group_mailboxes`.
+          if (mailboxRes.data) {
+            const mb = mailboxRes.data;
+            setEmailAddress(mb.email_address || '');
+            setEmailImapServer(mb.email_imap_server || '');
+            setEmailImapPort(mb.email_imap_port || 993);
+            setEmailImapUser(mb.email_imap_user || '');
+            setEmailImapPassword(mb.email_imap_password || '');
             setEmailAllowedSenders(
-              Array.isArray(group.email_allowed_senders)
-                ? group.email_allowed_senders.join('\n')
+              Array.isArray(mb.email_allowed_senders)
+                ? mb.email_allowed_senders.join('\n')
                 : ''
             );
             setEmailBlockedSubjects(
-              Array.isArray(group.email_blocked_subjects)
-                ? group.email_blocked_subjects.join('\n')
+              Array.isArray(mb.email_blocked_subjects)
+                ? mb.email_blocked_subjects.join('\n')
                 : ''
             );
             setEmailCodePatterns(
-              Array.isArray(group.email_code_patterns)
-                ? group.email_code_patterns.join('\n')
+              Array.isArray(mb.email_code_patterns)
+                ? mb.email_code_patterns.join('\n')
                 : ''
             );
             setEmailBodyKeywords(
-              Array.isArray(group.email_body_keywords)
-                ? group.email_body_keywords.join('\n')
+              Array.isArray(mb.email_body_keywords)
+                ? mb.email_body_keywords.join('\n')
                 : ''
             );
             setEmailSubjectIncludes(
-              Array.isArray(group.email_subject_includes)
-                ? group.email_subject_includes.join('\n')
+              Array.isArray(mb.email_subject_includes)
+                ? mb.email_subject_includes.join('\n')
                 : ''
             );
-            setEmailAiEnabled(group.email_ai_enabled || false);
+            setEmailAiEnabled(mb.email_ai_enabled || false);
           }
 
           if (profilesRes.data && profilesRes.data.length > 0) {
@@ -490,28 +499,6 @@ function GroupForm() {
         owner_id: isEditing ? (ownerId || null) : (user?.id || null),
         email_code_enabled: emailCodeEnabled,
         email_code_method: emailCodeEnabled ? 'imap' : null,
-        email_address: emailCodeEnabled ? emailAddress : null,
-        verification_email: null,
-        email_imap_server: emailCodeEnabled ? emailImapServer : null,
-        email_imap_port: emailCodeEnabled ? emailImapPort : 993,
-        email_imap_user: emailCodeEnabled ? emailImapUser : null,
-        email_imap_password: emailCodeEnabled ? emailImapPassword : null,
-        email_allowed_senders: emailCodeEnabled
-          ? emailAllowedSenders.split('\n').map(s => s.trim()).filter(Boolean)
-          : [],
-        email_blocked_subjects: emailCodeEnabled
-          ? emailBlockedSubjects.split('\n').map(s => s.trim()).filter(Boolean)
-          : [],
-        email_code_patterns: emailCodeEnabled
-          ? emailCodePatterns.split('\n').map(s => s.trim()).filter(Boolean)
-          : [],
-        email_body_keywords: emailCodeEnabled
-          ? emailBodyKeywords.split('\n').map(s => s.trim()).filter(Boolean)
-          : [],
-        email_subject_includes: emailCodeEnabled
-          ? emailSubjectIncludes.split('\n').map(s => s.trim()).filter(Boolean)
-          : [],
-        email_ai_enabled: emailCodeEnabled ? emailAiEnabled : false,
         custom_cycle_months: formData.available_cycles.includes('custom') ? parseInt(formData.custom_cycle_months) || null : null,
         custom_cycle_label: formData.available_cycles.includes('custom') ? formData.custom_cycle_label || null : null,
         custom_cycle_days: formData.available_cycles.includes('days') ? parseInt(formData.custom_cycle_days) || null : null,
@@ -542,6 +529,31 @@ function GroupForm() {
           .update({ slug: shortSlug })
           .eq('id', newGroup.id);
         if (slugError) throw slugError;
+      }
+
+      // Configuracao de e-mail/IMAP em `group_mailboxes` (tabela separada com
+      // RLS por admin — a credencial nao pode mais ser lida por anonimo).
+      if (emailCodeEnabled) {
+        const mailboxPayload = {
+          group_id: groupIdResult,
+          email_address: emailAddress || null,
+          verification_email: null,
+          email_imap_server: emailImapServer || null,
+          email_imap_port: emailImapPort || 993,
+          email_imap_user: emailImapUser || null,
+          email_imap_password: emailImapPassword || null,
+          email_allowed_senders: emailAllowedSenders.split('\n').map(s => s.trim()).filter(Boolean),
+          email_blocked_subjects: emailBlockedSubjects.split('\n').map(s => s.trim()).filter(Boolean),
+          email_code_patterns: emailCodePatterns.split('\n').map(s => s.trim()).filter(Boolean),
+          email_body_keywords: emailBodyKeywords.split('\n').map(s => s.trim()).filter(Boolean),
+          email_subject_includes: emailSubjectIncludes.split('\n').map(s => s.trim()).filter(Boolean),
+          email_ai_enabled: emailAiEnabled,
+        };
+
+        const { error: mailboxError } = await supabase
+          .from('group_mailboxes')
+          .upsert(mailboxPayload, { onConflict: 'group_id' });
+        if (mailboxError) throw mailboxError;
       }
 
       if (photoFile) {

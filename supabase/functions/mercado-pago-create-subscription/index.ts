@@ -22,11 +22,38 @@ export default {
 
       const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
+      // ---------------------------------------------------------------------
+      // AUTENTICACAO (S12) — PRIMEIRO, antes de qualquer validacao de payload
+      // ---------------------------------------------------------------------
+      // Antes, `user_id` vinha do BODY e nao havia nenhuma validacao de JWT:
+      // qualquer um criava uma assinatura no Mercado Pago em nome de outra
+      // pessoa. Agora o id vem do proprio token.
+      // ---------------------------------------------------------------------
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+      if (!token) {
+        return new Response(
+          JSON.stringify({ error: "Não autenticado" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(token);
+      if (authError || !authData?.user) {
+        return new Response(
+          JSON.stringify({ error: "Token inválido" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const user_id = authData.user.id;
+
       const body = await req.json();
-      const { group_id, user_id, billing_cycle, months, reason, referral_code, payment_type } = body;
+      const { group_id, billing_cycle, months, reason, referral_code, payment_type } = body;
       const force_new_plan = body.force_new_plan || false;
 
-      if (!group_id || !user_id || !reason) {
+      if (!group_id || !reason) {
         return new Response(
           JSON.stringify({ error: "Dados incompletos" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

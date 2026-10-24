@@ -4,6 +4,7 @@
 
 import { getGatewaySettings } from "./settings.ts";
 import { getInitialPaymentStatus } from "./status-helpers.ts";
+import { resolveCoupon } from "./coupon.ts";
 
 interface HandlerContext {
   supabaseAdmin: any;
@@ -469,14 +470,63 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
   const subscriptionAmount = subDays > 0 ? subscriptionAmountBase : subscriptionAmountBase * subMonths;
   const totalCombinedAmount = entranceAmount + subscriptionAmount;
 
+  // ---------------------------------------------------------------------
+  // CUPOM — valor SEMPRE recalculado no servidor (B8 / S12)
+  // ---------------------------------------------------------------------
+  // Antes, o valor cobrado vinha do body:
+  //   const charged = (coupon_id && final_amount != null && discount_amount != null)
+  //     ? Number(final_amount) : base;      // <- iopay.ts:739 e :865
+  // Um POST com `final_amount: 0.01` cobrava R$ 0,01 numa assinatura de
+  // R$ 150 e persistia o valor adulterado em user_subscriptions.amount.
+  //
+  // Agora o desconto e sempre derivado da tabela `coupons`, com as mesmas
+  // regras da acao `validate` do manage-coupons. O valor do cliente e
+  // ignorado por completo.
+  const authoritativeCoupon = new Map<string, { amount: number; discount: number; recurring: boolean }>();
+
+  const resolveCouponFor = async (base: number, couponType: "entrance" | "subscription") => {
+    if (!coupon_id) {
+      return { ok: true as const, amount: base, discount: 0, recurring: false };
+    }
+    // Chave por TIPO (nao por valor): dentro do fluxo de assinatura o
+    // `subscriptionAmount` local sombreia o externo, e o logAttempt (que roda
+    // no escopo externo) precisa encontrar o mesmo resultado.
+    const cached = authoritativeCoupon.get(couponType);
+    if (cached) return { ok: true as const, ...cached };
+
+    const res = await resolveCoupon({
+      supabaseAdmin,
+      couponId: coupon_id,
+      userId: user_id,
+      paymentType: couponType,
+      groupId: group_id,
+      baseAmount: base,
+    });
+
+    if (!res.ok) return res;
+
+    const value = {
+      amount: res.coupon.finalAmount,
+      discount: res.coupon.discount,
+      recurring: res.coupon.recurring,
+    };
+    authoritativeCoupon.set(couponType, value);
+    return { ok: true as const, ...value };
+  };
+
   const logAttempt = async (status: string, txId: string | null, response: any, errorMsg?: string) => {
     try {
-      let baseAmt: number;
-      if (type === "entrance") baseAmt = entranceAmount;
-      else if (type === "combined") baseAmt = totalCombinedAmount;
-      else baseAmt = subscriptionAmount;
-      const finalAmt = (coupon_id && final_amount != null) ? Number(final_amount) : baseAmt;
-      const discountAmt = (coupon_id && discount_amount != null) ? Number(discount_amount) : 0;
+      const baseAmt: number =
+        type === "entrance" ? entranceAmount
+        : type === "combined" ? totalCombinedAmount
+        : subscriptionAmount;
+      // Valor autoritativo (recalculado no servidor). Nunca usar final_amount
+      // do body aqui.
+      const authoritative = authoritativeCoupon.get(
+        type === "entrance" ? "entrance" : "subscription",
+      );
+      const finalAmt = authoritative ? authoritative.amount : baseAmt;
+      const discountAmt = authoritative ? authoritative.discount : 0;
       await supabaseAdmin.from("payment_attempts").insert({
         user_id, group_id, gateway: "iopay", payment_method: isPix ? "pix" : "card",
         payment_type: type, amount: finalAmt, original_amount: baseAmt, discount_amount: discountAmt,
@@ -609,6 +659,19 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
       return new Response(JSON.stringify({ error: "Este grupo não possui taxa de adesão" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // Valida o cupom no servidor (rejeita cupom expirado, esgotado ou
+    // inelegivel). O valor cobrado aqui NAO muda: a taxa de adesao continua
+    // sendo cobrada pelo valor do grupo, igual antes desta correcao.
+    if (coupon_id) {
+      const entranceCouponRes = await resolveCouponFor(entranceAmount, "entrance");
+      if (!entranceCouponRes.ok) {
+        return new Response(
+          JSON.stringify({ error: entranceCouponRes.error }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     const initialStatus = await getInitialPaymentStatus(supabaseAdmin, group_id, user_id, true);
 
     const webhookUrl = `${supabaseUrl}/functions/v1/iopay-webhook`;
@@ -736,30 +799,27 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
       const subMonths = months ? Number(months) : (cycle === "quarterly" ? 3 : cycle === "semiannual" ? 6 : cycle === "annual" ? 12 : cycle === "custom" ? (Number(body.custom_cycle_months) || 1) : 1);
       const subDays = cycle === "days" ? (Number(body.custom_cycle_days) || 1) : 0;
       const subscriptionAmount = subDays > 0 ? monthlyPrice : monthlyPrice * subMonths;
-      const chargedSubscriptionAmount = (coupon_id && final_amount != null && discount_amount != null)
-        ? Number(final_amount)
-        : subscriptionAmount;
+      const couponRes = await resolveCouponFor(subscriptionAmount, "subscription");
+      if (!couponRes.ok) {
+        return new Response(
+          JSON.stringify({ error: couponRes.error }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const chargedSubscriptionAmount = couponRes.amount;
 
-      // Check if coupon is recurring to determine the stored subscription amount
-      // Non-recurring coupons: charge full price on future cycles (amount = subscriptionAmount)
-      // Recurring coupons: keep discounted price on future cycles (amount = chargedSubscriptionAmount)
+      // Cupom nao recorrente: os proximos ciclos cobram o preco cheio.
+      // Cupom recorrente: o desconto continua valendo nos ciclos seguintes.
       let subscriptionStoredAmount = chargedSubscriptionAmount;
-      let subscriptionDiscountAmount = (coupon_id && discount_amount != null) ? Number(discount_amount) : 0;
+      let subscriptionDiscountAmount = couponRes.discount;
       let subscriptionCouponId = coupon_id || null;
-      if (coupon_id && !subscriptionDiscountAmount) subscriptionDiscountAmount = subscriptionAmount - chargedSubscriptionAmount;
-      if (coupon_id) {
-        try {
-          const { data: couponData } = await supabaseAdmin.from("coupons").select("recurring").eq("id", coupon_id).maybeSingle();
-          if (couponData && !couponData.recurring) {
-            // Non-recurring: future cycles pay full price
-            subscriptionStoredAmount = subscriptionAmount;
-            subscriptionDiscountAmount = 0;
-            subscriptionCouponId = null;
-            console.log("PIX coupon NOT recurring — future cycles will charge full amount:", subscriptionAmount);
-          } else {
-            console.log("PIX coupon IS recurring — future cycles will charge discounted amount:", chargedSubscriptionAmount);
-          }
-        } catch (e) { console.error("Coupon recurring check error:", e); }
+      if (coupon_id && !couponRes.recurring) {
+        subscriptionStoredAmount = subscriptionAmount;
+        subscriptionDiscountAmount = 0;
+        subscriptionCouponId = null;
+        console.log("PIX coupon NOT recurring — future cycles will charge full amount:", subscriptionAmount);
+      } else if (coupon_id) {
+        console.log("PIX coupon IS recurring — future cycles will charge discounted amount:", chargedSubscriptionAmount);
       }
 
       console.log("PIX subscription:", { monthlyPrice, subMonths, subDays, subscriptionAmount, chargedSubscriptionAmount, subscriptionStoredAmount, cycle, isCombined });
@@ -862,25 +922,24 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
     const subMonths = months ? Number(months) : (cycle === "quarterly" ? 3 : cycle === "semiannual" ? 6 : cycle === "annual" ? 12 : cycle === "custom" ? (Number(body.custom_cycle_months) || 1) : 1);
     const subDays = cycle === "days" ? (Number(body.custom_cycle_days) || 1) : 0;
     const subscriptionAmount = subDays > 0 ? monthlyPrice : monthlyPrice * subMonths;
-    const chargedSubscriptionAmount = (coupon_id && final_amount != null && discount_amount != null)
-      ? Number(final_amount)
-      : subscriptionAmount;
+    const cardCouponRes = await resolveCouponFor(subscriptionAmount, "subscription");
+    if (!cardCouponRes.ok) {
+      return new Response(
+        JSON.stringify({ error: cardCouponRes.error }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    const chargedSubscriptionAmount = cardCouponRes.amount;
 
-    // Check if coupon is recurring (same logic as PIX path)
+    // Cupom (mesma logica do caminho PIX, mas com o valor autoritativo)
     let cardSubscriptionStoredAmount = chargedSubscriptionAmount;
-    let cardSubscriptionDiscountAmount = (coupon_id && discount_amount != null) ? Number(discount_amount) : 0;
+    let cardSubscriptionDiscountAmount = cardCouponRes.discount;
     let cardSubscriptionCouponId = coupon_id || null;
-    if (coupon_id && !cardSubscriptionDiscountAmount) cardSubscriptionDiscountAmount = subscriptionAmount - chargedSubscriptionAmount;
-    if (coupon_id) {
-      try {
-        const { data: couponData } = await supabaseAdmin.from("coupons").select("recurring").eq("id", coupon_id).maybeSingle();
-        if (couponData && !couponData.recurring) {
-          cardSubscriptionStoredAmount = subscriptionAmount;
-          cardSubscriptionDiscountAmount = 0;
-          cardSubscriptionCouponId = null;
-          console.log("Card coupon NOT recurring — future cycles will charge full amount:", subscriptionAmount);
-        }
-      } catch (e) { console.error("Card coupon recurring check error:", e); }
+    if (coupon_id && !cardCouponRes.recurring) {
+      cardSubscriptionStoredAmount = subscriptionAmount;
+      cardSubscriptionDiscountAmount = 0;
+      cardSubscriptionCouponId = null;
+      console.log("Card coupon NOT recurring — future cycles will charge full amount:", subscriptionAmount);
     }
 
     const txBody: any = {

@@ -73,6 +73,45 @@ export async function confirmPayment(params: ConfirmParams) {
   const supabaseServiceKey = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
+  // ---------------------------------------------------------------------
+  // IDEMPOTENCIA (S13)
+  // ---------------------------------------------------------------------
+  // Esta funcao e chamada por TODOS os caminhos de confirmacao: webhook,
+  // polling e confirmacao manual. Sem esta guarda, um reenvio de webhook
+  // (o endpoint nao exige assinatura) criava uma nova linha em `payments` e
+  // creditava a wallet do dono do grupo de novo — o `transaction_id` needed
+  // para o replay era publico (payment_attempts.gateway_transaction_id).
+  //
+  // A guarda e por (transaction_code, payment_type) porque o pagamento
+  // combinado gera DOIS pagamentos (entrance + subscription) com o mesmo
+  // transaction_code.
+  // ---------------------------------------------------------------------
+  if (status === "approved" && gateway_payment_id) {
+    const { data: alreadyPaid } = await supabaseAdmin
+      .from("payments")
+      .select("id, payment_type")
+      .eq("transaction_code", gateway_payment_id)
+      .eq("status", "paid")
+      .limit(1);
+
+    if (alreadyPaid && alreadyPaid.length > 0) {
+      const alreadyTypes = alreadyPaid.map((p: any) => p.payment_type).join(",");
+      // No fluxo combinado as duas partes (entrance + subscription) sao
+      // confirmadas na mesma chamada: so considera resolvido quando todos os
+      // tipos esperados ja estao pagos.
+      const expectedTypes =
+        payment_type === "combined" ? ["entrance", "subscription"] : [payment_type];
+      const allPaid = expectedTypes.every((t) => alreadyTypes.includes(t));
+
+      if (allPaid) {
+        console.log(
+          `[confirm-payment] ${gateway} tx=${gateway_payment_id} ja confirmado (${alreadyTypes}) — replay ignorado`,
+        );
+        return { success: true, already_confirmed: true };
+      }
+    }
+  }
+
   if (status === "approved") {
     if (payment_type === "entrance") {
       // Mark entrance as paid — upsert to guarantee existence

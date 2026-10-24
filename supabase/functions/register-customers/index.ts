@@ -20,15 +20,33 @@ export default {
       const supabaseServiceKey = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
       const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-      const body = await req.json();
-      const { user_id } = body;
+      // ---------------------------------------------------------------------
+      // AUTENTICACAO (S12) — PRIMEIRO, antes de qualquer validacao de payload
+      // ---------------------------------------------------------------------
+      // Antes, `user_id` vinha do BODY e nao havia nenhuma validacao de JWT:
+      // qualquer um criava cliente no gateway (Stripe/Asaas/Pagar.me/IO Pay)
+      // em nome de outra pessoa. Agora o id vem do proprio token de quem esta
+      // se registrando, e o body e ignorado.
+      // ---------------------------------------------------------------------
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-      if (!user_id) {
+      if (!token) {
         return new Response(
-          JSON.stringify({ error: "user_id required" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ error: "Não autenticado" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+
+      const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(token);
+      if (authError || !authData?.user) {
+        return new Response(
+          JSON.stringify({ error: "Token inválido" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const user_id = authData.user.id;
 
       // Get user profile
       const { data: user, error: userError } = await supabaseAdmin
