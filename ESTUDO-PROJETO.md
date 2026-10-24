@@ -3,6 +3,37 @@
 > **Data:** 2026-10-23 · **Branch:** `main` · **Commit:** `477b8d9` · **Supabase:** `lasoouwboxspstqvjbsv`
 >
 > **Método:** leitura integral do código (4 agentes de deep-read + leitura direta), **validação empírica contra o banco de produção** usando apenas chaves públicas `anon`, e **walkthrough de runtime com Playwright** em 23 rotas. Nenhum arquivo do projeto foi alterado. Todas as sondas de escrita foram revertidas e todas as contas/grupos de teste foram removidos.
+>
+> **Atualização 2026-10-24:** o bloco P0 descrito abaixo foi **aplicado em produção** (SQL + 16 edge functions + front) e verificado — `scripts/verify-p0.mjs` passou de **3/30** para **30/30**. Ver §12.
+
+---
+
+## 0. Como acessar a produção deste projeto (cheat sheet)
+
+Este projeto tem **dois desvios** que custam tempo se você não souber:
+
+**1. O Supabase está num org do Vercel Marketplace** (`vercel_icfg_nBeLGIdgrm8ECzTlul4CrYP5`), **fora** da conta em que a CLI `supabase` está autenticada. Resultado: `supabase link` / `functions list` devolvem **403** ("Your account does not have the necessary privileges"). A `service_role` do repo também não resolve — ela dá acesso a *dados*, não a DDL nem a deploy.
+
+**Solução:** criar um **Personal Access Token** em <supabase.com/dashboard/account/tokens> (escopo do projeto `DividePass`, preset *Full access*, validade curta) e usar:
+
+```powershell
+$env:SUPABASE_ACCESS_TOKEN = '<sbp_…>'
+# aplicar SQL (a Management API roda em transação própria → rollback automático em erro)
+Invoke-RestMethod -Method Post -Uri 'https://api.supabase.com/v1/projects/lasoouwboxspstqvjbsv/database/query' `
+  -Headers @{ Authorization = "Bearer $env:SUPABASE_ACCESS_TOKEN" } -Body (@{ query = $sql } | ConvertTo-Json -Compress)
+# deploy de function
+supabase functions deploy <nome> --project-ref lasoouwboxspstqvjbsv
+```
+
+> O **SQL Editor do dashboard não serve** para migration grande: o Monaco trunca qualquer colagem em ~200 caracteres. E o `Ctrl+V` a partir da área de transferência do SO não chega ao editor.
+
+**2. O deploy do front é por Git, não pela CLI da Vercel.** O projeto Vercel `dividepass` está integrado ao GitHub `dividepass/dividepass` (branch de produção `main`). O token Vercel disponível na máquina é de **escopo de projeto**, e a CLI exige token de usuário (`vercel deploy` → *"User not found. (404)"*). Então: **commit + push** e a Vercel faz o build.
+
+```powershell
+git add -A && git commit -m "…" && git push origin main
+```
+
+> ⚠️ A URL do remote carrega um **PAT do GitHub embutido** (`https://x-access-token:ghp_…@github.com/…`). Ele fica em `.git/config` — rotacione.
 
 ---
 
@@ -508,21 +539,28 @@ O bloco P0 foi **implementado** e **validado contra PostgreSQL 17 real** (36/36 
 | `scripts/test-fix-p0-asserts.sql` | 36 asserts de comportamento (anon / autenticado comum / admin) |
 | `scripts/run-p0-local-test.ps1` | Runner: cria o banco, aplica, roda os asserts, imprime o resultado |
 
-### Arquivos modificados (15)
+### Arquivos modificados (21)
 
-**Edge functions (11):**
-- `create-payment/index.ts` — **JWT obrigatório**; `user_id` derivado do token (nunca do body); fatura validada contra o dono
+**Edge functions (16):**
+- `create-payment/index.ts` — **JWT obrigatório** (antes de validar o body); `user_id` derivado do token (nunca do body); fatura validada contra o dono
 - `create-payment/handlers/iopay.ts` — cupom recalculado no servidor (3 pontos de cobrança); helper novo
 - `iopay-webhook/index.ts` — **corrigido o `ReferenceError` do `group`** (S14); referência só vem da transação; exige `payment_attempts` correspondente
 - `confirm-payment/index.ts` — **guarda de idempotência** (replay ignorado)
 - `fetch-email-code/index.ts` — **401 sem chamador** (S12/B13); checagem de membro sempre; lê de `group_mailboxes`
-- `check-iopay-tx/index.ts` — **`action:"cancel"` exige JWT** e `user_id === jwt.sub` (B12)
+- `check-iopay-tx/index.ts` — **JWT obrigatório no topo** (antes de qualquer validação de payload) + `action:"cancel"` exige `user_id === jwt.sub` (B12)
 - `stripe-webhook/index.ts` — **HMAC Stripe real** (timestamp + corpo, com proteção anti-replay); `supabaseAdmin` corrigido
 - `asaas-webhook/index.ts` — valida `asaas-access-token`
 - `pagarme-webhook/index.ts` — valida `X-Hub-Signature` (HMAC-SHA1)
 - `create-custom-charge/index.ts` — **admin obrigatório**; `admin_id` vem do token
+- `register-customers/index.ts` — **JWT obrigatório**; `user_id` vem do token (antes vinha do body)
+- `mercado-pago-create-subscription/index.ts` — **JWT obrigatório**; `user_id` vem do token
+- `mercado-pago-verify-payment/index.ts` — **JWT obrigatório**
+- `manage-survey/index.ts` — **JWT obrigatório para todas as ações**; `isAdmin` passa a ler `public.users.role`; `ensure-columns` (que executa DDL) exige admin
+- `resend-webhook/index.ts` — **fail-closed**: sem `RESEND_WEBHOOK_SECRET` ou sem assinatura o pedido é recusado (antes aceitava qualquer POST)
 
-**Front (5):** `AuthProvider.jsx`, `UserDetail.jsx`, `PlatformEvents.jsx` (listas explícitas de `users`), `GroupForm.jsx` (mailbox na nova tabela), `CheckoutLink.jsx` (colunas explícitas de `custom_charges`).
+**Front (5):** `AuthProvider.jsx`, `UserDetail.jsx` (RPC `admin_get_user_private`), `PlatformEvents.jsx` (listas explícitas de `users`), `GroupForm.jsx` (mailbox na nova tabela), `CheckoutLink.jsx` (colunas explícitas de `custom_charges`).
+
+**Outros (2):** `.gitignore` (`.maestri/` ignorado) e `ESTUDO-PROJETO.md` (este relatório, com a senha SMTP redigida).
 
 ### O que o migration faz
 
@@ -537,73 +575,80 @@ O bloco P0 foi **implementado** e **validado contra PostgreSQL 17 real** (36/36 
 | 6 | `users`: REVOKE de tabela + GRANT por coluna segura; `admin_get_user_private()` para o admin | S8 |
 | 7 | `coupons`/`group_profiles`/`support_messages`/`platform_events`: REVOKE anon; policies restritas ao dono/admin | S9 |
 | 8 | `custom_charges`: REVOKE de tabela + GRANT por coluna (checkout público preservado) | S6 |
-| 9 | Índice **único parcial** em `payments (transaction_code, payment_type) WHERE status='paid'` | S13 |
+| 9 | Índice **único parcial** em `payments (transaction_code, payment_type) WHERE status='paid'` (só criado se não houver duplicatas legadas) | S13 |
+| 9b | **Trigger `guard_duplicate_paid_payment`** em `payments`: ignora o INSERT de um pagamento já pago com o mesmo `(transaction_code, payment_type)` — cobre o replay em todos os caminhos de gravação, sem depender de histórico | S13 |
 | 10 | `credit_wallet` **idempotente** por (reference_id, type, amount, description) | S13 |
 
-### Como aplicar
+### Como foi aplicado em produção (2026-10-24)
+
+O projeto Supabase (`lasoouwboxspstqvjbsv`) vive num **org criado pelo Vercel Marketplace** (`vercel_icfg_…`), fora da conta em que a CLI `supabase` estava autenticada (403 em `functions list`). O caminho usado foi um **Personal Access Token** do owner, com escopo de projeto e permissões plenas:
 
 ```powershell
-# 1) Validar localmente (opcional, mas recomendado)
-powershell -ExecutionPolicy Bypass -File scripts/run-p0-local-test.ps1
-#    → RESULTADO: 36/36 PASS
+# 0) token criado no dashboard (conta → Access Tokens) e copiado para a área de transferência
+$env:SUPABASE_ACCESS_TOKEN = '<sbp_…>'
 
-# 2) Aplicar no Supabase
-#    SQL Editor → colar database/fix-p0-security.sql → Run
+# 1) aplicar o SQL pela Management API (ela roda em transação própria: rollback automático em erro)
+$sql = [IO.File]::ReadAllText('database\fix-p0-security.sql',[Text.Encoding]::UTF8)
+$sql = $sql -replace '(?m)^\s*BEGIN;\s*$','' -replace '(?m)^\s*COMMIT;\s*$',''
+Invoke-RestMethod -Method Post -Uri 'https://api.supabase.com/v1/projects/lasoouwboxspstqvjbsv/database/query' `
+  -Headers @{ Authorization = "Bearer $env:SUPABASE_ACCESS_TOKEN" } `
+  -Body (@{ query = $sql } | ConvertTo-Json -Compress)
 
-# 3) Deploy das edge functions
-supabase functions deploy create-payment
-supabase functions deploy iopay-webhook
-supabase functions deploy confirm-payment
-supabase functions deploy fetch-email-code
-supabase functions deploy check-iopay-tx
-supabase functions deploy stripe-webhook
-supabase functions deploy asaas-webhook
-supabase functions deploy pagarme-webhook
-supabase functions deploy create-custom-charge
+# 2) deploy das 16 edge functions alteradas
+supabase functions deploy create-payment --project-ref lasoouwboxspstqvjbsv
+# … (idem para as outras 15)
 
-# 4) Verificar contra o banco real
+# 3) verificação contra o banco real
 node scripts/verify-p0.mjs
+
+# 4) front: commit + push — a Vercel faz o deploy por integração Git
+git add -A && git commit -m "fix(security): …" && git push origin main
 ```
 
-> **Ordem importa:** aplique o SQL **antes** de deployar as edge functions. O
-> `fetch-email-code` passa a ler de `group_mailboxes`, que só existe depois do
-> migration.
+> **Ordem importa:** o SQL **antes** das edge functions (o `fetch-email-code` passa a ler de `group_mailboxes`, que só existe depois do migration) e o SQL **antes** do front (o `GroupForm` antigo quebrava ao salvar grupo, com erro 42703 na coluna removida).
 
 ### Estado da validação
 
-| Verificação | Resultado |
-|---|---|
-| `fix-p0-security.sql` aplica sem erro (Postgres 17 real) | ✅ |
-| 36 asserts de comportamento | ✅ **36/36 PASS** |
-| Sintaxe das 11 edge functions (`node --check`) | ✅ 11/11 |
-| `npm run build` | ✅ |
-| ESLint nos arquivos alterados | ✅ sem regressão (erros restantes são pré-existentes) |
-| Comportamento em produção | ⏳ depende de aplicar + deployar |
+| Verificação | Antes | Depois |
+|---|---|---|
+| `verify-p0.mjs` contra **produção** | **3/30 PASS** — 26 FAIL | **30/30 PASS** — 0 FAIL |
+| `fix-p0-security.sql` aplica sem erro (Postgres 17 real) | ✅ | ✅ aplicado em produção |
+| 36 asserts de comportamento (banco local) | ✅ 36/36 | ✅ 36/36 |
+| Sintaxe das edge functions (`node --check`) | ✅ 11/11 | ✅ 16/16 |
+| `npm run build` | ✅ | ✅ |
+| RLS ativa nas 16 tabelas tocadas | ❌ | ✅ |
+| `group_mailboxes`: 9 grupos migrados **com a senha IMAP intacta** | — | ✅ 9/9 |
+| `groups.email_imap_password` | exposta a anônimo | ✅ HTTP 400 para qualquer um |
+| Trigger de replay em `payments` | ❌ | ✅ (fluxo combinado entrance+subscription preservado) |
+| Moderação de grupo (`verified`/`is_official`/`approval_status`) | burlável pelo dono | ✅ 403 e o grupo continua `pending` |
+| Front em `dividepass.com` | `GroupForm` quebrado (42703) | ✅ deploy `dpl_8S6oa…` READY, bundle novo no ar |
 
 ### Pendências que exigem ação manual
 
 | # | Ação |
 |---|---|
-| 1 | **Rotacionar a senha SMTP/IMAP** `«SENHA-REDIGIDA»` — está no histórico do git (`test-smtp.ts:4`) e é a mesma senha das contas IMAP dos grupos |
-| 2 | **Deletar o grupo órfão**: `DELETE FROM public.groups WHERE id = 'a7801e29-6c79-4ac7-9923-ffd4877bb4dd';` |
-| 3 | **Rotacionar as 2 `service_role` do histórico do git** — a do `debug-supabase.cjs` e a do `Credenciais.md` (ambas já retornam 401, mas estão no histórico) |
-| 4 | **`.maestri/` não está no `.gitignore`** e contém uma `service_role` em texto claro — adicionar ao `.gitignore` |
-| 5 | Limpar as 6 contas junk em `users` (`test*@t.com`, `dbg*`, `dash*`) |
-| 6 | Os handlers **stripe/asaas/mercadopago/pagarme** ainda usam `final_amount` do body e estão quebrados por TDZ — precisam do mesmo tratamento do IO Pay (hoje `active_gateway = iopay`) |
-| 7 | Corrigir o **descompasso do cupom na adesão**: o front mostra o valor com desconto, o servidor cobra o valor cheio — mantive o valor original de propósito, para não alterar cobrança dentro de um patch de segurança |
-| 8 | Corrigir `update_subscription_statuses` (coluna `updated_at` inexistente) e `loadGroup()` em `ManageGroup.jsx:338` |
+| 1 | **Rotacionar a senha SMTP/IMAP** `«SENHA-REDIGIDA»` — está no histórico do git (`test-smtp.ts:4`) e é a mesma senha das contas IMAP dos grupos. **A exposição anônima acabou (a coluna saiu de `groups`), mas a senha continua válida no servidor de e-mail.** |
+| 2 | **Revogar o Personal Access Token** "dividepass-p0-fix" (validade de 7 dias) em supabase.com/dashboard/account/tokens |
+| 3 | **Configurar o secret do webhook do Resend** no painel do Resend com o mesmo valor do secret `RESEND_WEBHOOK_SECRET` do Supabase — até lá o webhook do Resend devolve 503 (fail-closed) |
+| 4 | **Rotacionar as 2 `service_role` do histórico do git** — a do `debug-supabase.cjs` e a do `Credenciais.md` (ambas já retornam 401, mas estão no histórico) |
+| 5 | **Rotacionar o token do GitHub** embutido na URL do remote (`https://x-access-token:ghp_…@github.com/dividepass/dividepass.git`) — ele está em `.git/config` |
+| 6 | **Limpar as 6 contas junk em `users`** (`test*@t.com`, `dbg*`, `dash*`) — deixadas pelos scripts `.cjs` do próprio projeto |
+| 7 | **Limpar as 3 duplicatas legadas em `payments`** (julho/agosto/2026) e o eventual crédito duplo de wallet correspondente — são dados financeiros, por isso não foram tocados |
+| 8 | `update_subscription_statuses` (coluna `updated_at` inexistente) e `loadGroup()` em `ManageGroup.jsx:338` |
+| 9 | **Descompasso do cupom na adesão**: o front mostra o valor com desconto, o servidor cobra o valor cheio — mantive o valor original de propósito, para não alterar cobrança dentro de um patch de segurança |
+| 10 | Os handlers **stripe/asaas/mercadopago/pagarme** ainda usam `final_amount` do body e estão quebrados por TDZ — precisam do mesmo tratamento do IO Pay (hoje `active_gateway = iopay`) |
 
 ---
 
-## 13. Perguntas em aberto (só verificáveis no dashboard)
+## 13. Perguntas em aberto — respondidas
 
-1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam; `manage-survey ensure-columns` nunca roda. **Resposta parcial:** os segredos de cron foram trocados (os do repo retornam 401), então `app_settings.recurring_billing_cron_secret` / `overdue_cron_secret` existem e são diferentes.
-2. **Qual `is_admin()` está ativa** (JWT vs `users.role`)? Muda quando uma promoção de admin passa a valer. Afeta `admin-update-user` (que usa `app_metadata.role`) vs `manage-crons`/`schedule-billing`/`force-confirm-payment` (que usam `users.role`).
-3. **`user_wallets` já foi explorada?** Verificar `wallet_transactions` por créditos sem `payment` correspondente.
-4. **`payments` tem `UNIQUE` em `external_reference`?** As migrations do repo não cobrem essa tabela — se não tiver, o replay de webhook (S13) duplica pagamento sem nenhuma barreira de banco.
-5. **`MP_WEBHOOK_SECRET` está definido?** `mercado-pago-webhook` respondeu **401 "Invalid signature"** na minha sonda → o secret **está** definido e a validação **está ativa** ✅. (Diferente dos outros 4 webhooks, que não validam nada.)
-6. **`group_members.transaction_code` / `payments.transaction_code`** — está preenchido no fluxo de adesão? Se não, o bug S14 derruba toda confirmação de adesão via IO Pay.
-7. **`sb_secret_…` do projeto** — a chave privilegiada atual está só no dashboard da conta dona do `lasoouwboxspstqvjbsv`. As duas do histórico do git estão mortas.
+1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam. Em produção existem `BILLING_CRON_SECRET` e `OVERDUE_CRON_SECRET` (rotacionados). **Continua em aberto:** quais jobs estão de fato agendados no `pg_cron`.
+2. **Qual `is_admin()` está ativa** (JWT vs `users.role`)? Agora é **uma só, unificada**: JWT `app_metadata.role = 'admin` **ou** `public.users.role = 'admin'`. Vale para todas as policies do banco. `manage-survey` foi alinhado com ela.
+3. **`user_wallets` já foi explorada?** A duplicata em `payments` mostra que o replay chegou a rodar, e o `credit_wallet` era cego. Não dá para provar retroativamente sem cruzar `wallet_transactions` × `payments` — é a pendência 7.
+4. **`payments` tem `UNIQUE` em `external_reference`?** **Não tinha** — o replay duplicava pagamento sem nenhuma barreira de banco. Agora existe o trigger `guard_duplicate_paid_payment` (o índice único parcial só entraria se não houvesse as 3 duplicatas legadas).
+5. **`MP_WEBHOOK_SECRET` está definido?** Sim, e a validação está ativa ✅.
+6. **`transaction_code` preenchido no fluxo de adesão?** Sim, e é a chave usada pela trava de replay.
+7. **`sb_secret_…` do projeto** — nesta sessão foi criado um **PAT de projeto** (não é chave de API); deve ser revogado ao final (pendência 2).
 
 ---
 
@@ -618,4 +663,4 @@ node scripts/verify-p0.mjs
 # runtime: node logs\dp-walk.mjs (Playwright, 23 rotas, screenshots em logs\shots\)
 ```
 
-**Nenhuma alteração foi feita no repositório.** Todas as contas e grupos de teste criados durante a verificação foram removidos; as escritas anônimas de teste foram revertidas.
+**Estado final:** o bloco P0 está **aplicado e verificado em produção** — `verify-p0.mjs` passou de **3/30** para **30/30**. Todas as contas e grupos de teste criados durante a verificação foram removidos e as escritas anônimas de teste foram revertidas. Commit `67ce49c` no branch `main` → deploy de produção do front `dpl_8S6oaFjVjQTaAnADCCBkfeShjCUY` (READY).
