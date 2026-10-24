@@ -796,6 +796,84 @@ O nome "Grupos criados" era enganoso — a consulta filtra `approval_status = 'p
 
 ---
 
+## 12.4 Onboarding: plataformas por categoria e listagem de respostas (2026-10-24)
+
+Terceiro pedido: *"no onboarding nos cards está as categorias… o card de filmes e séries deve trazer só as plataformas que são streaming, o de música só as de música… a listagem das respostas está muito ruim e muito confuso precisa melhorar"*.
+
+### O bug dos cards
+
+`user_onboarding_interests` guarda a resposta com `kind` (`current`/`interested`), `platform_id` e `platform_name` — **não guarda em qual pergunta o usuário marcou**. O relatório agrupava por `kind`, então os 4 cards de interesse dividiam o mesmo bucket:
+
+| Card | O que aparecia |
+|---|---|
+| "Em quais serviços de filmes e séries…" | Netflix **e Spotify, ChatGPT, Canva, DuoLingo** |
+| "Quais serviços de música…" | a mesma lista inteira |
+| "Quais serviços de educação e idiomas…" | a mesma lista inteira |
+| "Quais ferramentas de IA e produtividade…" | a mesma lista inteira |
+
+O que amarra a plataforma à pergunta é `streaming_services.category` (enum de 10 valores: `streaming`, `musica`, `cursos`, `saude`, `ia`, `produtividade`, `ferramentas`, `leitura`, `games`, `seguranca`) — cada passo do questionário declara as categorias que aceita.
+
+### O que mudou
+
+**Bucket por pergunta.** Cada card recebe só as plataformas das suas categorias:
+- "filmes e séries" → 15 plataformas de `streaming` (Netflix 14, Disney Plus 6, YouTube 6, Globoplay 4, Max 4, Prime Video 4…)
+- "música" → 4 de `musica` (Spotify 23, Amazon Music 6, Apple Music…)
+- "educação e idiomas" → só `cursos` (DuoLingo, Lingodeer, Nath Finanças, Busuu, Kinedu)
+- "IA e produtividade" → `ia` + `produtividade` + `ferramentas` (ChatGPT 13, Canva 11, Claude, Gemini, Adobe, Dropbox…)
+
+O card "Plataformas que você utiliza atualmente" é a única pergunta que realmente cobre todas as categorias — nele cada plataforma passa a mostrar a categoria ao lado do nome.
+
+**Plataforma digitada à mão volta para o catálogo.** 5 das 260 respostas de interesse são `is_custom`, sem `platform_id`. Três delas eram só outra grafia de um serviço do catálogo ("Apple music" × "Apple Music", "Duolingo" × "DuoLingo", "TotalPass" × "Totalpass"). Passa a casar pelo nome, sem diferenciar maiúscula/minúscula, o que devolve categoria e ícone — e faz "Duolingo" voltar para o card de cursos.
+
+**Nomes equivalentes deixaram de virar duas barras** — a chave do bucket é o nome canônico do serviço ("TotalPass" e "Totalpass" somam 3, não 2+1).
+
+**"nenhuma" deixou de contar como plataforma.** O gate oferece a opção "Nenhuma destas" e o usuário pode digitar "nenhuma" no campo livre; nos dois casos não é uma plataforma usada ou desejada.
+
+**Percentual com denominador honesto** — a barra agora é relativa a quem respondeu *aquela* pergunta ("23 responderam"), e não a todos os respondentes do onboarding.
+
+### A listagem de respostas
+
+Era uma tabela de 8 colunas (Usuário, Assinaturas, Maior barreira, Já compartilha, Com quem, Interesses, Convidaria, expandir). Oito colunas obrigavam a ler de lado para lado, e a coluna "Interesses" mostrava "2 Netflix, Spotify +3" — que é exatamente o que interessa.
+
+Virou **uma ficha por resposta**:
+
+```
+⬤  Sabrina da Costa Marinho                       2 h atrás   ›
+   sabrina.marinho94789@gmail.com
+
+   ASSINATURAS 1 a 2   JÁ COMPARTILHA Não   MAIOR BARREIRA Não conheço pessoas para dividir
+
+   QUER DIVIDIR
+   Educação e idiomas   (DuoLingo) (Open English)
+   Ferramentas          (Canva)
+   Filmes e séries      (Netflix) (Paramount+) (Telecine) (Claro TV+) (Apple TV+) …
+   Música              (Apple Music) (Amazon Music) (Spotify)
+
+   JÁ USA
+   Filmes e séries      (Netflix) (Claro TV+) (Max) (Globoplay)
+   Música              (Apple Music) (Spotify)
+
+   CONVIDARIA  (João) (Maria)
+```
+
+- Avatar, nome (link para o cadastro), e-mail e tempo relativo.
+- Respostas curtas viram etiquetas — sem coluna, sem cabeçalho truncado.
+- Plataformas agrupadas por categoria, com o ícone do serviço.
+- Expandir a ficha abre as perguntas completas (inclusive a barreira digitada à mão, que não aparecia em lugar nenhum) e oslinks de WhatsApp de quem a pessoa convidaria.
+- A busca agora acha por plataforma, não só por nome e e-mail: buscar "duolingo" devolve as 13 respostas com DuoLingo.
+- Ordem por data, por nº de plataformas ou por nome.
+
+### Verificação
+- `npm run build` limpo.
+- Passada visual no dev server local (`:5199`) com a sessão admin: os 4 cards de interesse com as categorias certainas, o card "já usa" com a categoria ao lado de cada nome, o card "Outras plataformas citadas" com 4 digitadas à mão (ByeFIT 3, Totalpass 3, Gympass 1, Wellhub 1), a listagem em fichas, a busca por plataforma e a ficha expandida.
+- Console sem erros em `/admin/onboarding`.
+- Conferido contra o banco: 255 interesses com `platform_id` (0 órfãos) e 5 sem `platform_id` (`Apple music`, `Duolingo`, `Gympass`, `nenhuma`, `TotalPass`).
+
+### Decisão
+O banco não guarda a pergunta de origem do interesse, então uma plataforma digitada à mão **não tem como saber em qual dos 4 cards de interesse foi marcada**. Em vez de adivinhar, essas respostas ficam num card à parte ("Outras plataformas citadas") com a explicação do motivo. O dado continua no banco como está — a correção é só de leitura.
+
+---
+
 ## 13. Perguntas em aberto — respondidas
 
 1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam. Em produção existem `BILLING_CRON_SECRET` e `OVERDUE_CRON_SECRET` (rotacionados). **Continua em aberto:** quais jobs estão de fato agendados no `pg_cron`.
