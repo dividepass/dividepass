@@ -104,11 +104,12 @@ export default function OnboardingReport() {
         }))
       );
 
-      // Começou o fluxo mas nunca respondeu nada: é aqui que o operador
-      // consegue agir (reenviar convite, ajustar a oferta).
+      // Abandonou de verdade: entrou no fluxo, não deixou respostas e não
+      // concluiu. Quem concluiu sem perfil não abandonou — só não respondeu
+      // nada que valesse gravacao.
       setIncomplete(
         started
-          .filter((u) => !answersByUser[u.id])
+          .filter((u) => !answersByUser[u.id] && !u.onboarding_completed_at)
           .map((u) => ({ ...u, invites: invitesByUser[u.id] || [] }))
       );
 
@@ -372,7 +373,7 @@ export default function OnboardingReport() {
               className={`ob-report-tab ${tab === 'incomplete' ? 'active' : ''}`}
               onClick={() => setTab('incomplete')}
             >
-              Não responderam ({incomplete.length})
+              Abandonaram ({incomplete.length})
             </button>
           </div>
 
