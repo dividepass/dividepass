@@ -26,6 +26,25 @@ export const INTEREST_CATEGORIES = {
   OTHER: ['leitura', 'games', 'seguranca'],
 };
 
+/* Nome legível de cada categoria de streaming_services. O relatório do
+   onboarding usa para separar as plataformas dentro de cada pergunta — sem
+   isso, o card de "filmes e séries" acaba mostrando junto o Spotify e o
+   ChatGPT, porque o banco só guarda a categoria do serviço. */
+export const CATEGORY_LABELS = {
+  streaming: 'Filmes e séries',
+  musica: 'Música',
+  cursos: 'Educação e idiomas',
+  ia: 'Inteligência artificial',
+  produtividade: 'Produtividade',
+  ferramentas: 'Ferramentas',
+  leitura: 'Leitura',
+  games: 'Games',
+  saude: 'Saúde e bem-estar',
+  seguranca: 'Segurança',
+};
+
+export const categoryLabel = (category) => CATEGORY_LABELS[category] || category || 'Outras';
+
 export const ONBOARDING_STEPS = [
   {
     id: 'welcome',

@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Loader2,
@@ -12,22 +12,25 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { ONBOARDING_STEPS, labelForValue } from '../../lib/onboardingQuestions';
+import { ONBOARDING_STEPS, categoryLabel, labelForValue } from '../../lib/onboardingQuestions';
 import './OnboardingReport.css';
-
-const INTEREST_KIND_LABEL = {
-  current: 'Plataformas que já usa',
-  interested: 'Plataformas que quer dividir',
-};
 
 const INTEREST_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'platforms');
 const SCALAR_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'single' && s.column);
 
-// Rótulos curtos das colunas da tabela — a pergunta inteira fica no tooltip,
-// porque "Quantas assinaturas você paga atualmente?" não cabe em um <th>.
-const COLUMN_SHORT_LABEL = {
+/* "Nenhuma destas" é uma resposta, não uma plataforma. O gate oferece a
+   opção e o usuário pode digitar "nenhuma" no campo livre — nos dois casos
+   não faz sentido contar isso como plataforma usada ou desejada. */
+const NONE_ANSWER = /^(nenhuma|nenhum|nada|sem)\b/i;
+const isNoneAnswer = (name) => NONE_ANSWER.test((name || '').trim());
+
+/* Rótulo curto da pergunta, para a ficha da resposta. A pergunta inteira
+   aparece logo abaixo, então aqui cabe só o substantivo. */
+const ANSWER_CHIP_LABEL = {
   subscriptions_count_band: 'Assinaturas',
   main_barrier: 'Maior barreira',
+  already_shares: 'Já compartilha',
+  shares_with: 'Compartilha com',
 };
 
 export default function OnboardingReport() {
@@ -41,6 +44,7 @@ export default function OnboardingReport() {
   const [error, setError] = useState('');
   const [tab, setTab] = useState('overview');
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('recent');
   const [expanded, setExpanded] = useState(null);
 
   useEffect(() => {
@@ -63,8 +67,8 @@ export default function OnboardingReport() {
         supabase.from('user_onboarding_profiles').select('*'),
         supabase.from('user_onboarding_interests').select('*'),
         supabase.from('user_onboarding_invites').select('*'),
-        // Para os ícones e cores das plataformas no gráfico.
-        supabase.from('streaming_services').select('id, name, icon_url, color'),
+        // Para os ícones, as cores e a CATEGORIA das plataformas no gráfico.
+        supabase.from('streaming_services').select('id, name, icon_url, color, category'),
       ]);
 
       if (cancelled) return;
@@ -210,37 +214,127 @@ export default function OnboardingReport() {
     return out;
   }, [rows]);
 
+  const servicesById = useMemo(
+    () => Object.fromEntries(services.map((s) => [s.id, s])),
+    [services]
+  );
+
+  /* Plataforma digitada à mão não tem platform_id. Boa parte é só o mesmo
+     serviço com outra grafia ("Apple music" x "Apple Music", "Duolingo" x
+     "DuoLingo", "TotalPass" x "Totalpass") — casar pelo nome devolve a
+     categoria e o ícone, e a plataforma entra no card certo. */
+  const servicesByName = useMemo(() => {
+    const map = {};
+    for (const s of services) map[(s.name || '').trim().toLowerCase()] = s;
+    return map;
+  }, [services]);
+
+  const resolveService = (interest) => {
+    if (interest.platform_id && servicesById[interest.platform_id]) {
+      return servicesById[interest.platform_id];
+    }
+    return servicesByName[(interest.platform_name || '').trim().toLowerCase()] || null;
+  };
+
+  /*
+   * Um bucket por PERGUNTA, não por "kind".
+   *
+   * O banco guarda a resposta com `kind` ('current'/'interested') e o id do
+   * serviço, mas não guarda em qual pergunta o usuário marcou. Os 4 cards de
+   * interesse dividiam o mesmo bucket 'interested' — por isso o card de
+   * "filmes e séries" mostrava Spotify, ChatGPT e DuoLingo junto.
+   *
+   * A categoria do serviço (streaming_services.category) é o que amarra a
+   * plataforma à pergunta: cada card de interesse só aceita as categorias
+   * declaradas no passo. "Plataformas que já usa" é a exceção — essa pergunta
+   * realmente cobre todas as categorias.
+   */
   const platformRanking = useMemo(() => {
-    const byKind = { current: new Map(), interested: new Map() };
-
-    // platform_id -> serviço, para ícone e cor.
-    const byId = Object.fromEntries(services.map((s) => [s.id, s]));
-
-    for (const i of interests) {
-      const bucket = byKind[i.kind];
-      if (!bucket) continue;
-      const svc = i.platform_id ? byId[i.platform_id] : null;
-      const cur = bucket.get(i.platform_name) || {
-        count: 0,
-        custom: false,
-        icon: svc?.icon_url || null,
-        color: svc?.color || null,
-      };
-      cur.count++;
-      cur.custom = cur.custom || i.is_custom;
-      if (!cur.icon && svc?.icon_url) { cur.icon = svc.icon_url; cur.color = svc.color; }
-      bucket.set(i.platform_name, cur);
+    const buckets = {};
+    const answeredBy = {};
+    for (const step of INTEREST_QUESTIONS) {
+      buckets[step.id] = new Map();
+      answeredBy[step.id] = new Set();
     }
 
+    const customInterested = new Map();
+
+    for (const i of interests) {
+      if (isNoneAnswer(i.platform_name)) continue;
+
+      const svc = resolveService(i);
+      const category = svc?.category || null;
+      const isCustom = !!i.is_custom && !svc;
+      // Chave pelo nome canônico do serviço: "TotalPass" e "Totalpass" são a
+      // mesma plataforma e não podem virar duas barras.
+      const key = svc?.name || i.platform_name;
+
+      const targets = INTEREST_QUESTIONS.filter((step) => {
+        if (step.kind !== i.kind) return false;
+        if (i.kind === 'current') return true; // "já usa" aceita tudo
+        if (!category) return false; // plataforma livre não tem categoria
+        return step.categories.includes(category);
+      });
+
+      if (targets.length === 0) {
+        // Digitada à mão numa pergunta de interesse: não dá para saber em
+        // qual das quatro ela foi marcada. Fica à parte, no card "Outras".
+        if (i.kind === 'interested') {
+          const cur = customInterested.get(key) || { count: 0, custom: true, icon: svc?.icon_url || null, color: svc?.color || null };
+          cur.count++;
+          customInterested.set(key, cur);
+        }
+        continue;
+      }
+
+      for (const step of targets) {
+        const bucket = buckets[step.id];
+        const cur = bucket.get(key) || {
+          count: 0,
+          custom: isCustom,
+          icon: svc?.icon_url || null,
+          color: svc?.color || null,
+          category,
+        };
+        cur.count++;
+        if (!cur.icon && svc?.icon_url) { cur.icon = svc.icon_url; cur.color = svc.color; }
+        bucket.set(key, cur);
+        answeredBy[step.id].add(i.user_id);
+      }
+    }
+
+    const toList = (map) => [...map.entries()]
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'pt-BR'));
+
     return {
-      current: [...byKind.current.entries()]
-        .map(([name, v]) => ({ name, ...v }))
-        .sort((a, b) => b.count - a.count),
-      interested: [...byKind.interested.entries()]
-        .map(([name, v]) => ({ name, ...v }))
-        .sort((a, b) => b.count - a.count),
+      byStep: Object.fromEntries(Object.entries(buckets).map(([id, m]) => [id, toList(m)])),
+      answeredBy: Object.fromEntries(Object.entries(answeredBy).map(([id, s]) => [id, s.size])),
+      custom: toList(customInterested),
     };
-  }, [interests, services]);
+  }, [interests, servicesById, servicesByName]);
+
+  /* Plataformas de um usuário, agrupadas por categoria. */
+  const groupByCategory = (list) => {
+    const map = new Map();
+    for (const item of list) {
+      if (isNoneAnswer(item.platform_name)) continue;
+      const svc = resolveService(item);
+      const key = svc?.category || 'outras';
+      if (!map.has(key)) {
+        map.set(key, { key, label: categoryLabel(svc?.category), items: [] });
+      }
+      const name = svc?.name || item.platform_name;
+      if (map.get(key).items.some((p) => p.name === name)) continue;
+      map.get(key).items.push({
+        name,
+        icon: svc?.icon_url || null,
+        color: svc?.color || null,
+        custom: !!item.is_custom && !svc,
+      });
+    }
+    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+  };
 
   // ── KPIs ───────────────────────────────────────────────────────────────
   const total = rows.length;
@@ -257,11 +351,35 @@ export default function OnboardingReport() {
   // ── Lista ──────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (q && !`${r.name || ''} ${r.email || ''}`.toLowerCase().includes(q)) return false;
-      return true;
+
+    const list = rows.filter((r) => {
+      if (!q) return true;
+      const mine = interestsByUser[r.id] || { current: [], interested: [] };
+      const haystack = [
+        r.name,
+        r.email,
+        ...mine.interested.map((i) => i.platform_name),
+        ...mine.current.map((i) => i.platform_name),
+        ...(r.invites || []).map((iv) => iv.name),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
     });
-  }, [rows, search]);
+
+    const sorted = [...list];
+    if (sort === 'name') {
+      sorted.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR'));
+    } else if (sort === 'platforms') {
+      const count = (r) => (interestsByUser[r.id]?.interested || []).length;
+      sorted.sort((a, b) => count(b) - count(a));
+    } else {
+      const when = (r) => new Date(r.answers?.created_at || r.created_at || 0).getTime();
+      sorted.sort((a, b) => when(b) - when(a));
+    }
+    return sorted;
+  }, [rows, search, sort, interestsByUser]);
 
   if (loading) {
     return (
@@ -410,17 +528,28 @@ export default function OnboardingReport() {
               ))}
 
               {INTEREST_QUESTIONS.map((step) => {
-                const bucket = platformRanking[step.kind];
+                const bucket = platformRanking.byStep[step.id] || [];
+                const answered = platformRanking.answeredBy[step.id] || 0;
                 const max = Math.max(1, ...bucket.map((b) => b.count));
+                // Só o card que junta várias categorias precisa dizer de qual
+                // categoria é cada plataforma — nos outros, o próprio título
+                // já responde.
+                const showCategory = (step.categories?.length || 0) > 1;
 
                 return (
                   <div className="chart-card" key={step.id}>
                     <div className="chart-header">
                       <h3>{step.title}</h3>
-                      <span className="chart-total">{bucket.length} serviços</span>
+                      <span className="chart-total">
+                        {answered ? `${answered} responderam · ${bucket.length} plataforma${bucket.length !== 1 ? 's' : ''}` : 'sem respostas'}
+                      </span>
                     </div>
                     {bucket.length === 0 ? (
-                      <p className="ob-report-empty">Ninguém marcou plataforma nesta pergunta.</p>
+                      <p className="ob-report-empty">
+                        {step.kind === 'current'
+                          ? 'Ninguém marcou plataforma nesta pergunta.'
+                          : `Ninguém marcou ${categoryLabel(step.categories?.[0]).toLowerCase()} nesta pergunta.`}
+                      </p>
                     ) : (
                       <div className="chart-bars">
                         {bucket.slice(0, 15).map((b) => (
@@ -435,6 +564,9 @@ export default function OnboardingReport() {
                               )}
                               {b.name}
                               {b.custom && <em className="ob-custom-tag">outra</em>}
+                              {showCategory && b.category && (
+                                <em className="ob-category-tag">{categoryLabel(b.category)}</em>
+                              )}
                             </span>
                             <div className="bar-track">
                               <div className="bar-fill" style={{ width: `${(b.count / max) * 100}%`, background: b.color || undefined }} />
@@ -442,180 +574,273 @@ export default function OnboardingReport() {
                             <div className="bar-value">
                               <span className="bar-count">{b.count}</span>
                               <span className="bar-pct">
-                                {total ? Math.round((b.count / total) * 100) : 0}%
+                                {answered ? Math.round((b.count / answered) * 100) : 0}%
                               </span>
                             </div>
                           </div>
                         ))}
+                        {bucket.length > 15 && (
+                          <p className="ob-report-empty">+{bucket.length - 15} outras plataformas</p>
+                        )}
                       </div>
                     )}
                   </div>
                 );
               })}
+
+              {platformRanking.custom.length > 0 && (
+                <div className="chart-card">
+                  <div className="chart-header">
+                    <h3>Outras plataformas citadas</h3>
+                    <span className="chart-total">
+                      {platformRanking.custom.length} digitada{platformRanking.custom.length !== 1 ? 's' : ''} à mão
+                    </span>
+                  </div>
+                  <p className="ob-report-empty">
+                    Foram marcadas em uma das perguntas de interesse, mas não dá para dizer em qual —
+                    a resposta não guarda a pergunta de origem.
+                  </p>
+                  <div className="chart-bars">
+                    {platformRanking.custom.map((b) => (
+                      <div className="bar-row" key={b.name}>
+                        <span className="bar-label">
+                          {b.icon ? (
+                            <img src={b.icon} alt="" className="bar-icon" />
+                          ) : (
+                            <span className="bar-icon" style={{ background: b.color || '#64748B' }}>{b.name.charAt(0)}</span>
+                          )}
+                          {b.name}
+                        </span>
+                        <div className="bar-track">
+                          <div className="bar-fill" style={{ width: `${(b.count / Math.max(1, ...platformRanking.custom.map((x) => x.count))) * 100}%`, background: b.color || '#64748B' }} />
+                        </div>
+                        <div className="bar-value">
+                          <span className="bar-count">{b.count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {tab === 'responses' && (
-            <div className="admin-card table-responsive">
+            <div className="ob-responses">
               <div className="ob-report-toolbar">
                 <div className="search-box">
                   <Search size={16} />
                   <input
                     type="text"
-                    placeholder="Buscar por nome ou e-mail..."
+                    placeholder="Buscar por nome, e-mail ou plataforma..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
+                <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Ordenar respostas">
+                  <option value="recent">Mais recentes</option>
+                  <option value="platforms">Mais plataformas</option>
+                  <option value="name">Nome (A–Z)</option>
+                </select>
                 <span className="ob-report-count">{filtered.length} de {total}</span>
               </div>
 
-              <table className="history-table">
-                <thead>
-                  <tr>
-                    <th>Usuário</th>
-                    {SCALAR_QUESTIONS.map((s) => (
-                      <th key={s.id} title={s.title}>
-                        {COLUMN_SHORT_LABEL[s.column] || s.title}
-                      </th>
-                    ))}
-                    <th title="Você já compartilha alguma assinatura digital com outras pessoas?">Já compartilha</th>
-                    <th title="Com quem você compartilha suas assinaturas?">Com quem</th>
-                    <th>Interesses</th>
-                    <th>Convidaria</th>
-                    <th aria-label="Expandir" />
-                  </tr>
-                </thead>
-                <tbody>
+              {filtered.length === 0 ? (
+                <div className="admin-card empty-table"><p>Nenhum usuário encontrado.</p></div>
+              ) : (
+                <div className="ob-response-list">
                   {filtered.map((row) => {
                     const mine = interestsByUser[row.id]?.interested || [];
-                    const names = mine.map((m) => m.platform_name);
+                    const theirs = interestsByUser[row.id]?.current || [];
+                    const open = expanded === row.id;
+                    const wanted = groupByCategory(mine);
+                    const used = groupByCategory(theirs);
+
+                    const chips = [];
+                    const bandStep = ONBOARDING_STEPS.find((s) => s.column === 'subscriptions_count_band');
+                    if (bandStep && row.answers?.subscriptions_count_band) {
+                      chips.push({
+                        label: ANSWER_CHIP_LABEL.subscriptions_count_band,
+                        value: labelForValue(bandStep, row.answers.subscriptions_count_band),
+                      });
+                    }
+                    if (row.answers?.already_shares !== null && row.answers?.already_shares !== undefined) {
+                      chips.push({
+                        label: ANSWER_CHIP_LABEL.already_shares,
+                        value: row.answers.already_shares ? 'Sim' : 'Não',
+                      });
+                    }
+                    const sharesStep = ONBOARDING_STEPS.find((s) => s.column === 'shares_with');
+                    const withList = row.answers?.shares_with;
+                    if (Array.isArray(withList) && withList.length) {
+                      chips.push({
+                        label: ANSWER_CHIP_LABEL.shares_with,
+                        value: withList.map((v) => labelForValue(sharesStep, v)).join(', '),
+                      });
+                    }
+                    const barrierStep = ONBOARDING_STEPS.find((s) => s.column === 'main_barrier');
+                    if (row.answers?.main_barrier) {
+                      chips.push({
+                        label: ANSWER_CHIP_LABEL.main_barrier,
+                        value: labelForValue(barrierStep, row.answers.main_barrier),
+                      });
+                    }
 
                     return (
-                      <Fragment key={row.id}>
-                        <tr>
-                          <td>
+                      <article className={`ob-response ${open ? 'is-open' : ''}`} key={row.id}>
+                        <header className="ob-response-head">
+                          {row.avatar_url ? (
+                            <img className="ob-response-avatar" src={row.avatar_url} alt="" />
+                          ) : (
+                            <span className="ob-response-avatar is-initials">
+                              {(row.name || row.email || '?').charAt(0).toUpperCase()}
+                            </span>
+                          )}
+                          <div className="ob-response-who">
                             <Link to={`/admin/users/${row.id}`} className="link-name">
                               {row.name || '—'}
                             </Link>
-                            <span className="ob-cell-sub">{row.email}</span>
-                          </td>
-                          {SCALAR_QUESTIONS.map((s) => (
-                            <td key={s.id}>
-                              {row.answers?.[s.column]
-                                ? labelForValue(s, row.answers[s.column])
-                                : '—'}
-                            </td>
-                          ))}
-                          <td>
-                            {row.answers?.already_shares === true
-                              ? 'Sim'
-                              : row.answers?.already_shares === false
-                                ? 'Não'
-                                : '—'}
-                          </td>
-                          <td>
-                            {(row.answers?.shares_with || []).length
-                              ? row.answers.shares_with
-                                  .map((v) => labelForValue(ONBOARDING_STEPS.find((s) => s.column === 'shares_with'), v))
-                                  .join(', ')
-                              : '—'}
-                          </td>
-                          <td>
-                            {names.length ? (
-                              <span className="ob-interest-cell">
-                                <strong>{names.length}</strong>
-                                {names.slice(0, 2).join(', ')}
-                                {names.length > 2 && <em> +{names.length - 2}</em>}
+                            <span className="ob-response-mail">{row.email}</span>
+                          </div>
+                          <span className="ob-response-time">
+                            {relativeTime(row.answers?.created_at || row.created_at)}
+                          </span>
+                          <button
+                            className="ob-expand-btn"
+                            onClick={() => setExpanded(open ? null : row.id)}
+                            aria-label={open ? 'Fechar respostas' : 'Ver todas as respostas'}
+                            aria-expanded={open}
+                          >
+                            {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          </button>
+                        </header>
+
+                        {chips.length > 0 && (
+                          <div className="ob-response-chips">
+                            {chips.map((c) => (
+                              <span className="ob-chip" key={c.label}>
+                                <b>{c.label}</b>
+                                {c.value}
                               </span>
-                            ) : '—'}
-                          </td>
-                          <td>
-                            {row.invites?.length ? (
-                              <div className="ob-invite-cells">
-                                {row.invites.map((iv) => (
-                                  <a
-                                    key={iv.id}
-                                    href={`https://wa.me/${iv.phone}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="ob-invite-chip"
-                                    title={`Falar com ${iv.name} no WhatsApp`}
-                                  >
-                                    {iv.name}
-                                  </a>
+                            ))}
+                          </div>
+                        )}
+
+                        {(wanted.length > 0 || used.length > 0) && (
+                          <div className="ob-response-groups">
+                            {wanted.length > 0 && (
+                              <div className="ob-group-block">
+                                <span className="ob-group-title">Quer dividir</span>
+                                {wanted.map((g) => (
+                                  <div className="ob-platform-group" key={g.key}>
+                                    <span className="ob-platform-group-label">{g.label}</span>
+                                    <div className="ob-platform-list">
+                                      {g.items.map((p) => (
+                                        <span className="ob-platform-chip" key={p.name}>
+                                          {p.icon ? (
+                                            <img src={p.icon} alt="" />
+                                          ) : (
+                                            <span className="ob-platform-initial" style={{ background: p.color || '#4F46E5' }}>
+                                              {p.name.charAt(0)}
+                                            </span>
+                                          )}
+                                          {p.name}
+                                          {p.custom && <em className="ob-custom-tag">outra</em>}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
                                 ))}
                               </div>
-                            ) : '—'}
-                          </td>
-                          <td>
-                            <button
-                              className="ob-expand-btn"
-                              onClick={() => setExpanded(expanded === row.id ? null : row.id)}
-                              aria-label={expanded === row.id ? 'Fechar respostas' : 'Ver todas as respostas'}
-                              aria-expanded={expanded === row.id}
-                            >
-                              {expanded === row.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                            </button>
-                          </td>
-                        </tr>
+                            )}
 
-                        {expanded === row.id && (
-                          <tr className="ob-detail-row">
-                            <td colSpan={SCALAR_QUESTIONS.length + 6}>
-                              <div className="ob-detail-grid">
-                                {distribution.map((q) => {
-                                  const value = row.answers?.[q.column];
-                                  const isBool = q.column === 'already_shares';
-                                  const isList = q.column === 'shares_with';
-                                  const step = ONBOARDING_STEPS.find((s) => s.column === q.column);
-
-                                  let text = '—';
-                                  if (isBool) {
-                                    text = value === true ? 'Sim' : value === false ? 'Não' : '—';
-                                  } else if (isList && Array.isArray(value) && value.length) {
-                                    text = value.map((v) => labelForValue(step, v)).join(', ');
-                                  } else if (value !== null && value !== undefined && value !== '') {
-                                    text = labelForValue(step, value);
-                                  }
-
-                                  return (
-                                    <div className="ob-detail-item" key={q.key}>
-                                      <span className="ob-detail-q">{q.title}</span>
-                                      <span className="ob-detail-a">{text}</span>
+                            {used.length > 0 && (
+                              <div className="ob-group-block">
+                                <span className="ob-group-title">Já usa</span>
+                                {used.map((g) => (
+                                  <div className="ob-platform-group" key={g.key}>
+                                    <span className="ob-platform-group-label">{g.label}</span>
+                                    <div className="ob-platform-list">
+                                      {g.items.map((p) => (
+                                        <span className="ob-platform-chip is-muted" key={p.name}>
+                                          {p.icon ? (
+                                            <img src={p.icon} alt="" />
+                                          ) : (
+                                            <span className="ob-platform-initial" style={{ background: p.color || '#64748B' }}>
+                                              {p.name.charAt(0)}
+                                            </span>
+                                          )}
+                                          {p.name}
+                                        </span>
+                                      ))}
                                     </div>
-                                  );
-                                })}
-
-                                {mine.length > 0 && (
-                                  <div className="ob-detail-item">
-                                    <span className="ob-detail-q">Plataformas que quer dividir</span>
-                                    <span className="ob-detail-a">{names.join(', ')}</span>
                                   </div>
-                                )}
-
-                                <div className="ob-detail-item">
-                                  <span className="ob-detail-q">Plataformas que já usa</span>
-                                  <span className="ob-detail-a">
-                                    {(interestsByUser[row.id]?.current || []).map((m) => m.platform_name).join(', ') || '—'}
-                                  </span>
-                                </div>
+                                ))}
                               </div>
-                            </td>
-                          </tr>
+                            )}
+                          </div>
                         )}
-                      </Fragment>
+
+                        {row.invites?.length > 0 && (
+                          <div className="ob-group-block">
+                            <span className="ob-group-title">Convidaria</span>
+                            <div className="ob-platform-list">
+                              {row.invites.map((iv) => (
+                                <a
+                                  key={iv.id}
+                                  href={`https://wa.me/${iv.phone}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="ob-invite-chip"
+                                  title={`Falar com ${iv.name} no WhatsApp`}
+                                >
+                                  {iv.name}
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {open && (
+                          <div className="ob-detail-grid">
+                            {distribution.map((q) => {
+                              const value = row.answers?.[q.column];
+                              const isBool = q.column === 'already_shares';
+                              const isList = q.column === 'shares_with';
+                              const step = ONBOARDING_STEPS.find((s) => s.column === q.column);
+
+                              let text = '—';
+                              if (isBool) {
+                                text = value === true ? 'Sim' : value === false ? 'Não' : '—';
+                              } else if (isList && Array.isArray(value) && value.length) {
+                                text = value.map((v) => labelForValue(step, v)).join(', ');
+                              } else if (value !== null && value !== undefined && value !== '') {
+                                text = labelForValue(step, value);
+                              }
+
+                              return (
+                                <div className="ob-detail-item" key={q.key}>
+                                  <span className="ob-detail-q">{q.title}</span>
+                                  <span className="ob-detail-a">{text}</span>
+                                </div>
+                              );
+                            })}
+
+                            {row.answers?.main_barrier_other && (
+                              <div className="ob-detail-item">
+                                <span className="ob-detail-q">Outra barreira</span>
+                                <span className="ob-detail-a">{row.answers.main_barrier_other}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </article>
                     );
                   })}
-                </tbody>
-              </table>
-
-              {filtered.length === 0 && (
-                <div className="empty-table"><p>Nenhum usuário encontrado.</p></div>
+                </div>
               )}
             </div>
           )}
-
           {tab === 'incomplete' && (
             <div className="admin-card table-responsive">
               <table className="history-table">
@@ -662,6 +887,25 @@ export default function OnboardingReport() {
 /** Concordância simples de número com o substantivo. */
 function plural(n, singular, pluralForm) {
   return `${n} ${n === 1 ? singular : pluralForm}`;
+}
+
+/** "agora", "3 h atrás", "12/out" — o tempo relativo sozinho perde a data. */
+function relativeTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+
+  const diff = Date.now() - d.getTime();
+  if (diff < 60000) return 'agora';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} min atrás`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)} h atrás`;
+  if (diff < 7 * 86400000) return `${Math.floor(diff / 86400000)} d atrás`;
+
+  return d.toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : '2-digit',
+  });
 }
 
 /** Rótulo legível da etapa a partir do id salvo em users.onboarding_step. */

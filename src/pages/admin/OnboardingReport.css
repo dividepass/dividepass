@@ -95,11 +95,46 @@
   gap: 0.6rem;
   flex-wrap: wrap;
   align-items: center;
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0 0 0.85rem;
 }
 
-.ob-report-toolbar .search-box { flex: 1; min-width: 200px; }
+/* Busca: estilos próprios, para não depender do .search-box de outra tela. */
+.ob-report-toolbar .search-box {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.85rem;
+}
+
+.ob-report-toolbar .search-box:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.ob-report-toolbar .search-box svg {
+  color: var(--text-soft);
+  flex-shrink: 0;
+}
+
+.ob-report-toolbar .search-box input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-size: 0.88rem;
+  font-family: inherit;
+}
+
+.ob-report-toolbar .search-box input::placeholder {
+  color: var(--text-soft);
+}
 
 .ob-report-toolbar select {
   padding: 0.5rem 0.7rem;
@@ -180,13 +215,7 @@
   background: rgba(148, 163, 184, 0.16);
   color: var(--text-muted);
   font-style: italic;
-}.ob-invite-cells {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-}
-
-.ob-invite-chip {
+}.ob-invite-chip {
   display: inline-block;
   padding: 0.18rem 0.5rem;
   border-radius: 999px;
@@ -198,6 +227,7 @@
 }
 
 .ob-invite-chip:hover { background: rgba(34, 197, 94, 0.26); }
+
 /* ═══ Gráficos de distribuição (mesmo padrão visual da pesquisa) ═══ */
 .charts-section {
   display: flex;
@@ -384,35 +414,214 @@
   line-height: 1.45;
 }
 
-/* ═══ Tabela de respostas ═══ */
+/* ═══ Lista de respostas ═══
+   Cada resposta é uma ficha, não uma linha de tabela: uma tabela de 8 colunas
+   obrigava a_admin a ler de lado para lado e escondia as plataformas — que é
+   justamente o que interessa. */
+.ob-responses {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ob-response-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.ob-response {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.85rem);
+  padding: 0.9rem 1.1rem;
+  transition: border-color 0.15s ease;
+}
+
+.ob-response:hover {
+  border-color: var(--border-strong);
+}
+
+.ob-response.is-open {
+  border-color: var(--primary);
+}
+
+.ob-response-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.ob-response-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--surface-soft, #1E293B);
+}
+
+.ob-response-avatar.is-initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  font-weight: 800;
+  font-size: 0.9rem;
+}
+
+.ob-response-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.ob-response-mail {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-response-time {
+  font-size: 0.75rem;
+  color: var(--text-soft);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Respostas curtas viram etiquetas, não colunas. */
+.ob-response-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.7rem;
+}
+
+.ob-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  font-size: 0.78rem;
+  color: var(--text-main);
+}
+
+.ob-chip b {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+}
+
+.ob-response-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+
+.ob-group-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ob-group-title {
+  font-size: 0.63rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  color: var(--text-soft);
+}
+
+.ob-platform-group {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.ob-platform-group-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 132px;
+  flex-shrink: 0;
+}
+
+.ob-platform-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.ob-platform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem 0.2rem 0.25rem;
+  border-radius: 999px;
+  background: rgba(79, 70, 229, 0.1);
+  color: var(--text-main);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ob-platform-chip.is-muted {
+  background: var(--surface-soft, #1E293B);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ob-platform-chip img,
+.ob-platform-initial {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ob-platform-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+/* Etiqueta da categoria dentro de um card que junta várias. */
+.ob-category-tag {
+  font-style: normal;
+  font-size: 0.68rem;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
 .ob-report-count {
   font-size: 0.78rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
+/* E-mail abaixo do nome — usado na aba "Abandonaram". */
 .ob-cell-sub {
   display: block;
   font-size: 0.78em;
   color: var(--text-muted);
-}
-
-.ob-interest-cell {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.35rem;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.ob-interest-cell strong {
-  color: var(--text-main);
-  font-variant-numeric: tabular-nums;
-}
-
-.ob-interest-cell em {
-  font-style: normal;
-  color: var(--text-soft);
 }
 
 .ob-expand-btn {
@@ -427,6 +636,7 @@
   color: var(--text-muted);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
 }
 
 .ob-expand-btn:hover {
@@ -435,17 +645,14 @@
   border-color: transparent;
 }
 
-/* Linha de detalhe: as respostas completas de um usuário. */
-.ob-detail-row td {
-  background: var(--surface-soft, #1E293B);
-  padding: 0;
-}
-
+/* Respostas completas de um usuário, dentro da ficha. */
 .ob-detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 0.75rem 1.5rem;
-  padding: 1rem 1.25rem;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
 }
 
 .ob-detail-item {
@@ -465,4 +672,10 @@
   font-size: 0.88rem;
   font-weight: 600;
   color: var(--text-main);
+}
+
+@media (max-width: 640px) {
+  .ob-platform-group-label {
+    min-width: 100%;
+  }
 }
