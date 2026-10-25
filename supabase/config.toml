@@ -43,6 +43,26 @@ entrypoint = "./functions/process-overdue-invoices/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/process-overdue-invoices/*.html" ]
 
+# ---------------------------------------------------------------------------
+# CRON -> EDGE FUNCTION (pg_cron + pg_net)
+#
+# O pg_cron dispara a função com `Authorization: Bearer <segredo>`, e o
+# segredo guardado em app_settings NAO e um JWT. Com verify_jwt = true (padrao)
+# o gateway do Supabase responde 401 UNAUTHORIZED_INVALID_JWT_FORMAT ANTES do
+# codigo rodar — a funcao nunca executa e nenhuma cobranca recorrente acontece.
+#
+# A validacao real acontece dentro da propria funcao (ela aceita o segredo de
+# app_settings OU o SERVICE_ROLE_KEY). Manter verify_jwt = false aqui e o que
+# impede que um redeploy reabra esse bug — que ja aconteceu uma vez.
+# ---------------------------------------------------------------------------
+[functions.process-recurring-billing]
+enabled = true
+verify_jwt = false
+
+[functions.update-subscription-statuses]
+enabled = true
+verify_jwt = false
+
 [functions.admin-update-user]
 enabled = true
 verify_jwt = false
