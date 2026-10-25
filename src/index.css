@@ -73,6 +73,18 @@
   --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.12);
 }
 
+/* ===== Aliases de tokens legados =====
+   Varias paginas ainda referenciam `--text-primary`, `--text-secondary`,
+   `--bg-primary` e `--accent-primary`. Sem estas definicoes o `var()` fica
+   invalido e o navegador descarta a regra inteira — o texto herda a cor do
+   pai e o input fica sem fundo (vale para o modal de cartao). */
+:root {
+  --text-primary: var(--text-main);
+  --text-secondary: var(--text-muted);
+  --bg-primary: var(--background);
+  --accent-primary: var(--primary);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

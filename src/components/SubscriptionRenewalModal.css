@@ -215,6 +215,73 @@
   color: var(--text-soft);
 }
 
+/* ---------------------- cartão: cadastrar / trocar ------------------------ */
+.ren-cards-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.85rem 0.9rem;
+  border-radius: 0.65rem;
+  border: 1px dashed var(--border-strong);
+  background: var(--surface-soft, rgba(148, 163, 184, 0.07));
+}
+
+.ren-cards-empty .ren-hint {
+  line-height: 1.45;
+}
+
+/* Botao proprio (sem `.btn`) para nao herdar as regras globais de `.btn-outline`
+   que conflitam entre as paginas do app. */
+.ren-add-card-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--primary);
+  background: rgba(79, 70, 229, 0.12);
+  color: var(--primary);
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.ren-add-card-btn:hover:not(:disabled) {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #FFFFFF;
+}
+
+.ren-add-card-btn.is-secondary {
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.ren-add-card-btn.is-secondary:hover:not(:disabled) {
+  background: rgba(79, 70, 229, 0.1);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.ren-add-card-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* O modal de cadastro de cartao abre por cima do modal de renovacao. Os dois
+   overlays usam o mesmo z-index, entao o bump garante a ordem independente
+   do contexto de empilhamento. */
+.ren-modal-overlay ~ .wallet-modal-overlay {
+  z-index: 1100;
+}
+
 /* ------------------------------- resumo ---------------------------------- */
 .ren-summary {
   display: grid;
@@ -355,6 +422,125 @@
   background: var(--primary);
   border-color: var(--primary);
   color: #FFFFFF;
+}
+
+/* ---------------------------------------------------------------------------
+   Ciclo de pagamento + cupom (renovacao)
+
+   O ciclo ja vem marcado no ciclo que a pessoa tinha na assinatura, e o
+   total exibido e "preco mensal x meses do ciclo" — o preco do ciclo
+   aparece sempre, para ninguem confundir o valor mensal com o total.
+   --------------------------------------------------------------------------- */
+.ren-block-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.ren-cycle-block,
+.ren-coupon-block {
+  margin-top: 1rem;
+}
+
+.ren-cycle-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ren-cycle-option {
+  flex: 1 1 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-main);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ren-cycle-option strong {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.ren-cycle-option small {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.ren-cycle-option:hover {
+  border-color: var(--primary);
+}
+
+.ren-cycle-option.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.ren-coupon-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ren-coupon-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+.ren-coupon-row input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.ren-coupon-ok,
+.ren-coupon-error {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.45rem 0 0;
+  font-size: 0.78rem;
+}
+
+.ren-coupon-ok {
+  color: var(--success, #22c55e);
+}
+
+.ren-coupon-error {
+  color: var(--danger, #ef4444);
+}
+
+.ren-summary-discount {
+  color: var(--success, #22c55e);
+}
+
+.ren-summary-total-label {
+  margin-top: 0.35rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border-strong);
+  font-weight: 600;
+  color: var(--text-main) !important;
+}
+
+.ren-summary-total {
+  font-size: 1.05rem;
+  font-weight: 700;
 }
 
 @media (max-width: 520px) {

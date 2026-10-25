@@ -1,231 +1,340 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, Edit2, XCircle, Loader2, Calendar, DollarSign, RefreshCw, Shield, Eye, X, CreditCard, Hash, Clock, Tag, TrendingUp, AlertCircle } from 'lucide-react';
+import {
+  Search, Filter, Edit2, XCircle, Loader2, Calendar, DollarSign, RefreshCw,
+  Shield, Eye, X, CreditCard, Hash, Clock, Tag, TrendingUp, AlertCircle,
+  ChevronLeft, ChevronRight, AlertTriangle,
+} from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { isSubscriptionOverdue } from '../../lib/subscriptionAccess';
+import { formatDateBR } from '../../lib/dateFormat';
+import {
+  RENEWAL_WINDOW_LABELS,
+  RENEWAL_WINDOW_SHORT_LABELS,
+  getRenewalWindows,
+  matchesRenewalWindow,
+  renewalWindowRange,
+} from '../../lib/subscriptionWindows';
+import { cycleFullLabel, cycleLabel, cycleMonths, monthlyEquivalent } from '../../lib/subscriptionCycles';
 import './Subscriptions.css';
 
 const STATUS_OPTIONS = ['active', 'inactive', 'cancelled', 'expired', 'pending'];
 const CYCLE_OPTIONS = ['monthly', 'quarterly', 'semiannual', 'annual', 'days'];
+const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
-// Quantos meses cada periodicidade representa
-const CYCLE_MONTHS = {
-  monthly: 1,
-  quarterly: 3,
-  semiannual: 6,
-  annual: 12,
-  days: 0, // especial, usa custom_cycle_days
+// Limites de leitura: a tela nunca baixa a tabela inteira.
+const MODAL_LIST_LIMIT = 200;
+const AGGREGATE_LIMIT = 5000;
+const SEARCH_ID_LIMIT = 200;
+const EMPTY_UUID = '00000000-0000-0000-0000-000000000000';
+
+const TABLE_SELECT = `
+  *,
+  user:user_id (id, name, email),
+  group:group_id (id, name, slug),
+  service:service_id (id, name, full_name),
+  coupon:coupon_id (id, code, discount_type, discount_value)
+`;
+
+// Filtro de renovação da tabela -> chave da janela compartilhada.
+const RENEWAL_FILTER_WINDOWS = {
+  this_month: 'thisMonth',
+  next_7: 'next7',
+  next_30: 'next30',
+  next_60: 'next60',
 };
+
+const statusLabel = (status) => ({
+  active: 'Ativa',
+  inactive: 'Inativa',
+  cancelled: 'Cancelada',
+  expired: 'Expirada',
+  pending: 'Pendente',
+  overdue: 'Atrasada',
+  first_attempt: 'Primeira tentativa',
+}[status] || status || '—');
+
+const paymentStatusLabel = (s) => ({
+  paid: 'Pago', pending: 'Pendente', failed: 'Falhou', cancelled: 'Cancelado',
+  approved: 'Aprovado', processing: 'Processando', authorized: 'Autorizado',
+  refunded: 'Reembolsado', disputed: 'Em disputa',
+}[s] || s || '—');
+
+const paymentStatusClass = (s) => {
+  if (['paid', 'approved', 'authorized', 'completed', 'captured', 'confirmed', 'settled'].includes(s)) return 'active';
+  if (['pending', 'processing', 'waiting'].includes(s)) return 'pending';
+  if (['failed', 'cancelled', 'refunded', 'disputed', 'error'].includes(s)) return 'cancelled';
+  return 'inactive';
+};
+
+/**
+ * "Vencida" no servidor, espelhando `isSubscriptionOverdue`:
+ * assinatura não cancelada com `next_charge_at` (ou `expires_at`, quando não
+ * há próxima cobrança) no passado.
+ */
+function overdueServerFilter(nowIso) {
+  return [
+    `and(next_charge_at.not.is.null,next_charge_at.lt.${nowIso})`,
+    `and(next_charge_at.is.null,expires_at.lt.${nowIso})`,
+  ].join(',');
+}
+
+/** "Vencida" ou "em retry" — o que está quebrado e precisa de atenção. */
+function attentionServerFilter(nowIso) {
+  return `${overdueServerFilter(nowIso)},billing_status.eq.retrying`;
+}
+
+/** Limpa o termo de busca: vírgula/ponto quebram a sintaxe do filtro .or(). */
+function sanitizeSearch(value) {
+  return String(value || '')
+    .replace(/[,().:*%'"\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function firstError(...results) {
+  for (const result of results) {
+    if (result?.error) return result.error;
+  }
+  return null;
+}
+
+/**
+ * Resolve o termo de busca em ids. O PostgREST não aceita `or()` no nível
+ * de cima misturando colunas de tabelas embutidas (`user.name`, `group.name`),
+ * então a busca acontece por id e a assinatura é filtrada por `in`.
+ */
+async function resolveSearchIds(term) {
+  const clean = sanitizeSearch(term);
+  if (!clean) return null;
+
+  const pattern = `%${clean}%`;
+  const [usersRes, servicesRes, groupsRes] = await Promise.all([
+    supabase.from('users').select('id').or(`name.ilike.${pattern},email.ilike.${pattern}`).limit(SEARCH_ID_LIMIT),
+    supabase.from('streaming_services').select('id').ilike('name', pattern).limit(SEARCH_ID_LIMIT),
+    supabase.from('groups').select('id').ilike('name', pattern).limit(SEARCH_ID_LIMIT),
+  ]);
+
+  const error = firstError(usersRes, servicesRes, groupsRes);
+  if (error) throw error;
+
+  return {
+    userIds: (usersRes.data || []).map((u) => u.id),
+    serviceIds: (servicesRes.data || []).map((s) => s.id),
+    groupIds: (groupsRes.data || []).map((g) => g.id),
+  };
+}
 
 function Subscriptions() {
   const navigate = useNavigate();
-  const [subscriptions, setSubscriptions] = useState([]);
-  const [payments, setPayments] = useState([]);
-  const [loading, setLoading] = useState(true);
+
+  // ─────────────────────────────────── filtros e paginação (tudo no servidor)
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [cycleFilter, setCycleFilter] = useState('all');
   const [renewalFilter, setRenewalFilter] = useState('all');
-  const [error, setError] = useState('');
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [refreshKey, setRefreshKey] = useState(0);
 
+  // ─────────────────────────────────── dados
+  const [rows, setRows] = useState([]);
+  const [totalRows, setTotalRows] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const [stats, setStats] = useState({
+    totalCount: 0,
+    activeCount: 0,
+    receivedAmount: 0,
+    mrr: 0,
+    attentionCount: 0,
+    cancelledCount: 0,
+    windowCounts: { next7: 0, next30: 0, next60: 0 },
+    receivedTruncated: false,
+    mrrTruncated: false,
+  });
+
+  // ─────────────────────────────────── modais
   const [detailSub, setDetailSub] = useState(null);
   const [detailPayments, setDetailPayments] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailBillingCycles, setDetailBillingCycles] = useState([]);
   const [selectedPayment, setSelectedPayment] = useState(null);
 
-  // Modal de detalhamento dos cards de receita
-  const [statDetailModal, setStatDetailModal] = useState(null); // 'received' | 'monthly' | 'thisMonth' | 'next7' | 'next30' | 'next60'
+  const [statDetailModal, setStatDetailModal] = useState(null);
   const [statDetailData, setStatDetailData] = useState([]);
+  const [statDetailLoading, setStatDetailLoading] = useState(false);
 
+  // A página exibida é sempre a última disponível: se o total encolheu (um
+  // registro foi cancelado), a tabela volta para uma página que ainda existe.
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = totalRows > 0 ? Math.min(page, totalPages - 1) : 0;
+  const from = totalRows === 0 ? 0 : currentPage * pageSize + 1;
+  const to = Math.min(totalRows, (currentPage + 1) * pageSize);
+
+  // A busca só vai para o servidor depois de um tempo de pausa: evita uma
+  // query por tecla digitada.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput);
+      setPage(0);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // ─────────────────────────────────── tabela (paginada no servidor)
   useEffect(() => {
     let cancelled = false;
 
-    const fetchData = async () => {
-      if (!cancelled) {
-        setLoading(true);
-        setError('');
-      }
+    const fetchRows = async () => {
+      setLoading(true);
+      setError('');
       try {
-        const [subsRes, paymentsRes] = await Promise.all([
-          supabase
-            .from('user_subscriptions')
-            .select(`
-              *,
-              user:user_id (id, name, email),
-              group:group_id (id, name, slug),
-              service:service_id (id, name, full_name),
-              coupon:coupon_id (id, code, discount_type, discount_value)
-            `)
-            .order('created_at', { ascending: false }),
-          supabase
-            .from('payments')
-            .select('*')
-            .eq('status', 'paid')
-            .eq('payment_type', 'subscription')
-            .order('created_at', { ascending: false }),
-        ]);
+        let query = supabase
+          .from('user_subscriptions')
+          .select(TABLE_SELECT, { count: 'exact' })
+          .order('created_at', { ascending: false });
 
-        if (subsRes.error) throw subsRes.error;
-        if (!cancelled) {
-          setSubscriptions(subsRes.data || []);
-          setPayments(paymentsRes.data || []);
+        if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+        if (cycleFilter !== 'all') query = query.eq('billing_cycle', cycleFilter);
+
+        const now = new Date();
+        if (renewalFilter === 'overdue') {
+          query = query
+            .neq('status', 'cancelled')
+            .or(overdueServerFilter(now.toISOString()));
+        } else if (renewalFilter !== 'all') {
+          const range = renewalWindowRange(RENEWAL_FILTER_WINDOWS[renewalFilter], now);
+          if (range) {
+            query = query.gt('next_charge_at', range.startIso).lte('next_charge_at', range.endIso);
+          }
         }
+
+        const ids = await resolveSearchIds(search);
+        if (ids) {
+          const branches = [];
+          if (ids.userIds.length) branches.push(`user_id.in.(${ids.userIds.join(',')})`);
+          if (ids.serviceIds.length) branches.push(`service_id.in.(${ids.serviceIds.join(',')})`);
+          if (ids.groupIds.length) branches.push(`group_id.in.(${ids.groupIds.join(',')})`);
+
+          query = branches.length
+            ? query.or(branches.join(','))
+            : query.eq('id', EMPTY_UUID);
+        }
+
+        const from = currentPage * pageSize;
+        const { data, count, error: queryError } = await query.range(from, from + pageSize - 1);
+        if (queryError) throw queryError;
+        if (cancelled) return;
+
+        setRows(data || []);
+        setTotalRows(count || 0);
+        setNotice(
+          ids && (ids.userIds.length === SEARCH_ID_LIMIT
+            || ids.serviceIds.length === SEARCH_ID_LIMIT
+            || ids.groupIds.length === SEARCH_ID_LIMIT)
+            ? 'Busca parcial: há mais resultados do que os 200 primeiros de cada tipo. Refine o termo.'
+            : ''
+        );
       } catch (err) {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setError('Erro ao carregar as assinaturas: ' + (err.message || err));
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
 
-    fetchData();
+    fetchRows();
+    return () => { cancelled = true; };
+  }, [statusFilter, cycleFilter, renewalFilter, search, currentPage, pageSize, refreshKey]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // ─────────────────────────────────── indicadores (contagens + agregados)
+  useEffect(() => {
+    let cancelled = false;
 
-  // Receita recebida este mês (pagamentos com data no mês atual)
-  const receivedThisMonth = useMemo(() => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    const fetchStats = async () => {
+      setStatsLoading(true);
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+      const windows = getRenewalWindows(now);
 
-    return payments
-      .filter(p => {
-        const date = new Date(p.created_at);
-        return date >= startOfMonth && date <= endOfMonth;
-      })
-      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  }, [payments]);
+      const countOf = (apply) =>
+        apply(supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }));
 
-  // Receita mensal equivalente (soma de todas as ativas normalizada para mensal)
-  const monthlyEquivalent = useMemo(() => {
-    return subscriptions
-      .filter(s => s.status === 'active')
-      .reduce((sum, s) => {
-        const cycle = s.billing_cycle || 'monthly';
-        const months = CYCLE_MONTHS[cycle];
-        const amount = Number(s.amount || 0);
+      const windowCount = (key) => {
+        const window = windows[key];
+        return countOf((q) => q
+          .eq('status', 'active')
+          .gt('next_charge_at', window.start.toISOString())
+          .lte('next_charge_at', window.end.toISOString()));
+      };
 
-        if (months && months > 0) {
-          // Normalizar para mensal
-          return sum + (amount / months);
-        } else if (cycle === 'days' && s.custom_cycle_days) {
-          // custom_days: converter para mensal (30 dias)
-          return sum + (amount / s.custom_cycle_days * 30);
-        }
-        // mensal ou desconhecido
-        return sum + amount;
-      }, 0);
-  }, [subscriptions]);
+      try {
+        const [
+          totalRes, activeRes, cancelledRes, attentionRes,
+          receivedRes, mrrRes,
+          w7Res, w30Res, w60Res,
+        ] = await Promise.all([
+          countOf((q) => q),
+          countOf((q) => q.eq('status', 'active')),
+          countOf((q) => q.in('status', ['cancelled', 'expired'])),
+          countOf((q) => q.neq('status', 'cancelled').or(attentionServerFilter(nowIso))),
+          // Agregados: uma coluna só e janela do mês — não baixa a tabela.
+          supabase.from('payments').select('amount', { count: 'exact' })
+            .eq('status', 'paid').eq('payment_type', 'subscription')
+            .gte('created_at', monthStart).lte('created_at', monthEnd).limit(AGGREGATE_LIMIT),
+          supabase.from('user_subscriptions')
+            .select('amount, billing_cycle, custom_cycle_days, custom_cycle_months', { count: 'exact' })
+            .eq('status', 'active').limit(AGGREGATE_LIMIT),
+          windowCount('next7'),
+          windowCount('next30'),
+          windowCount('next60'),
+        ]);
 
-  // Próximas renovações
-  const renewalStats = useMemo(() => {
-    const now = new Date();
-    const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const sixtyDays = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        const statsError = firstError(totalRes, activeRes, cancelledRes, attentionRes, receivedRes, mrrRes, w7Res, w30Res, w60Res);
+        if (statsError) throw statsError;
+        if (cancelled) return;
 
-    const active = subscriptions.filter(s => s.status === 'active' && s.next_charge_at);
+        const receivedAmount = (receivedRes.data || [])
+          .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        const mrr = (mrrRes.data || [])
+          .reduce((sum, s) => sum + monthlyEquivalent(s), 0);
 
-    const thisMonth = active.filter(s => {
-      const nextCharge = new Date(s.next_charge_at);
-      return nextCharge <= endOfMonth;
-    });
-
-    const next7Days = active.filter(s => {
-      const nextCharge = new Date(s.next_charge_at);
-      return nextCharge > now && nextCharge <= sevenDays;
-    });
-
-    const next30Days = active.filter(s => {
-      const nextCharge = new Date(s.next_charge_at);
-      return nextCharge > now && nextCharge <= thirtyDays;
-    });
-
-    const next60Days = active.filter(s => {
-      const nextCharge = new Date(s.next_charge_at);
-      return nextCharge > thirtyDays && nextCharge <= sixtyDays;
-    });
-
-    // Equivalente mensal: normaliza ciclos maiores (trimestral, anual...) por mês,
-// para o total ser comparável entre assinaturas de ciclos diferentes.
-    const calcRevenue = (subs) => subs.reduce((sum, s) => {
-      const cycle = s.billing_cycle || 'monthly';
-      const months = CYCLE_MONTHS[cycle];
-      const amount = Number(s.amount || 0);
-
-      if (months && months > 0) {
-        return sum + (amount / months);
-      } else if (cycle === 'days' && s.custom_cycle_days) {
-        return sum + (amount / s.custom_cycle_days * 30);
+        setStats({
+          totalCount: totalRes.count || 0,
+          activeCount: activeRes.count || 0,
+          receivedAmount,
+          mrr,
+          attentionCount: attentionRes.count || 0,
+          cancelledCount: cancelledRes.count || 0,
+          windowCounts: {
+            next7: w7Res.count || 0,
+            next30: w30Res.count || 0,
+            next60: w60Res.count || 0,
+          },
+          receivedTruncated: (receivedRes.count || 0) > (receivedRes.data || []).length,
+          mrrTruncated: (mrrRes.count || 0) > (mrrRes.data || []).length,
+        });
+      } catch (err) {
+        if (!cancelled) setError('Erro ao carregar os indicadores: ' + (err.message || err));
+      } finally {
+        if (!cancelled) setStatsLoading(false);
       }
-      return sum + amount;
-    }, 0);
-
-    // Valor real que sai do cartão na cobrança: soma os valores de cada ciclo,
-    // sem normalizar. É o número que o usuário vai ver na fatura.
-    const calcCycleTotal = (subs) =>
-      subs.reduce((sum, s) => sum + (Number(s.amount || 0)), 0);
-
-    const buildStat = (list) => ({
-      count: list.length,
-      revenue: calcRevenue(list),
-      cycleTotal: calcCycleTotal(list),
-    });
-
-    return {
-      thisMonth: buildStat(thisMonth),
-      next7Days: buildStat(next7Days),
-      next30Days: buildStat(next30Days),
-      next60Days: buildStat(next60Days),
     };
-  }, [subscriptions]);
 
-  const filtered = useMemo(() => {
-    return subscriptions.filter(sub => {
-      // Busca
-      const matchesSearch =
-        !search ||
-        sub.user?.name?.toLowerCase().includes(search.toLowerCase()) ||
-        sub.user?.email?.toLowerCase().includes(search.toLowerCase()) ||
-        sub.service?.name?.toLowerCase().includes(search.toLowerCase()) ||
-        sub.group?.name?.toLowerCase().includes(search.toLowerCase()) ||
-        sub.external_reference?.toLowerCase().includes(search.toLowerCase());
+    fetchStats();
+    return () => { cancelled = true; };
+  }, [refreshKey]);
 
-      // Status
-      const matchesStatus = statusFilter === 'all' || sub.status === statusFilter;
-
-      // Periodicidade
-      const matchesCycle = cycleFilter === 'all' || sub.billing_cycle === cycleFilter;
-
-      // Renovação
-      let matchesRenewal = true;
-      if (renewalFilter !== 'all') {
-        const now = new Date();
-        const nextCharge = sub.next_charge_at ? new Date(sub.next_charge_at) : null;
-
-        if (renewalFilter === 'this_month') {
-          const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-          matchesRenewal = nextCharge && nextCharge <= endOfMonth;
-        } else if (renewalFilter === 'next_7') {
-          const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-          matchesRenewal = nextCharge && nextCharge > now && nextCharge <= sevenDays;
-        } else if (renewalFilter === 'next_30') {
-          const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-          const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-          matchesRenewal = nextCharge && nextCharge > sevenDays && nextCharge <= thirtyDays;
-        } else if (renewalFilter === 'next_60') {
-          const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-          const sixtyDays = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
-          matchesRenewal = nextCharge && nextCharge > thirtyDays && nextCharge <= sixtyDays;
-        }
-      }
-
-      return matchesSearch && matchesStatus && matchesCycle && matchesRenewal;
-    });
-  }, [subscriptions, search, statusFilter, cycleFilter, renewalFilter]);
+  const handleFilter = (setter, value) => {
+    setter(value);
+    setPage(0);
+  };
 
   const handleCancel = async (sub) => {
     if (!window.confirm(`Cancelar assinatura de ${sub.user?.name} no grupo ${sub.group?.name}?`)) return;
@@ -237,7 +346,6 @@ function Subscriptions() {
         .from('user_subscriptions')
         .update({ status: 'cancelled', updated_at: now })
         .eq('id', sub.id);
-
       if (subError) throw subError;
 
       const { error: memberError } = await supabase
@@ -245,14 +353,12 @@ function Subscriptions() {
         .update({ status: 'inactive', left_at: now })
         .eq('group_id', sub.group_id)
         .eq('user_id', sub.user_id);
-
       if (memberError) throw memberError;
 
-      setSubscriptions(prev =>
-        prev.map(s => s.id === sub.id ? { ...s, status: 'cancelled', updated_at: now } : s)
-      );
+      setRows((prev) => prev.map((s) => (s.id === sub.id ? { ...s, status: 'cancelled', updated_at: now } : s)));
+      setRefreshKey((key) => key + 1);
     } catch (err) {
-      setError('Erro ao cancelar: ' + err.message);
+      setError('Erro ao cancelar: ' + (err.message || err));
     }
   };
 
@@ -263,32 +369,33 @@ function Subscriptions() {
     setDetailBillingCycles([]);
 
     try {
-      const [paymentsRes, cyclesRes, attemptsRes] = await Promise.all([
-        supabase
-          .from('payments')
-          .select('*')
-          .eq('user_id', sub.user_id)
-          .eq('group_id', sub.group_id)
-          .order('created_at', { ascending: false })
-          .limit(50),
-        supabase
-          .from('billing_cycles')
-          .select('*')
+      const [paymentsRes, subPaymentsRes, cyclesRes, attemptsRes] = await Promise.all([
+        supabase.from('payments').select('*')
+          .eq('user_id', sub.user_id).eq('group_id', sub.group_id)
+          .order('created_at', { ascending: false }).limit(50),
+        // Pagamentos vinculados pela assinatura: sobrevivem a uma transferência
+        // de grupo (o pagamento continua no grupo antigo, mas a assinatura já
+        // aponta para o novo).
+        supabase.from('payments').select('*')
           .eq('subscription_id', sub.id)
-          .order('charge_date', { ascending: false })
-          .limit(50),
-        supabase
-          .from('payment_attempts')
-          .select('*')
-          .eq('user_id', sub.user_id)
-          .eq('group_id', sub.group_id)
-          .order('created_at', { ascending: false })
-          .limit(50),
+          .order('created_at', { ascending: false }).limit(50),
+        supabase.from('billing_cycles').select('*')
+          .eq('subscription_id', sub.id)
+          .order('charge_date', { ascending: false }).limit(50),
+        supabase.from('payment_attempts').select('*')
+          .eq('user_id', sub.user_id).eq('group_id', sub.group_id)
+          .order('created_at', { ascending: false }).limit(50),
       ]);
 
+      const detailError = firstError(paymentsRes, subPaymentsRes, cyclesRes, attemptsRes);
+      if (detailError) throw detailError;
+
       const allPayments = [...(paymentsRes.data || [])];
+      for (const p of (subPaymentsRes.data || [])) {
+        if (!allPayments.find((x) => x.id === p.id)) allPayments.push(p);
+      }
       for (const attempt of (attemptsRes.data || [])) {
-        if (!allPayments.find(p => p.transaction_code === attempt.gateway_transaction_id)) {
+        if (!allPayments.find((p) => p.transaction_code === attempt.gateway_transaction_id)) {
           allPayments.push({
             id: attempt.id,
             created_at: attempt.created_at,
@@ -306,199 +413,138 @@ function Subscriptions() {
       setDetailPayments(allPayments);
       setDetailBillingCycles(cyclesRes.data || []);
     } catch (err) {
-      console.error('Detail fetch error:', err);
+      setError('Erro ao carregar o histórico da assinatura: ' + (err.message || err));
     } finally {
       setDetailLoading(false);
     }
   };
 
-  const openStatDetail = (type) => {
-    setStatDetailModal(type);
+  /** Linha do painel de detalhes (modal dos cards). */
+  const toStatRow = useCallback((sub) => ({
+    id: sub.id,
+    type: 'subscription',
+    subId: sub.id,
+    sub,
+    userId: sub.user_id,
+    groupId: sub.group_id,
+    userName: sub.user?.name || '—',
+    userEmail: sub.user?.email || '—',
+    serviceName: sub.service?.name || '—',
+    groupName: sub.group?.name || '—',
+    amount: Number(sub.amount || 0),
+    totalAmount: Number(sub.amount || 0),
+    monthly: monthlyEquivalent(sub),
+    cycleLabel: cycleFullLabel(sub),
+    nextCharge: sub.next_charge_at,
+    status: sub.status,
+    overdue: isSubscriptionOverdue(sub),
+    retrying: sub.billing_status === 'retrying',
+  }), []);
+
+  /** Lista do modal: uma query por tipo, sempre limitada. */
+  const fetchStatList = useCallback(async (type) => {
+    const now = new Date();
+    const nowIso = now.toISOString();
 
     if (type === 'received') {
-      // Pagamentos do mês atual
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
 
-      const data = payments
-        .filter(p => {
-          const date = new Date(p.created_at);
-          return date >= startOfMonth && date <= endOfMonth;
-        })
-        .map(p => {
-          const sub = subscriptions.find(s =>
-            s.user_id === p.user_id && s.group_id === p.group_id
-          ) || {};
-          return {
-            userName: sub.user?.name || '—',
-            userEmail: sub.user?.email || '—',
-            serviceName: sub.service?.name || '—',
-            groupName: sub.group?.name || '—',
-            amount: Number(p.amount || 0),
-            date: p.created_at,
-            status: p.status,
-            type: 'payment',
-          };
-        })
-        .sort((a, b) => new Date(b.date) - new Date(a.date));
-      setStatDetailData(data);
-    } else if (type === 'monthly') {
-      // Assinaturas ativas
-      const data = subscriptions
-        .filter(s => s.status === 'active')
-        .map(s => {
-          const cycle = s.billing_cycle || 'monthly';
-          const months = CYCLE_MONTHS[cycle];
-          const amount = Number(s.amount || 0);
-          let monthlyAmount = amount;
-          if (months && months > 0) monthlyAmount = amount / months;
-          else if (cycle === 'days' && s.custom_cycle_days) monthlyAmount = amount / s.custom_cycle_days * 30;
+      const { data, error } = await supabase.from('payments')
+        .select(`
+          id, amount, created_at, status, gateway, method, payment_type,
+          user:user_id (id, name, email),
+          group:group_id (id, name, service:service_id (id, name))
+        `)
+        .eq('status', 'paid').eq('payment_type', 'subscription')
+        .gte('created_at', monthStart).lte('created_at', monthEnd)
+        .order('created_at', { ascending: false }).limit(MODAL_LIST_LIMIT);
+      if (error) throw error;
 
-          return {
-            userName: s.user?.name || '—',
-            userEmail: s.user?.email || '—',
-            serviceName: s.service?.name || '—',
-            groupName: s.group?.name || '—',
-            amount: monthlyAmount,
-            totalAmount: amount,
-            cycle: cycle,
-            cycleLabel: cycleLabel(cycle),
-            status: s.status,
-            nextCharge: s.next_charge_at,
-            type: 'subscription',
-          };
-        })
-        .sort((a, b) => b.amount - a.amount);
-      setStatDetailData(data);
+      return (data || []).map((p) => ({
+        id: p.id,
+        type: 'payment',
+        userName: p.user?.name || '—',
+        userEmail: p.user?.email || '—',
+        serviceName: p.group?.service?.name || '—',
+        groupName: p.group?.name || '—',
+        amount: Number(p.amount || 0),
+        totalAmount: Number(p.amount || 0),
+        monthly: null,
+        date: p.created_at,
+        status: p.status,
+      }));
+    }
+
+    let query = supabase.from('user_subscriptions').select(TABLE_SELECT).limit(MODAL_LIST_LIMIT);
+
+    if (type === 'active') {
+      query = query.eq('status', 'active').order('created_at', { ascending: false });
+    } else if (type === 'mrr') {
+      query = query.eq('status', 'active').order('amount', { ascending: false });
+    } else if (type === 'cancelled') {
+      query = query.in('status', ['cancelled', 'expired']).order('updated_at', { ascending: false });
+    } else if (type === 'attention') {
+      query = query.neq('status', 'cancelled')
+        .or(attentionServerFilter(nowIso))
+        .order('next_charge_at', { ascending: true });
     } else {
-      // Renovações: thisMonth, next7, next30, next60
-      const now = new Date();
-      const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const thirtyDays = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-      const sixtyDays = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      // Janela de renovação: mesmos limites da definição compartilhada.
+      const range = renewalWindowRange(type, now);
+      query = query.eq('status', 'active')
+        .gt('next_charge_at', range.startIso)
+        .lte('next_charge_at', range.endIso)
+        .order('next_charge_at', { ascending: true });
+    }
 
-      const active = subscriptions.filter(s => s.status === 'active' && s.next_charge_at);
-      let filtered = [];
+    const { data, error } = await query;
+    if (error) throw error;
 
-      if (type === 'thisMonth') {
-        filtered = active.filter(s => {
-          const nextCharge = new Date(s.next_charge_at);
-          return nextCharge <= endOfMonth;
-        });
-      } else if (type === 'next7') {
-        filtered = active.filter(s => {
-          const nextCharge = new Date(s.next_charge_at);
-          return nextCharge > now && nextCharge <= sevenDays;
-        });
-      } else if (type === 'next30') {
-        filtered = active.filter(s => {
-          const nextCharge = new Date(s.next_charge_at);
-          return nextCharge > sevenDays && nextCharge <= thirtyDays;
-        });
-      } else if (type === 'next60') {
-        filtered = active.filter(s => {
-          const nextCharge = new Date(s.next_charge_at);
-          return nextCharge > thirtyDays && nextCharge <= sixtyDays;
-        });
-      }
+    // A mesma janela compartilhada decide a lista final (filtro do servidor e
+    // filtro do cliente não podem divergir).
+    const rows = (data || []).filter(
+      (sub) => type === 'next7' || type === 'next30' || type === 'next60' || type === 'thisMonth'
+        ? matchesRenewalWindow(sub, type, now)
+        : true
+    );
 
-      const data = filtered.map(s => {
-        const cycle = s.billing_cycle || 'monthly';
-        const months = CYCLE_MONTHS[cycle];
-        const amount = Number(s.amount || 0);
-        let monthlyAmount = amount;
-        if (months && months > 0) monthlyAmount = amount / months;
-        else if (cycle === 'days' && s.custom_cycle_days) monthlyAmount = amount / s.custom_cycle_days * 30;
+    return rows.map((sub) => toStatRow(sub));
+  }, [toStatRow]);
 
-        return {
-          userName: s.user?.name || '—',
-          userEmail: s.user?.email || '—',
-          serviceName: s.service?.name || '—',
-          groupName: s.group?.name || '—',
-          amount: monthlyAmount,
-          totalAmount: amount,
-          cycle: cycle,
-          cycleLabel: cycleLabel(cycle),
-          nextCharge: s.next_charge_at,
-          status: s.status,
-          subId: s.id,
-          userId: s.user_id,
-          groupId: s.group_id,
-          type: 'renewal',
-        };
-      }).sort((a, b) => new Date(a.nextCharge) - new Date(b.nextCharge));
-
-      setStatDetailData(data);
+  const openStatDetail = async (type) => {
+    setStatDetailModal(type);
+    setStatDetailData([]);
+    setStatDetailLoading(true);
+    try {
+      setStatDetailData(await fetchStatList(type));
+    } catch (err) {
+      setError('Erro ao carregar a lista do painel: ' + (err.message || err));
+      setStatDetailModal(null);
+    } finally {
+      setStatDetailLoading(false);
     }
   };
 
-  const statDetailTitle = () => {
-    switch (statDetailModal) {
-      case 'received': return 'Receita recebida este mês';
-      case 'monthly': return 'Receita mensal equivalente';
-      case 'thisMonth': return 'Assinaturas que vencem este mês';
-      case 'next7': return 'Assinaturas nos próximos 7 dias';
-      case 'next30': return 'Assinaturas nos próximos 30 dias';
-      case 'next60': return 'Assinaturas nos próximos 60 dias';
-      default: return 'Detalhes';
-    }
-  };
+  const statDetailTitle = () => ({
+    active: 'Assinaturas ativas',
+    received: 'Receita recebida no mês',
+    mrr: 'Receita mensal equivalente (MRR)',
+    attention: 'Precisam de atenção (vencidas + em retry)',
+    cancelled: 'Canceladas / expiradas',
+    next7: RENEWAL_WINDOW_LABELS.next7,
+    next30: RENEWAL_WINDOW_LABELS.next30,
+    next60: RENEWAL_WINDOW_LABELS.next60,
+    thisMonth: RENEWAL_WINDOW_LABELS.thisMonth,
+  }[statDetailModal] || 'Detalhes');
 
+  // No MRR o total é a soma mensal; nos demais, o total do ciclo.
   const statDetailTotal = () => {
     if (!statDetailData.length) return 0;
-    return statDetailData.reduce((sum, d) => sum + d.amount, 0);
+    const useMonthly = statDetailModal === 'mrr';
+    return statDetailData.reduce((sum, item) => sum + (useMonthly ? item.monthly : item.totalAmount), 0);
   };
 
-  const statusLabel = (status) => ({
-    active: 'Ativa',
-    inactive: 'Inativa',
-    cancelled: 'Cancelada',
-    expired: 'Expirada',
-    pending: 'Pendente',
-  }[status] || status);
-
-  const cycleLabel = (cycle) => ({
-    monthly: 'Mensal',
-    quarterly: 'Trimestral',
-    semiannual: 'Semestral',
-    annual: 'Anual',
-    days: 'Dias',
-  }[cycle] || cycle);
-
-  const cycleMonthsLabel = (sub) => {
-    const cycle = sub.billing_cycle || 'monthly';
-    const months = CYCLE_MONTHS[cycle];
-    if (months) return `(${months} mes${months > 1 ? 'es' : ''})`;
-    if (cycle === 'days' && sub.custom_cycle_days) return `(${sub.custom_cycle_days} dias)`;
-    return '';
-  };
-
-  // Equivalente mensal do valor do ciclo. Retorna null quando o ciclo já é
-  // mensal — aí não há divisão para mostrar, evitamos poluir a tabela.
-  const cycleMonthlyEquivalent = (sub) => {
-    const cycle = sub.billing_cycle || 'monthly';
-    const amount = Number(sub.amount || 0);
-    const months = CYCLE_MONTHS[cycle];
-
-    if (months && months > 1) return amount / months;
-    if (cycle === 'days' && sub.custom_cycle_days) return (amount / sub.custom_cycle_days) * 30;
-    return null;
-  };
-
-  const paymentStatusLabel = (s) => ({
-    paid: 'Pago', pending: 'Pendente', failed: 'Falhou', cancelled: 'Cancelado',
-    approved: 'Aprovado', processing: 'Processando', authorized: 'Autorizado',
-    refunded: 'Reembolsado', disputed: 'Em disputa',
-  }[s] || s || '—');
-
-  const paymentStatusClass = (s) => {
-    if (['paid', 'approved', 'authorized', 'completed', 'captured', 'confirmed', 'settled'].includes(s)) return 'active';
-    if (['pending', 'processing', 'waiting'].includes(s)) return 'pending';
-    if (['failed', 'cancelled', 'refunded', 'disputed', 'error'].includes(s)) return 'cancelled';
-    return 'inactive';
-  };
+  const statDetailTotalLabel = () => (statDetailModal === 'mrr' ? 'Total mensal' : 'Total dos ciclos');
 
   const isRenewalSoon = (sub) => {
     if (!sub.next_charge_at || sub.status !== 'active') return false;
@@ -508,12 +554,16 @@ function Subscriptions() {
     return nextCharge > now && nextCharge <= sevenDays;
   };
 
-  const isRenewalThisMonth = (sub) => {
-    if (!sub.next_charge_at || sub.status !== 'active') return false;
-    const now = new Date();
-    const nextCharge = new Date(sub.next_charge_at);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    return nextCharge <= endOfMonth && nextCharge > now;
+  const rowClass = (sub) => {
+    if (isSubscriptionOverdue(sub)) return 'renewal-overdue-row';
+    if (isRenewalSoon(sub)) return 'renewal-soon';
+    return '';
+  };
+
+  const renewalBadge = (sub) => {
+    if (isSubscriptionOverdue(sub)) return { label: 'Vencida', className: 'overdue' };
+    if (sub.billing_status === 'retrying') return { label: 'Em retry', className: 'retrying' };
+    return null;
   };
 
   return (
@@ -521,90 +571,77 @@ function Subscriptions() {
       <div className="admin-header">
         <div>
           <h1>Assinaturas dos Usuários</h1>
-          <p className="page-subtitle">{subscriptions.length} assinaturas cadastradas</p>
+          <p className="page-subtitle">
+            {statsLoading ? 'Carregando...' : `${stats.totalCount} assinaturas cadastradas`}
+          </p>
         </div>
       </div>
 
-      {/* Cards de estatísticas separados por conceito */}
+      {/* Indicadores: cada card abre a lista filtrada correspondente. */}
       <div className="subscriptions-stats">
-        <div className="stat-card">
+        <div className="stat-card clickable" onClick={() => openStatDetail('active')}>
           <Shield size={22} />
           <div>
-            <span>{subscriptions.filter(s => s.status === 'active').length}</span>
-            <small>Ativas</small>
+            <span>{stats.activeCount}</span>
+            <small>Assinaturas ativas</small>
+            <span className="stat-detail-hint">Ver detalhes ›</span>
           </div>
         </div>
-        <div className="stat-card highlight clickable" onClick={() => receivedThisMonth > 0 && openStatDetail('received')}>
+
+        <div className="stat-card highlight clickable" onClick={() => openStatDetail('received')}>
           <DollarSign size={22} />
           <div>
-            <span>R$ {receivedThisMonth.toFixed(2)}</span>
-            <small>Receita recebida este mês</small>
-            {receivedThisMonth > 0 && <span className="stat-detail-hint">Ver detalhes ›</span>}
+            <span>R$ {stats.receivedAmount.toFixed(2)}</span>
+            <small>Receita recebida no mês</small>
+            {stats.receivedTruncated && <span className="stat-detail-hint stat-detail-warn">Valor parcial (limite de leitura)</span>}
+            <span className="stat-detail-hint">Ver detalhes ›</span>
           </div>
         </div>
-        <div className="stat-card clickable" onClick={() => monthlyEquivalent > 0 && openStatDetail('monthly')}>
+
+        <div className="stat-card clickable" onClick={() => openStatDetail('mrr')}>
           <TrendingUp size={22} />
           <div>
-            <span>R$ {monthlyEquivalent.toFixed(2)}</span>
-            <small>Receita mensal equivalente</small>
-            {monthlyEquivalent > 0 && <span className="stat-detail-hint">Ver detalhes ›</span>}
+            <span>R$ {stats.mrr.toFixed(2)}</span>
+            <small>Receita mensal equivalente (MRR)</small>
+            {stats.mrrTruncated && <span className="stat-detail-hint stat-detail-warn">Valor parcial (limite de leitura)</span>}
+            <span className="stat-detail-hint">Ver detalhes ›</span>
           </div>
         </div>
-        <div className="stat-card">
+
+        <div className={`stat-card attention clickable ${stats.attentionCount > 0 ? 'has-issue' : ''}`} onClick={() => openStatDetail('attention')}>
+          <AlertTriangle size={22} />
+          <div>
+            <span>{stats.attentionCount}</span>
+            <small>Precisam de atenção</small>
+            <span className="stat-detail-hint">Vencidas + em retry ›</span>
+          </div>
+        </div>
+
+        <div className="stat-card clickable" onClick={() => openStatDetail('cancelled')}>
           <XCircle size={22} />
           <div>
-            <span>{subscriptions.filter(s => s.status === 'cancelled' || s.status === 'expired').length}</span>
-            <small>Canceladas/Expiradas</small>
+            <span>{stats.cancelledCount}</span>
+            <small>Canceladas / expiradas</small>
+            <span className="stat-detail-hint">Ver detalhes ›</span>
           </div>
         </div>
       </div>
 
-      {/* Cards de próximas renovações */}
-      <div className="subscriptions-renewals">
-        <div className={`renewal-card ${renewalStats.thisMonth.count > 0 ? 'alert' : ''} clickable`} onClick={() => renewalStats.thisMonth.count > 0 && openStatDetail('thisMonth')}>
-          <AlertCircle size={18} />
-          <div>
-            <span className="renewal-count">{renewalStats.thisMonth.count}</span>
-            <small>Vence este mês</small>
-          </div>
-          <span className="renewal-value" title={"Equivalente mensal. Valor real cobrado no ciclo: R$ {renewalStats.thisMonth.cycleTotal.toFixed(2)}"}>
-            R$ {renewalStats.thisMonth.revenue.toFixed(2)}<em>/mês equiv.</em>
-          </span>
-          {renewalStats.thisMonth.count > 0 && <span className="stat-detail-hint renewal-hint">Ver detalhes ›</span>}
-        </div>
-        <div className={`renewal-card ${renewalStats.next7Days.count > 0 ? 'critical' : ''} clickable`} onClick={() => renewalStats.next7Days.count > 0 && openStatDetail('next7')}>
-          <AlertCircle size={18} />
-          <div>
-            <span className="renewal-count">{renewalStats.next7Days.count}</span>
-            <small>Próximos 7 dias</small>
-          </div>
-          <span className="renewal-value" title={"Equivalente mensal. Valor real cobrado no ciclo: R$ {renewalStats.next7Days.cycleTotal.toFixed(2)}"}>
-            R$ {renewalStats.next7Days.revenue.toFixed(2)}<em>/mês equiv.</em>
-          </span>
-          {renewalStats.next7Days.count > 0 && <span className="stat-detail-hint renewal-hint">Ver detalhes ›</span>}
-        </div>
-        <div className={`renewal-card ${renewalStats.next30Days.count > 0 ? 'warning' : ''} clickable`} onClick={() => renewalStats.next30Days.count > 0 && openStatDetail('next30')}>
-          <Calendar size={18} />
-          <div>
-            <span className="renewal-count">{renewalStats.next30Days.count}</span>
-            <small>Próximos 30 dias</small>
-          </div>
-          <span className="renewal-value" title={"Equivalente mensal. Valor real cobrado no ciclo: R$ {renewalStats.next30Days.cycleTotal.toFixed(2)}"}>
-            R$ {renewalStats.next30Days.revenue.toFixed(2)}<em>/mês equiv.</em>
-          </span>
-          {renewalStats.next30Days.count > 0 && <span className="stat-detail-hint renewal-hint">Ver detalhes ›</span>}
-        </div>
-        <div className={`renewal-card clickable`} onClick={() => renewalStats.next60Days.count > 0 && openStatDetail('next60')}>
-          <Clock size={18} />
-          <div>
-            <span className="renewal-count">{renewalStats.next60Days.count}</span>
-            <small>Próximos 60 dias</small>
-          </div>
-          <span className="renewal-value" title={"Equivalente mensal. Valor real cobrado no ciclo: R$ {renewalStats.next60Days.cycleTotal.toFixed(2)}"}>
-            R$ {renewalStats.next60Days.revenue.toFixed(2)}<em>/mês equiv.</em>
-          </span>
-          {renewalStats.next60Days.count > 0 && <span className="stat-detail-hint renewal-hint">Ver detalhes ›</span>}
-        </div>
+      {/* Próximas renovações: só contagem (o dinheiro já está nos cards). */}
+      <div className="renewal-strip">
+        <span className="renewal-strip-title"><Clock size={14} /> Próximas renovações</span>
+        {['next7', 'next30', 'next60'].map((key) => (
+          <button
+            key={key}
+            type="button"
+            className="renewal-chip"
+            onClick={() => openStatDetail(key)}
+            title={RENEWAL_WINDOW_LABELS[key]}
+          >
+            <strong>{stats.windowCounts[key]}</strong>
+            <span>{RENEWAL_WINDOW_SHORT_LABELS[key]}</span>
+          </button>
+        ))}
       </div>
 
       <div className="subscriptions-toolbar">
@@ -612,18 +649,18 @@ function Subscriptions() {
           <Search size={18} />
           <input
             type="text"
-            placeholder="Buscar por usuário, serviço, grupo ou referência..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por usuário, serviço ou grupo..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
           />
         </div>
 
         <div className="filter-group">
           <div className="filter-box">
             <Filter size={16} />
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select value={statusFilter} onChange={(e) => handleFilter(setStatusFilter, e.target.value)}>
               <option value="all">Todos os status</option>
-              {STATUS_OPTIONS.map(s => (
+              {STATUS_OPTIONS.map((s) => (
                 <option key={s} value={s}>{statusLabel(s)}</option>
               ))}
             </select>
@@ -631,9 +668,9 @@ function Subscriptions() {
 
           <div className="filter-box">
             <Clock size={16} />
-            <select value={cycleFilter} onChange={(e) => setCycleFilter(e.target.value)}>
+            <select value={cycleFilter} onChange={(e) => handleFilter(setCycleFilter, e.target.value)}>
               <option value="all">Todas periodicidades</option>
-              {CYCLE_OPTIONS.map(c => (
+              {CYCLE_OPTIONS.map((c) => (
                 <option key={c} value={c}>{cycleLabel(c)}</option>
               ))}
             </select>
@@ -641,23 +678,25 @@ function Subscriptions() {
 
           <div className="filter-box">
             <Calendar size={16} />
-            <select value={renewalFilter} onChange={(e) => setRenewalFilter(e.target.value)}>
+            <select value={renewalFilter} onChange={(e) => handleFilter(setRenewalFilter, e.target.value)}>
               <option value="all">Todas renovações</option>
-              <option value="this_month">Vence este mês</option>
-              <option value="next_7">Próximos 7 dias</option>
-              <option value="next_30">Próximos 30 dias</option>
-              <option value="next_60">Próximos 60 dias</option>
+              <option value="this_month">{RENEWAL_WINDOW_LABELS.thisMonth}</option>
+              <option value="next_7">{RENEWAL_WINDOW_LABELS.next7}</option>
+              <option value="next_30">{RENEWAL_WINDOW_LABELS.next30}</option>
+              <option value="next_60">{RENEWAL_WINDOW_LABELS.next60}</option>
+              <option value="overdue">Vencidas (atrasadas)</option>
             </select>
           </div>
         </div>
 
-        <button className="btn btn-primary" onClick={() => window.location.reload()}>
+        <button className="btn btn-primary" onClick={() => setRefreshKey((key) => key + 1)}>
           <RefreshCw size={16} />
           Atualizar
         </button>
       </div>
 
       {error && <div className="error-banner">Erro: {error}</div>}
+      {notice && <div className="notice-banner">{notice}</div>}
 
       {loading ? (
         <div className="loading-state">
@@ -665,136 +704,168 @@ function Subscriptions() {
           <p>Carregando assinaturas...</p>
         </div>
       ) : (
-        <div className="admin-card table-responsive">
-          <table className="subscriptions-table">
-            <thead>
-              <tr>
-                <th>Usuário</th>
-                <th>Serviço / Grupo</th>
-                <th>Valor do ciclo</th>
-                <th>Periodicidade</th>
-                <th>Gateway</th>
-                <th>Status</th>
-                <th>Próx. Cobrança</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(sub => (
-                <tr key={sub.id} className={isRenewalSoon(sub) ? 'renewal-soon' : isRenewalThisMonth(sub) ? 'renewal-this-month' : ''}>
-                  <td>
-                    <div className="user-cell">
-                      <div className="user-avatar">{sub.user?.name?.[0]?.toUpperCase() || '?'}</div>
-                      <div>
-                        <a
-                          className="link-name"
-                          onClick={() => sub.user?.id && navigate(`/admin/users/${sub.user.id}`)}
-                          title="Ver perfil do usuário"
-                        >
-                          {sub.user?.name || '—'}
-                        </a>
-                        <span>{sub.user?.email || '—'}</span>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="service-cell">
-                      <strong>{sub.service?.name || '—'}</strong>
-                      <a
-                        className="link-name link-group"
-                        onClick={() => sub.group?.id && navigate(`/admin/groups/${sub.group.id}/edit`)}
-                        title="Ver grupo"
-                      >
-                        {sub.group?.name || '—'}
-                      </a>
-                    </div>
-                  </td>
-                  <td>
-                    <div>
-                      {sub.discount_amount > 0 && (
-                        <span style={{ textDecoration: 'line-through', color: '#9ca3af', fontSize: '0.8em' }}>
-                          R$ {Number(sub.original_amount || sub.amount).toFixed(2)}
-                        </span>
-                      )}
-                      <strong>R$ {Number(sub.amount || 0).toFixed(2)}</strong>
-                      {(() => {
-                        const eq = cycleMonthlyEquivalent(sub);
-                        if (eq === null) return null;
-                        return (
-                          <span className="sub-value-equivalent">
-                            equivale a R$ {eq.toFixed(2)}/mês
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="cycle-cell">
-                      <span className="cycle-label">{cycleLabel(sub.billing_cycle)}</span>
-                      <span className="cycle-months">{cycleMonthsLabel(sub)}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div>
-                      <span>{sub.gateway || '—'}</span>
-                      {sub.card_last4 && (
-                        <div style={{ fontSize: '0.75em', color: '#9ca3af' }}>
-                          •••• {sub.card_last4} {sub.card_brand || ''}
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`status-badge ${sub.status}`}>
-                      {statusLabel(sub.status)}
-                    </span>
-                    {sub.billing_status && sub.billing_status !== sub.status && (
-                      <div style={{ fontSize: '0.7em', color: '#9ca3af' }}>
-                        billing: {sub.billing_status}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <div className="date-cell">
-                      <span className={isRenewalSoon(sub) ? 'renewal-urgent' : isRenewalThisMonth(sub) ? 'renewal-month' : ''}>
-                        {sub.next_charge_at ? new Date(sub.next_charge_at).toLocaleDateString('pt-BR') : '—'}
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="actions-cell">
-                      <button
-                        className="action-btn"
-                        onClick={() => openDetail(sub)}
-                        title="Ver detalhes"
-                      >
-                        <Eye size={16} />
-                      </button>
-                      <button
-                        className="action-btn"
-                        onClick={() => navigate(`/admin/subscriptions/${sub.id}/edit`)}
-                        title="Editar"
-                      >
-                        <Edit2 size={16} />
-                      </button>
-                      {sub.status === 'active' && (
-                        <button className="action-btn danger" onClick={() => handleCancel(sub)} title="Cancelar">
-                          <XCircle size={16} />
-                        </button>
-                      )}
-                    </div>
-                  </td>
+        <>
+          <div className="admin-card table-responsive">
+            <table className="subscriptions-table">
+              <thead>
+                <tr>
+                  <th>Usuário</th>
+                  <th>Serviço / Grupo</th>
+                  <th>Ciclo</th>
+                  <th>Valor</th>
+                  <th>Próxima cobrança</th>
+                  <th>Status</th>
+                  <th>Ações</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((sub) => {
+                  const badge = renewalBadge(sub);
+                  const monthly = monthlyEquivalent(sub);
+                  const showsMonthly = cycleMonths(sub.billing_cycle, sub.custom_cycle_months) > 1;
 
-          {filtered.length === 0 && !loading && (
-            <div className="empty-table">
-              <p>Nenhuma assinatura encontrada.</p>
+                  return (
+                    <tr key={sub.id} className={rowClass(sub)}>
+                      <td>
+                        <div className="user-cell">
+                          <div className="user-avatar">{sub.user?.name?.[0]?.toUpperCase() || '?'}</div>
+                          <div>
+                            <a
+                              className="link-name"
+                              onClick={() => sub.user?.id && navigate(`/admin/users/${sub.user.id}`)}
+                              title="Ver perfil do usuário"
+                            >
+                              {sub.user?.name || '—'}
+                            </a>
+                            <span>{sub.user?.email || '—'}</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td>
+                        <div className="service-cell">
+                          <strong>{sub.service?.name || '—'}</strong>
+                          <a
+                            className="link-name link-group"
+                            onClick={() => sub.group?.id && navigate(`/admin/groups/${sub.group.id}/edit`)}
+                            title="Ver grupo"
+                          >
+                            {sub.group?.name || '—'}
+                          </a>
+                        </div>
+                      </td>
+
+                      <td>
+                        <span className="cycle-label">{cycleFullLabel(sub)}</span>
+                      </td>
+
+                      <td>
+                        <div className="value-cell">
+                          {sub.discount_amount > 0 && (
+                            <span className="value-original">
+                              R$ {Number(sub.original_amount || sub.amount).toFixed(2)}
+                            </span>
+                          )}
+                          <strong>R$ {Number(sub.amount || 0).toFixed(2)}</strong>
+                          {showsMonthly && (
+                            <span className="sub-value-equivalent">
+                              = R$ {monthly.toFixed(2)}/mês
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td>
+                        <div className="date-cell">
+                          <span className={isSubscriptionOverdue(sub) ? 'renewal-overdue-text' : isRenewalSoon(sub) ? 'renewal-month' : ''}>
+                            {sub.next_charge_at ? formatDateBR(sub.next_charge_at) : '—'}
+                          </span>
+                        </div>
+                      </td>
+
+                      <td>
+                        <div className="status-cell">
+                          <span className={`status-badge ${sub.status}`}>
+                            {statusLabel(sub.status)}
+                          </span>
+                          {badge && (
+                            <span className={`status-badge ${badge.className}`}>
+                              {badge.label}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td>
+                        <div className="actions-cell">
+                          <button className="action-btn" onClick={() => openDetail(sub)} title="Ver detalhes">
+                            <Eye size={16} />
+                          </button>
+                          <button
+                            className="action-btn"
+                            onClick={() => navigate(`/admin/subscriptions/${sub.id}/edit`)}
+                            title="Editar"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          {sub.status === 'active' && (
+                            <button className="action-btn danger" onClick={() => handleCancel(sub)} title="Cancelar">
+                              <XCircle size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {rows.length === 0 && (
+              <div className="empty-table">
+                <p>Nenhuma assinatura encontrada.</p>
+              </div>
+            )}
+          </div>
+
+          <div className="subscriptions-pagination">
+            <span className="pagination-info">
+              Mostrando {from}–{to} de {totalRows} assinatura(s)
+            </span>
+            <div className="pagination-controls">
+              <label className="pagination-size">
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(0);
+                  }}
+                >
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>{size} por página</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => setPage(Math.max(0, currentPage - 1))}
+                disabled={currentPage === 0 || loading}
+              >
+                <ChevronLeft size={14} /> Anterior
+              </button>
+              <span className="pagination-info">Página {currentPage + 1} de {totalPages}</span>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => setPage(currentPage + 1)}
+                disabled={currentPage + 1 >= totalPages || loading}
+              >
+                Próxima <ChevronRight size={14} />
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        </>
       )}
 
       {detailSub && (
@@ -850,7 +921,7 @@ function Subscriptions() {
 
                 <div className="detail-row">
                   <div className="detail-item">
-                    <label><DollarSign size={14} /> Valor</label>
+                    <label><DollarSign size={14} /> Valor do ciclo</label>
                     <span className="detail-value">
                       R$ {Number(detailSub.amount || 0).toFixed(2)}
                       {detailSub.discount_amount > 0 && (
@@ -859,12 +930,15 @@ function Subscriptions() {
                         </span>
                       )}
                     </span>
+                    {cycleMonths(detailSub.billing_cycle, detailSub.custom_cycle_months) > 1 && (
+                      <span className="detail-mono">
+                        equivale a R$ {monthlyEquivalent(detailSub).toFixed(2)}/mês
+                      </span>
+                    )}
                   </div>
                   <div className="detail-item">
                     <label><Calendar size={14} /> Ciclo</label>
-                    <span>{cycleLabel(detailSub.billing_cycle)}</span>
-                    {detailSub.custom_cycle_days && <span className="detail-mono"> ({detailSub.custom_cycle_days} dias)</span>}
-                    {detailSub.custom_cycle_months && <span className="detail-mono"> ({detailSub.custom_cycle_months} meses)</span>}
+                    <span>{cycleFullLabel(detailSub)}</span>
                   </div>
                 </div>
 
@@ -872,6 +946,9 @@ function Subscriptions() {
                   <div className="detail-item">
                     <label>Status</label>
                     <span className={`status-badge ${detailSub.status}`}>{statusLabel(detailSub.status)}</span>
+                    {isSubscriptionOverdue(detailSub) && (
+                      <span className="status-badge overdue" style={{ marginLeft: 8 }}>Vencida</span>
+                    )}
                     {detailSub.billing_status && (
                       <span className="detail-mono" style={{ marginLeft: 8 }}>billing: {detailSub.billing_status}</span>
                     )}
@@ -919,9 +996,9 @@ function Subscriptions() {
                         </tr>
                       </thead>
                       <tbody>
-                        {detailPayments.map(p => (
+                        {detailPayments.map((p) => (
                           <tr key={p.id}>
-                            <td>{new Date(p.created_at).toLocaleDateString('pt-BR')}</td>
+                            <td>{formatDateBR(p.created_at)}</td>
                             <td><strong>R$ {Number(p.amount || 0).toFixed(2)}</strong></td>
                             <td>{p.method || '—'}</td>
                             <td>
@@ -965,9 +1042,9 @@ function Subscriptions() {
                         </tr>
                       </thead>
                       <tbody>
-                        {detailBillingCycles.map(bc => (
+                        {detailBillingCycles.map((bc) => (
                           <tr key={bc.id}>
-                            <td>{bc.charge_date ? new Date(bc.charge_date).toLocaleDateString('pt-BR') : '—'}</td>
+                            <td>{bc.charge_date ? formatDateBR(bc.charge_date) : '—'}</td>
                             <td><strong>R$ {Number(bc.amount || 0).toFixed(2)}</strong></td>
                             <td>
                               <span className={`status-badge ${paymentStatusClass(bc.status)}`}>
@@ -989,38 +1066,44 @@ function Subscriptions() {
         </div>
       )}
 
-      {/* Modal de detalhamento dos cards de receita */}
+      {/* Modal de detalhamento dos cards */}
       {statDetailModal && (
         <div className="sub-viewer-overlay" onClick={() => setStatDetailModal(null)}>
-          <div className="sub-viewer-panel stat-detail-modal" onClick={e => e.stopPropagation()}>
+          <div className="sub-viewer-panel stat-detail-modal" onClick={(e) => e.stopPropagation()}>
             <div className="sub-viewer-header">
               <h3>{statDetailTitle()}</h3>
               <button className="sub-viewer-close" onClick={() => setStatDetailModal(null)}>×</button>
             </div>
             <div className="sub-viewer-body">
-              {statDetailData.length === 0 ? (
+              {statDetailLoading ? (
+                <div className="detail-loading">
+                  <Loader2 size={20} className="spin" />
+                  <span>Carregando...</span>
+                </div>
+              ) : statDetailData.length === 0 ? (
                 <p className="empty-detail">Nenhum registro encontrado.</p>
               ) : (
                 <>
                   <div className="stat-detail-summary">
-                    <span className="stat-detail-total">{statDetailData.length} registro{statDetailData.length !== 1 ? 's' : ''}</span>
-                    <span className="stat-detail-sum">Total: <strong>R$ {statDetailTotal().toFixed(2)}</strong></span>
+                    <span className="stat-detail-total">
+                      {statDetailData.length} registro{statDetailData.length !== 1 ? 's' : ''}
+                    </span>
+                    <span className="stat-detail-sum">
+                      {statDetailTotalLabel()}: <strong>R$ {statDetailTotal().toFixed(2)}</strong>
+                    </span>
                   </div>
                   <div className="stat-detail-list">
                     {statDetailData.map((item, i) => (
                       <div
-                        key={i}
-                        className={`stat-detail-row ${item.type === 'renewal' ? 'clickable-row' : ''}`}
+                        key={item.id || i}
+                        className={`stat-detail-row ${item.subId ? 'clickable-row' : ''}`}
                         onClick={() => {
-                          if (item.type === 'renewal' && item.subId) {
-                            const sub = subscriptions.find(s => s.id === item.subId);
-                            if (sub) {
-                              setStatDetailModal(null);
-                              openDetail(sub);
-                            }
+                          if (item.subId && item.sub) {
+                            setStatDetailModal(null);
+                            openDetail(item.sub);
                           }
                         }}
-                        title={item.type === 'renewal' ? 'Clique para ver detalhes da assinatura' : undefined}
+                        title={item.subId ? 'Clique para ver detalhes da assinatura' : undefined}
                       >
                         <div className="stat-detail-user">
                           <div className="user-avatar-sm">{item.userName[0]?.toUpperCase() || '?'}</div>
@@ -1034,30 +1117,32 @@ function Subscriptions() {
                           <span>{item.groupName !== '—' ? item.groupName : ''}</span>
                         </div>
                         <div className="stat-detail-amount">
-                          {item.totalAmount && item.totalAmount !== item.amount ? (
-                            <>
-                              <span className="amount-monthly">R$ {item.amount.toFixed(2)}/mês</span>
-                              <span className="amount-total">Total: R$ {item.totalAmount.toFixed(2)} ({item.cycleLabel})</span>
-                            </>
-                          ) : item.type === 'payment' ? (
-                            <>
-                              <span className="amount-monthly">R$ {item.amount.toFixed(2)}</span>
-                              <span className="amount-date">{new Date(item.date).toLocaleDateString('pt-BR')}</span>
-                            </>
+                          <span className="amount-monthly">R$ {item.amount.toFixed(2)}</span>
+                          {item.type === 'payment' ? (
+                            <span className="amount-date">{formatDateBR(item.date)}</span>
                           ) : (
-                            <>
-                              <span className="amount-monthly">R$ {item.amount.toFixed(2)}/mês</span>
-                              {item.cycleLabel && <span className="amount-total">{item.cycleLabel}</span>}
-                            </>
+                            <span className="amount-total">
+                              {item.cycleLabel}
+                              {item.monthly !== null && item.monthly !== undefined
+                                && Math.abs(item.monthly - item.amount) > 0.005
+                                ? ` · R$ ${item.monthly.toFixed(2)}/mês`
+                                : ''}
+                            </span>
                           )}
                         </div>
                         {item.nextCharge && (
                           <div className="stat-detail-next">
                             <Calendar size={12} />
-                            <span>Vence: {new Date(item.nextCharge).toLocaleDateString('pt-BR')}</span>
+                            <span>Vence: {formatDateBR(item.nextCharge)}</span>
                           </div>
                         )}
-                        {item.type === 'renewal' && (
+                        {(item.overdue || item.retrying) && (
+                          <div className="stat-detail-next stat-detail-flag">
+                            <AlertCircle size={12} />
+                            <span>{item.overdue ? 'Vencida' : 'Em retry'}</span>
+                          </div>
+                        )}
+                        {item.subId && (
                           <div className="stat-detail-arrow">›</div>
                         )}
                       </div>
@@ -1072,7 +1157,7 @@ function Subscriptions() {
 
       {selectedPayment && (
         <div className="sub-viewer-overlay" onClick={() => setSelectedPayment(null)}>
-          <div className="sub-viewer-panel" style={{ width: 480 }} onClick={e => e.stopPropagation()}>
+          <div className="sub-viewer-panel" style={{ width: 480 }} onClick={(e) => e.stopPropagation()}>
             <div className="sub-viewer-header">
               <h3><DollarSign size={18} /> Detalhes da Transação</h3>
               <button className="sub-viewer-close" onClick={() => setSelectedPayment(null)}>
@@ -1090,7 +1175,13 @@ function Subscriptions() {
                   </div>
                   <div className="detail-item">
                     <label>Tipo</label>
-                    <span>{selectedPayment.payment_type === 'entrance' ? 'Taxa de Adesão' : selectedPayment.payment_type === 'subscription' ? 'Assinatura' : selectedPayment.payment_type || '—'}</span>
+                    <span>
+                      {selectedPayment.payment_type === 'entrance'
+                        ? 'Taxa de Adesão'
+                        : selectedPayment.payment_type === 'subscription'
+                          ? 'Assinatura'
+                          : selectedPayment.payment_type || '—'}
+                    </span>
                   </div>
                 </div>
 
@@ -1101,7 +1192,13 @@ function Subscriptions() {
                   </div>
                   <div className="detail-item">
                     <label>Método</label>
-                    <span>{selectedPayment.method === 'pix' ? 'PIX' : selectedPayment.method === 'credit_card' ? 'Cartão de Crédito' : selectedPayment.method || '—'}</span>
+                    <span>
+                      {selectedPayment.method === 'pix'
+                        ? 'PIX'
+                        : selectedPayment.method === 'credit_card'
+                          ? 'Cartão de Crédito'
+                          : selectedPayment.method || '—'}
+                    </span>
                   </div>
                 </div>
 
@@ -1119,7 +1216,9 @@ function Subscriptions() {
                 <div className="detail-row">
                   <div className="detail-item">
                     <label><Hash size={14} /> ID Transação</label>
-                    <span className="detail-mono" style={{ wordBreak: 'break-all' }}>{selectedPayment.transaction_code || '—'}</span>
+                    <span className="detail-mono" style={{ wordBreak: 'break-all' }}>
+                      {selectedPayment.transaction_code || '—'}
+                    </span>
                   </div>
                 </div>
 
