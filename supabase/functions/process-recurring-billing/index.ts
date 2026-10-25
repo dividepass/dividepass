@@ -243,7 +243,7 @@ async function handleFailedCharge(
   errorMsg: string,
   gatewayTxId: string | null,
   gatewayResponse: any,
-) {
+): Promise<{ cancelled: boolean; retryCount: number }> {
   const newRetryCount = (sub.retry_count || 0) + 1;
   const ownerId = sub.group?.owner_id || null;
   const groupName = sub.group?.name || sub.group_id;
@@ -270,7 +270,6 @@ async function handleFailedCharge(
         last_charge_at: new Date().toISOString(),
       })
       .eq("id", sub.id);
-
     await supabaseAdmin
       .from("group_members")
       .update({ status: "inactive", payment_status: "cancelled", left_at: new Date().toISOString() })
@@ -306,6 +305,8 @@ async function handleFailedCharge(
     }).catch((e) => console.error("push notification error (failed cancel):", e));
 
     console.log(`X Subscription ${sub.id} CANCELLED after ${newRetryCount} failures`);
+
+    return { cancelled: true, retryCount: newRetryCount };
 
   } else {
     const retryDays = newRetryCount === 1 ? 1 : 2;
@@ -346,6 +347,8 @@ async function handleFailedCharge(
 
     console.log(`! Subscription ${sub.id} retry ${newRetryCount}/3 scheduled for ${nextRetry.toISOString()}`);
   }
+
+  return { cancelled: false, retryCount: newRetryCount };
 }
 
 export default {
@@ -356,10 +359,39 @@ export default {
 
     const authHeader = req.headers.get("Authorization") || "";
     const serviceRoleKey = Deno.env.get("SERVICE_ROLE_KEY") || "";
+    const providedToken = (authHeader || "").replace(/^Bearer\s+/i, "").trim();
+
+    let isAdminRequest = false;
 
     if (authHeader === `Bearer ${serviceRoleKey}`) {
       // acesso interno legítimo
-    } else {
+    } else if (providedToken) {
+      // Chamada do painel admin: o usuario esta logado e tem role "admin".
+      // A UI precisa de "cobrar agora" em uma assinatura especifica, e o
+      // cron (que manda um segredo, nao um JWT) nao tem usuario nenhum.
+      try {
+        const { data: userData } = await createClient(
+          Deno.env.get("SUPABASE_URL") ?? "",
+          serviceRoleKey,
+        ).auth.getUser(providedToken);
+
+        if (userData?.user) {
+          const { data: roleRow } = await createClient(
+            Deno.env.get("SUPABASE_URL") ?? "",
+            serviceRoleKey,
+          ).from("users").select("role").eq("id", userData.user.id).limit(1);
+
+          const role = roleRow && roleRow[0] && roleRow[0].role;
+          if (role === "admin") {
+            isAdminRequest = true;
+          }
+        }
+      } catch (e) {
+        console.warn("[process-recurring-billing] falha ao validar JWT do admin:", e);
+      }
+    }
+
+    if (!isAdminRequest && authHeader !== `Bearer ${serviceRoleKey}`) {
       // O cron envia o segredo guardado em app_settings, não um JWT. O gateway
       // rejeita tokens que não são JWT, então a validação real acontece aqui.
       const { data: secretRows } = await createClient(
@@ -375,13 +407,26 @@ export default {
         ...(secretRows || []).map((r: any) => r.value || ""),
       ].filter(Boolean);
 
-      const provided = (authHeader || "").replace(/^Bearer\s+/i, "").trim();
-      if (!provided || !accepted.includes(provided)) {
+      if (!providedToken || !accepted.includes(providedToken)) {
         return new Response(
           JSON.stringify({ error: "Unauthorized" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+    }
+
+    // Body: `{ manual: true, subscription_id }` cobra APENAS aquela assinatura.
+    let requestedSubscriptionId: string | null = null;
+    let isManual = false;
+    try {
+      const raw = await req.text();
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        requestedSubscriptionId = parsed?.subscription_id || null;
+        isManual = !!parsed?.manual;
+      }
+    } catch (_) {
+      // body vazio ou invalido: segue com o processamento normal (cron)
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -404,7 +449,17 @@ export default {
 
       const nowStr = new Date().toISOString();
 
-      const { data: subscriptions, error: fetchError } = await supabaseAdmin
+      // Filtros null-safe.
+//
+// `.neq("billing_status", "cancelled")` e `.lt("retry_count", 3)` excluem
+// as linhas com valor NULL (NULL != 'cancelled' e NULL < 3 sao NULL, e o
+// PostgREST filtra). Como `billing_status` e `retry_count` podem estar
+// NULL em assinaturas antigas, essas assinaturas NUNCA eram cobradas — e
+// nada indicava isso no painel. Agora NULL conta como elegivel.
+//
+// `next_charge_at` NULL tambem era invisivel: o backfill esta em
+// database/fix-recurring-billing.sql.
+const baseQuery = supabaseAdmin
         .from("user_subscriptions")
         .select(`
           id, user_id, group_id, service_id, amount, billing_cycle,
@@ -413,11 +468,15 @@ export default {
           user:users!user_subscriptions_user_id_fkey (id, name, email, customer_id_iopay),
           group:groups!user_subscriptions_group_id_fkey (id, name, owner_id, is_official),
           service:streaming_services!user_subscriptions_service_id_fkey (id, name)
-        `)
-        .lte("next_charge_at", nowStr)
-        .eq("status", "active")
-        .neq("billing_status", "cancelled")
-        .lt("retry_count", 3);
+        `);
+
+      const { data: subscriptions, error: fetchError } = requestedSubscriptionId
+        ? await baseQuery.eq("id", requestedSubscriptionId)
+        : await baseQuery
+            .lte("next_charge_at", nowStr)
+            .eq("status", "active")
+            .or("billing_status.is.null,billing_status.neq.cancelled")
+            .or("retry_count.is.null,retry_count.lt.3");
 
       if (fetchError) {
         console.error("Fetch subscriptions error:", fetchError);
@@ -433,6 +492,49 @@ export default {
         cancelled: 0,
         skipped: 0,
         errors: [] as string[],
+        details: [] as any[],
+      };
+
+      /**
+       * Registra uma cobranca que NAO saiu.
+       *
+       * Antes esses casos eram so um `console.log` + `skipped++`: o admin nao
+       * via NADA no painel, e a assinatura simplesmente nunca era cobrada.
+       * Agora fica um `billing_cycles` com status "failed" e o motivo, o que
+       * faz a assinatura aparecer na tela de falhas com acao de contorno.
+       */
+      const recordSkip = async (sub: any, reason: string) => {
+        results.skipped++;
+        results.details.push({
+          subscription_id: sub.id,
+          user_name: sub.user?.name || null,
+          user_email: sub.user?.email || null,
+          group_name: sub.group?.name || null,
+          service_name: sub.service?.name || null,
+          amount: sub.amount,
+          status: "skipped",
+          error: reason,
+        });
+        try {
+          await supabaseAdmin.from("billing_cycles").insert({
+            subscription_id: sub.id,
+            user_id: sub.user_id,
+            group_id: sub.group_id,
+            amount: sub.amount,
+            charge_date: new Date().toISOString().split("T")[0],
+            status: "failed",
+            gateway: sub.gateway || "iopay",
+            attempt_number: (sub.retry_count || 0) + 1,
+            error_code: "not_charged",
+            error_message: reason,
+          });
+        } catch (e) {
+          console.error("[process-recurring-billing] erro ao registrar skip:", e);
+        }
+        await logBillingAction(supabaseAdmin, sub.id, sub.user_id, sub.group_id, "charge_skipped", {
+          reason,
+          amount: sub.amount,
+        }).catch(() => {});
       };
 
       for (const sub of (subscriptions || [])) {
@@ -444,13 +546,13 @@ export default {
 
           if (sub.gateway === "mercadopago") {
             console.log(`Skipping sub ${sub.id}: Mercado Pago handles its own recurring billing`);
-            results.skipped++;
+            await recordSkip(sub, "Mercado Pago cobra a recorrencia por conta propria");
             continue;
           }
 
           if (!iopayConfigured) {
             console.log(`Skipping sub ${sub.id}: IOPay not configured`);
-            results.skipped++;
+            await recordSkip(sub, "Credenciais da IO Pay nao configuradas");
             continue;
           }
 
@@ -458,7 +560,7 @@ export default {
 
           if (!customerId) {
             console.log(`Skipping sub ${sub.id}: missing customer_id_iopay`);
-            results.skipped++;
+            await recordSkip(sub, "Usuario sem customer_id na IO Pay — recadastrar o cartao");
             continue;
           }
 
@@ -469,7 +571,7 @@ export default {
             const defaultCard = await getDefaultCard(customerId, settings);
             if (!defaultCard.id_card) {
               console.log(`Skipping sub ${sub.id}: no cards found in IOPay for customer ${customerId}`);
-              results.skipped++;
+              await recordSkip(sub, "Sem cartao salvo na IO Pay — o usuario precisa salvar um cartao");
               continue;
             }
             cardId = defaultCard.id_card;
@@ -555,7 +657,7 @@ export default {
                 })
                 .eq("id", sub.id);
 
-              await supabaseAdmin.from("invoices").insert({
+              const { error: invoiceErr } = await supabaseAdmin.from("invoices").insert({
                 user_id: sub.user_id,
                 group_id: sub.group_id,
                 amount: sub.amount,
@@ -563,6 +665,14 @@ export default {
                 status: "paid",
                 paid_at: new Date().toISOString(),
               });
+
+              if (invoiceErr) {
+                // Sem a fatura o admin ve a assinatura cobrada mas nenhuma
+                // fatura correspondente — e a fatura e o que o painel de
+                // "Faturas vencidas" usa para dizer QUEM esta devendo.
+                console.error(`[process-recurring-billing] invoice insert error for sub ${sub.id}:`, invoiceErr.message);
+                results.errors.push(`invoices insert error: ${invoiceErr.message}`);
+              }
 
               await supabaseAdmin.from("payments").insert({
                 user_id: sub.user_id,
@@ -615,19 +725,55 @@ export default {
               }).catch((e) => console.error("push notification error (renewal success):", e));
 
               results.approved++;
+              results.details.push({
+                subscription_id: sub.id,
+                user_name: user?.name || null,
+                user_email: user?.email || null,
+                group_name: group?.name || null,
+                service_name: service?.name || null,
+                amount: sub.amount,
+                status: "approved",
+                transaction_id: txResult.transactionId,
+                next_charge_at: nextChargeDate.toISOString(),
+              });
               console.log(`OK sub ${sub.id} approved | next_charge: ${nextChargeDate.toISOString()}`);
 
             } else {
               console.log(`Sub ${sub.id} tx status "${txStatus.status}" not in APPROVED_STATUSES, marking as failed`);
-              await handleFailedCharge(supabaseAdmin, sub, billingCycle.id, settings,
+              const failure = await handleFailedCharge(supabaseAdmin, sub, billingCycle.id, settings,
                 `Status: ${txStatus.status}`, txResult.transactionId, txStatus.raw);
               results.failed++;
+              if (failure.cancelled) results.cancelled++;
+              results.details.push({
+                subscription_id: sub.id,
+                user_name: user?.name || null,
+                user_email: user?.email || null,
+                group_name: group?.name || null,
+                service_name: service?.name || null,
+                amount: sub.amount,
+                status: failure.cancelled ? "cancelled" : "failed",
+                transaction_id: txResult.transactionId,
+                error: `Status: ${txStatus.status}`,
+                retry_count: failure.retryCount,
+              });
             }
           } else {
             console.log(`Sub ${sub.id} tx creation failed:`, txResult.error);
-            await handleFailedCharge(supabaseAdmin, sub, billingCycle.id, settings,
+            const failure = await handleFailedCharge(supabaseAdmin, sub, billingCycle.id, settings,
               txResult.error || "Unknown error", null, txResult.raw);
             results.failed++;
+            if (failure.cancelled) results.cancelled++;
+            results.details.push({
+              subscription_id: sub.id,
+              user_name: user?.name || null,
+              user_email: user?.email || null,
+              group_name: group?.name || null,
+              service_name: service?.name || null,
+              amount: sub.amount,
+              status: failure.cancelled ? "cancelled" : "failed",
+              error: txResult.error || "Unknown error",
+              retry_count: failure.retryCount,
+            });
           }
         } catch (subError: any) {
           console.error(`Error processing sub ${sub.id}:`, subError);
@@ -640,6 +786,8 @@ export default {
       return Response.json({
         success: true,
         ...results,
+        manual: isManual,
+        subscription_id: requestedSubscriptionId,
         timestamp: new Date().toISOString(),
       }, { headers: corsHeaders });
 

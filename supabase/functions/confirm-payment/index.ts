@@ -19,6 +19,23 @@ interface ConfirmParams {
   custom_cycle_months?: number | null;
 }
 
+/**
+ * `payments.method` e um ENUM: ('pix','credit_card','bank_slip').
+ *
+ * O caminho do webhook gravava valores como "unknown", "subscription" e
+ * "iopay" — TODOS fora do ENUM. O insert era REJEITADO pelo Postgres e a
+ * linha do pagamento nunca existia. Consequencias: o pagamento nao aparecia
+ * na tela de billing e a trava de idempotencia (que le `payments`) nunca
+ * disparava, entao um replay do webhook refazia tudo.
+ */
+function normalizePaymentMethod(raw?: string | null): "pix" | "credit_card" | "bank_slip" {
+  const value = String(raw || "").toLowerCase().trim();
+  if (value.includes("pix")) return "pix";
+  if (value.includes("credit") || value.includes("card") || value.includes("iopay")) return "credit_card";
+  if (value.includes("boleto") || value.includes("bank") || value.includes("slip")) return "bank_slip";
+  return "credit_card";
+}
+
 /** Obtém official_price e paid_amount (após cupom) para rastrear economia de assinatura. */
 async function getSavingsData(
   supabaseAdmin: any,
@@ -44,17 +61,24 @@ async function getSavingsData(
       officialPrice = service?.official_price ? Number(service.official_price) : null;
     }
 
-    // Buscar valor pago (pode ser menor se cupom foi usado)
+    // Buscar valor pago (pode ser menor se cupom foi usado).
+    //
+    // `payment_attempts` NAO tem a coluna `final_amount` — asking por ela
+    // fazia o select inteiro falhar e o valor pago caia no default. E o
+    // `.maybeSingle()` abortava quando o polling ja tinha gravado varias
+    // linhas com o mesmo transaction_id.
     let paidAmount = defaultAmount;
     try {
-      const { data: attempt } = await supabaseAdmin
+      const { data: attemptRows } = await supabaseAdmin
         .from("payment_attempts")
-        .select("coupon_id, original_amount, discount_amount, final_amount")
+        .select("coupon_id, original_amount, discount_amount")
         .eq("gateway_transaction_id", gateway_payment_id)
-        .maybeSingle();
+        .order("created_at", { ascending: true })
+        .limit(1);
 
-      if (attempt?.final_amount != null) {
-        paidAmount = Number(attempt.final_amount);
+      const attempt = (attemptRows && attemptRows[0]) || null;
+      if (attempt?.original_amount != null && attempt?.discount_amount != null) {
+        paidAmount = Number(attempt.original_amount) - Number(attempt.discount_amount);
       }
     } catch (_) {
       // payment_attempts pode não existir — usar amount padrão
@@ -131,7 +155,7 @@ export async function confirmPayment(params: ConfirmParams) {
       await supabaseAdmin.from("payments").insert({
         user_id,
         amount,
-        method: payment_method || "unknown",
+        method: normalizePaymentMethod(payment_method),
         status: "paid",
         payment_type: "entrance",
         group_id,
@@ -203,6 +227,8 @@ export async function confirmPayment(params: ConfirmParams) {
       // Registrar cupom após confirmação do pagamento PIX (entrance)
       await registerCouponUsagePIX(supabaseAdmin, gateway_payment_id, user_id, "entrance");
 
+      return { success: true, payment_type: "entrance" };
+
     } else if (payment_type === "combined") {
       // Combined: entrance + first subscription in one payment
       // Get group to split amounts
@@ -230,7 +256,7 @@ export async function confirmPayment(params: ConfirmParams) {
       await supabaseAdmin.from("payments").insert({
         user_id,
         amount: entranceAmount,
-        method: payment_method || "unknown",
+        method: normalizePaymentMethod(payment_method),
         status: "paid",
         payment_type: "entrance",
         group_id,
@@ -311,7 +337,7 @@ export async function confirmPayment(params: ConfirmParams) {
         amount: subscriptionAmount,
         official_price: savingsDataCombined.official_price,
         paid_amount: savingsDataCombined.paid_amount,
-        method: payment_method || "subscription",
+        method: normalizePaymentMethod(payment_method),
         status: "paid",
         payment_type: "subscription",
         group_id,
@@ -476,15 +502,22 @@ export async function confirmPayment(params: ConfirmParams) {
         console.error("Referral processing error (combined):", refErr);
       }
 
+      return { success: true, payment_type: "combined" };
+
     } else if (payment_type === "subscription") {
-      // Calcular next_charge_at baseado no ciclo
-      const { data: subInfo } = await supabaseAdmin
+      // Calcular next_charge_at baseado no ciclo.
+      //
+      // `.maybeSingle()` aqui abortava quando o usuario tinha MAIS de uma
+      // assinatura no mesmo grupo (histórico de transferências): o PostgREST
+      // devolvia erro, `data` ficava null e a assinatura NAO era atualizada —
+      // o pagamento era confirmado "no papel" sem liberar credencial nenhuma.
+      const { data: subInfoRows } = await supabaseAdmin
         .from("user_subscriptions")
-        .select("id, billing_cycle, custom_cycle_months, custom_cycle_days, payment_method, card_id")
+        .select("id, billing_cycle, custom_cycle_months, custom_cycle_days, payment_method, card_id, card_last4, card_brand")
         .eq("user_id", user_id).eq("group_id", group_id)
         .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+      const subInfo = (subInfoRows && subInfoRows[0]) || null;
 
       const { data: grp } = await supabaseAdmin.from("groups").select("billing_cycle").eq("id", group_id).maybeSingle();
       const cycle = billing_cycle || subInfo?.billing_cycle || grp?.billing_cycle || "monthly";
@@ -503,7 +536,7 @@ export async function confirmPayment(params: ConfirmParams) {
 
       if (subInfo?.id) {
         // Update existing subscription
-        await supabaseAdmin
+        const { error: subErr } = await supabaseAdmin
           .from("user_subscriptions")
           .update({
             status: "active",
@@ -519,10 +552,15 @@ export async function confirmPayment(params: ConfirmParams) {
             custom_cycle_months: months,
           })
           .eq("id", subInfo.id);
+
+        if (subErr) {
+          console.error("[confirm-payment] assinatura nao atualizada:", subErr.message);
+          return { success: false, error: "user_subscriptions update failed: " + subErr.message };
+        }
       } else {
         // Fallback: create subscription if missing (critical gap fix)
         const { data: grp } = await supabaseAdmin.from("groups").select("service_id, price_per_slot, billing_cycle").eq("id", group_id).maybeSingle();
-        await supabaseAdmin.from("user_subscriptions").insert({
+        const { error: insErr } = await supabaseAdmin.from("user_subscriptions").insert({
           user_id, group_id, service_id: grp?.service_id,
           billing_cycle: cycle, amount: amount || grp?.price_per_slot || 0,
           status: "active", gateway: gateway, gateway_subscription_id: gateway_payment_id,
@@ -533,26 +571,99 @@ export async function confirmPayment(params: ConfirmParams) {
           custom_cycle_days: days,
           custom_cycle_months: months,
         });
+
+        if (insErr) {
+          // `service_id` e NOT NULL: se o grupo nao tiver service_id, o insert
+          // reprova e a assinatura nunca nasce.
+          console.error("[confirm-payment] assinatura nao criada:", insErr.message);
+          return { success: false, error: "user_subscriptions insert failed: " + insErr.message };
+        }
       }
 
-      // Update member — upsert to guarantee existence
-      await supabaseAdmin
+      // Fatura vencida do ciclo que está sendo pago: precisa ser quitada, senão
+      // continua aparecendo como pendente no painel de cobrança mesmo depois do
+      // pagamento (era uma das fontes do "46 Faturas vencidas" no admin).
+      // A fatura do próximo ciclo (vencimento futuro) fica pendente de propósito.
+      try {
+        const today = new Date().toISOString().split("T")[0];
+        const { data: dueInvoices } = await supabaseAdmin
+          .from("invoices")
+          .select("id, amount")
+          .eq("group_id", group_id)
+          .eq("user_id", user_id)
+          .eq("status", "pending")
+          .lte("due_date", today);
+
+        const due = dueInvoices || [];
+        if (due.length > 0) {
+          const paidAmount = Number(amount);
+          const dueTotal = due.reduce((sum, i) => sum + Number(i.amount || 0), 0);
+          const toSettle = Math.abs(dueTotal - paidAmount) < 0.01
+            ? due
+            : due.filter((i) => Math.abs(Number(i.amount) - paidAmount) < 0.01);
+
+          for (const inv of toSettle) {
+            const { error: invErr } = await supabaseAdmin
+              .from("invoices")
+              .update({ status: "paid", paid_at: new Date().toISOString() })
+              .eq("id", inv.id);
+            if (invErr) console.error("[confirm-payment] fatura vencida nao quitada:", invErr.message);
+            else console.log(`[confirm-payment] fatura vencida quitada: ${inv.id} (${inv.amount})`);
+          }
+        }
+      } catch (invException: any) {
+        console.error("[confirm-payment] falha ao quitar faturas vencidas:", invException);
+      }
+
+      // Update member — update se já existe, upsert se não (o upsert sozinho
+      // deixava de fora linhas antigas sem a constraint de conflito).
+      const { data: existingMember, error: memberSelErr } = await supabaseAdmin
         .from("group_members")
-        .upsert({
-          group_id, user_id,
-          status: "active",
-          payment_status: "active",
-          joined_at: new Date().toISOString(),
-        }, { onConflict: "group_id, user_id" });
+        .select("id")
+        .eq("group_id", group_id)
+        .eq("user_id", user_id)
+        .limit(1);
+
+      if (memberSelErr) {
+        console.error("[confirm-payment] group_members select error:", memberSelErr.message);
+      }
+
+      const memberPayload = {
+        group_id, user_id,
+        status: "active",
+        payment_status: "active",
+        joined_at: new Date().toISOString(),
+      };
+
+      let memberError = null;
+      if (existingMember && existingMember.length > 0) {
+        const { error } = await supabaseAdmin
+          .from("group_members")
+          .update(memberPayload)
+          .eq("group_id", group_id)
+          .eq("user_id", user_id);
+        memberError = error;
+      } else {
+        const { error } = await supabaseAdmin
+          .from("group_members")
+          .upsert(memberPayload, { onConflict: "group_id, user_id" });
+        memberError = error;
+      }
+
+      if (memberError) {
+        // Sem group_members ativo o trigger do banco NAO libera a credencial.
+        console.error("[confirm-payment] grupo nao liberado:", memberError.message);
+        return { success: false, error: "group_members write failed: " + memberError.message };
+      }
 
       // Record payment (with savings tracking)
       const savingsDataSub = await getSavingsData(supabaseAdmin, group_id, gateway_payment_id, amount);
-      await supabaseAdmin.from("payments").insert({
+      const { error: payErr } = await supabaseAdmin.from("payments").insert({
         user_id,
         amount,
         official_price: savingsDataSub.official_price,
         paid_amount: savingsDataSub.paid_amount,
-        method: payment_method || "subscription",
+        method: normalizePaymentMethod(payment_method),
         status: "paid",
         payment_type: "subscription",
         group_id,
@@ -560,6 +671,13 @@ export async function confirmPayment(params: ConfirmParams) {
         gateway,
         notes: "Assinatura recorrente paga",
       });
+
+      if (payErr) {
+        // Sem a linha em `payments` o pagamento nao aparece no billing E a
+        // trava de idempotencia nunca dispara (ela le `payments`).
+        console.error("[confirm-payment] pagamento nao registrado:", payErr.message);
+        return { success: false, error: "payments insert failed: " + payErr.message };
+      }
 
       // Platform event: payment + member_joined
       const { data: subGroup } = await supabaseAdmin
@@ -637,15 +755,15 @@ export async function confirmPayment(params: ConfirmParams) {
 
       // Mark oldest pending invoice as paid
       try {
-        const { data: invoice } = await supabaseAdmin
+        const { data: invoiceRows } = await supabaseAdmin
           .from("invoices")
           .select("id")
           .eq("user_id", user_id)
           .eq("group_id", group_id)
           .eq("status", "pending")
           .order("due_date", { ascending: true })
-          .limit(1)
-          .maybeSingle();
+          .limit(1);
+        const invoice = (invoiceRows && invoiceRows[0]) || null;
 
         if (invoice) {
           await supabaseAdmin
@@ -654,12 +772,14 @@ export async function confirmPayment(params: ConfirmParams) {
             .eq("id", invoice.id);
 
           // Create next invoice
-          const { data: sub } = await supabaseAdmin
+          const { data: subRows } = await supabaseAdmin
             .from("user_subscriptions")
-            .select("billing_cycle, custom_cycle_days, custom_cycle_months, amount, expires_at")
+            .select("id, billing_cycle, custom_cycle_days, custom_cycle_months, amount, expires_at")
             .eq("user_id", user_id)
             .eq("group_id", group_id)
-            .maybeSingle();
+            .order("created_at", { ascending: false })
+            .limit(1);
+          const sub = (subRows && subRows[0]) || null;
 
           if (sub) {
             const nextDue = new Date();
@@ -685,8 +805,7 @@ export async function confirmPayment(params: ConfirmParams) {
             await supabaseAdmin
               .from("user_subscriptions")
               .update({ expires_at: nextDue.toISOString() })
-              .eq("user_id", user_id)
-              .eq("group_id", group_id);
+              .eq("id", sub.id);
           }
         }
       } catch (invoiceErr) {
@@ -720,8 +839,10 @@ export async function confirmPayment(params: ConfirmParams) {
         console.error("Referral processing error:", refErr);
       }
 
-      // Registrar cupom após confirmação do pagamento PIX (combined)
-      await registerCouponUsagePIX(supabaseAdmin, gateway_payment_id, user_id, "combined");
+      // O cupom desta assinatura ja foi registrado acima (com o tipo
+      // "subscription"). Registrar de novo aqui, com o tipo "combined",
+      // duplicava o uso do cupom na confirmacao de assinatura.
+      return { success: true, payment_type: "subscription" };
     }
 
     // Aviso por e-mail para o administrador: grupo, pessoa, valor, tipo e
@@ -748,7 +869,7 @@ export async function confirmPayment(params: ConfirmParams) {
     await supabaseAdmin.from("payments").insert({
       user_id,
       amount,
-      method: payment_method || "unknown",
+      method: normalizePaymentMethod(payment_method),
       status: "failed",
       payment_type,
       group_id,
@@ -756,7 +877,13 @@ export async function confirmPayment(params: ConfirmParams) {
       gateway,
       notes: "Pagamento rejeitado",
     });
+
+    return { success: false, payment_type, error: "payment rejected by gateway" };
   }
+
+  // Pagamento ainda pendente no gateway: nada a confirmar, mas o chamador
+  // precisa saber que a transacao foi vista.
+  return { success: false, payment_type, error: "payment still pending" };
 }
 
 // ── Helper: registrar uso de cupom após confirmação PIX (webhook) ───────────────
@@ -767,22 +894,32 @@ async function registerCouponUsagePIX(
   payment_type: string,
 ): Promise<void> {
   try {
-    const { data: attempt } = await supabaseAdmin
+    // `final_amount` NAO existe em `payment_attempts` — o select falhava e o
+    // cupom NUNCA era registrado (o `if (!attempt?.coupon_id) return` cortava
+    // tudo). E `.maybeSingle()` abortava com as linhas duplicadas do polling.
+    const { data: attemptRows } = await supabaseAdmin
       .from("payment_attempts")
-      .select("coupon_id, discount_amount, original_amount, final_amount")
+      .select("coupon_id, discount_amount, original_amount")
       .eq("gateway_transaction_id", gateway_payment_id)
-      .maybeSingle();
+      .order("created_at", { ascending: true })
+      .limit(1);
+
+    const attempt = (attemptRows && attemptRows[0]) || null;
 
     if (!attempt?.coupon_id) return;
+
+    const originalAmount = Number(attempt.original_amount || 0);
+    const discountAmount = Number(attempt.discount_amount || 0);
+    const finalAmount = Math.max(0, originalAmount - discountAmount);
 
     const { data: existingUse } = await supabaseAdmin
       .from("coupon_uses")
       .select("id")
       .eq("coupon_id", attempt.coupon_id)
       .eq("user_id", user_id)
-      .maybeSingle();
+      .limit(1);
 
-    if (existingUse) {
+    if (existingUse && existingUse.length > 0) {
       console.log(`[registerCouponUsagePIX] coupon=${attempt.coupon_id} já usado por user=${user_id}`);
       return;
     }
@@ -791,9 +928,9 @@ async function registerCouponUsagePIX(
       coupon_id: attempt.coupon_id,
       user_id,
       payment_type,
-      original_amount: Number(attempt.original_amount || 0),
-      discount_amount: Number(attempt.discount_amount || 0),
-      final_amount: Number(attempt.final_amount || 0),
+      original_amount: originalAmount,
+      discount_amount: discountAmount,
+      final_amount: finalAmount,
       group_id: null,
     });
 

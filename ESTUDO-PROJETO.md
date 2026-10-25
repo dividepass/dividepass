@@ -1032,6 +1032,150 @@ O grupo pendente **fica visível, mas não aceita dinheiro**. A trava de pagamen
 
 ---
 
+## 12.7 Cobrança recorrente, webhook e organização do admin (2026-10-25)
+
+### O que foi pedido
+Cobrar as mensalidades automaticamente, destravar o acesso de quem já pagou, corrigir o
+valor do popup de renovação e organizar as telas de `admin/billing` + `admin/subscriptions`.
+
+### O webhook nunca confirmava: `maybeSingle()` em coluna não única
+`iopay-webhook` lia a tentativa de pagamento com `.maybeSingle()` em
+`payment_attempts.gateway_transaction_id` — que **não é única**: o polling do browser
+(`check-iopay-tx`) gravava uma linha nova a cada round com o mesmo id. Com 2+ linhas o
+PostgREST devolve erro, `data` fica `null` e o webhook respondia **HTTP 200
+`{"received":true}` sem confirmar nada**.
+
+Por isso o botão manual ("Eventos > Pagamentos > Verificar no Gateway",
+`force-confirm-payment`) funcionava: ele resolve o alvo por `payment_attempts.id` e
+não depende do `maybeSingle`.
+
+Correções: busca com `.limit(1)` + `order(created_at desc)`, o polling passa a
+**atualizar** a tentativa existente em vez de inserir duplicata, e o log do webhook
+também atualiza (a própria linha duplicada envenenava a entrega seguinte).
+
+### Outros pontos que matavam a confirmação
+- **Envelope do gateway**: o webhook não desembrulhou `{success:…}`/`{data:…}` →
+  `reference_id` vinha `undefined` → early return "Invalid external reference".
+- **`payments.method` é ENUM** (`pix|credit_card|bank_slip`). O webhook gravava
+  `"unknown"`, `"subscription"` e `"iopay"` → o insert era **rejeitado** → a linha do
+  pagamento não existia → a trava de idempotência (que lê `payments`) nunca disparava.
+- **`payment_attempts.final_amount` não existe** → o select falhava → o cupom nunca era
+  registrado e o `paid_amount` caía no default.
+- **Escritas sem checar erro**: `group_members`, `user_subscriptions` e `payments` eram
+  gravados sem `.error` → gravação perdida em silêncio. `confirmPayment` agora **retorna
+  `{success, error}`** e o webhook registra a falha.
+- **`user_subscriptions.service_id` é NOT NULL**: o fallback de criação reprovava e a
+  assinatura nunca nascia.
+- **Cartão sem `notification_url`**: a transação de cartão era criada sem a URL do
+  webhook → a IO Pay **nunca notificava** a confirmação. Corrigido nos 3 blocos
+  (fatura, adesão, assinatura).
+- **Fatura pelo webhook**: `reference_id = "invoice:<id>"` tem 2 partes e caía no
+  early-return de 3 partes. Agora o webhook quita a fatura.
+
+### Por que a cobrança automática não saía
+1. **`process-recurring-billing` não estava no `config.toml`** → herdava
+   `verify_jwt = true` → o gateway respondia **401 `UNAUTHORIZED_INVALID_JWT_FORMAT`**
+   *antes* do código rodar. O cron envia um segredo, não um JWT.
+2. **Filtros que excluíam NULL**: `billing_status != 'cancelled'` e `retry_count < 3`
+   são NULL em SQL, e o PostgREST filtra as linhas com NULL → assinaturas antigas
+   nunca eram cobradas. `next_charge_at` NULL também as escondia.
+3. **Skips invisíveis**: sem `customer_id_iopay` / sem cartão / gateway não configurado
+   eram só `console.log` + `skipped++`. Agora viram linha em `billing_cycles`
+   (`status: 'failed'` + `error_message`) e aparecem na tela de falhas.
+4. **`process-overdue-invoices` morria com 500**: o embed
+   `subscription:user_subscriptions!inner(...)` é inválido — `invoices` não tem
+   `subscription_id` nem FK. O job inteiro não processava nenhuma fatura.
+
+### O preço do ciclo: `amount` é o TOTAL, `price_per_slot` é o MENSAL
+`user_subscriptions.amount` significa **total do ciclo** (Spotify semestral = R$ 12,90
+pelo semestre). `groups.price_per_slot` é o **preço mensal** da vaga.
+
+O `SubscriptionEdit` gravava `amount = groups.price_per_slot` ao transferir a
+assinatura para outro grupo → o campo do ciclo passava a valer o preço mensal, e o
+popup cobrava R$ 69,90 num ciclo semestral de R$ 11,65/mês.
+
+Agora o total é sempre **preço mensal × meses do ciclo**, no front (popup) e no back
+(`create-payment`, caminhos PIX e cartão), com o cupom recalculado pelo servidor.
+
+### O popup de renovação
+- Seletor de ciclo **marcado no ciclo que a pessoa já tinha**, limitado aos ciclos do
+  grupo (`groups.available_cycles`).
+- Resumo: preço mensal → ciclo (n meses) → desconto → **total**.
+- Campo de cupom (valida contra `coupons`, que é legível por policy "Anyone can
+  validate coupon code") e seletor de cartão.
+
+### O painel de cron era ficção
+`manage-crons` listava jobs com a RPC `exec_sql`, que **não existe** (404) → o fallback
+devolvia uma lista **inventada** de 3 jobs, sempre "Ativos". Agora usa as RPCs estreitas
+`manage_cron_jobs()` / `toggle_cron_job()` (`database/add-cron-management.sql`), e
+quando o banco não responde a tela diz que não sabe — em vez de inventar.
+
+"Detalhes do Cron" contava `invoices` com `status='pending'` **sem filtro de
+vencimento** (por isso as "46 Faturas vencidas") e não mostrava **quem** eram. Agora
+filtra por vencimento real e lista nome, e-mail, grupo, valor, dias de atraso e a
+assinatura relacionada.
+
+### `cron.job` não tem `next_run` nem `description`
+**RLS/migration — a armadilha do `CREATE OR REPLACE`:** a RPC antiga (8 colunas)
+**foi criada com sucesso** apesar de referenciar `j.next_run` — em PL/pgSQL o
+corpo **só é validado na primeira execução**, não no `CREATE`. Por isso a
+correção seguinte esbarrou em `42P13: cannot change return type of existing
+function` (o Postgres não deixa trocar a assinatura de retorno / OUT params).
+O script agora faz `DROP FUNCTION IF EXISTS` + `CREATE` (fica reexecutável) e
+fecha com `NOTIFY pgrst, 'reload schema';` — sem isso o PostgREST continua
+servindo a assinatura antiga no cache e o painel de cron fica "indisponível".
+
+Lição geral: **"a função foi criada" não prova que ela funciona**. Uma RPC com
+coluna inexistente só estoura quando alguém chama.
+
+O primeiro `activate-all-crons.sql` morreu com `42703: column "next_run" does not
+exist`. O `cron.job` do pg_cron do Supabase tem só `jobid, jobname, schedule,
+command, nodename, nodeport, database, username, active, jobtype` — o **próximo
+disparo é calculado pelo pg_cron, não é gravado**. A RPC `manage_cron_jobs()`
+também referenciava `j.next_run` e `j.description`, então **nem chegava a ser
+criada** (a RPC é validada no momento do `CREATE`).
+
+Duas lições:
+1. Como o SQL Editor roda o script numa transação, **o erro no fim derrubou
+   tudo** — os três agendamentos criados antes também voltaram. O script é
+   idempotente (desagenda antes de agendar), então basta rodar de novo.
+2. `next_run` e `description` passaram a ser **calculados na edge function**
+   (`getNextRun(schedule)` + um mapa `CRON_META`), e o "Detalhes do Cron" lê o
+   `schedule` real do banco em vez de mostrar um valor fixo.
+
+### A linha de criação do pagamento é a mais antiga
+`payment_attempts` guarda **duas** informações em linhas diferentes: a de
+**criação** (tem `external_reference`, `coupon_id`, `original_amount`,
+`discount_amount`) e as de **polling** (só status e valor). Buscar com
+`order(created_at desc)` pegava a de polling — que não tem `coupon_id` — e o
+cupom **nunca** era registrado.
+
+O polling agora **atualiza** a linha de criação (uma linha por transação) e
+todas as buscas apontam para a mais antiga. A limpeza de duplicatas em
+`fix-recurring-billing.sql` só remove linhas **sem** `external_reference`, para
+não apagar justamente a linha que guarda o cupom.
+
+### Decisão
+Uma só implementação de confirmação, usada por webhook, polling e botão manual — o
+diferencial entre o caminho automático e o manual era **a causa** do bug, não um
+detalhe. E preço de ciclo é uma fórmula única (mensal × meses), nunca um campo que
+depende de quem escreveu.
+
+### Pendências que sobraram desta rodada
+- **Crons não verificados em produção**: `database/activate-all-crons.sql` agenda os
+  três jobs; falta rodar no SQL Editor e confirmar com `SELECT * FROM cron.job`.
+- **RPCs novas precisam ser aplicadas**: `database/add-cron-management.sql` e
+  `database/fix-recurring-billing.sql`.
+- **Funções de cron precisam ser redeployadas** com `verify_jwt = false`
+  (`supabase/config.toml` agora declara; no deploy, `--no-verify-jwt`).
+- **Assinaturas com `amount` errado** (gravadas pelo `SubscriptionEdit` antigo) não
+  foram corrigidas em lote: o próximo ciclo de cobrança recalcula o valor, mas o
+  admin pode querer um backfill.
+- **`cycle_discount` é gravado e nunca aplicado** em lugar nenhum do cálculo de preço
+  (só informado na tela de edição).
+
+---
+
 ## 13. Perguntas em aberto — respondidas
 
 1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam. Em produção existem `BILLING_CRON_SECRET` e `OVERDUE_CRON_SECRET` (rotacionados). **Continua em aberto:** quais jobs estão de fato agendados no `pg_cron`.

@@ -38,9 +38,11 @@ export default {
       const { action } = body;
 
       if (action === "search_user") {
-        const { email } = body;
-        if (!email || email.length < 3) {
-          return new Response(JSON.stringify({ error: "email required (min 3 chars)" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        // Aceita `email` (contrato antigo) e `query` (contrato novo da UI) —
+        // a busca e por nome OU e-mail, nao so por e-mail.
+        const term = String(body.email || body.query || "").trim();
+        if (!term || term.length < 3) {
+          return new Response(JSON.stringify({ error: "Informe ao menos 3 caracteres para buscar." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
         // Buscar em auth.users (fonte verdadeira de emails)
@@ -54,10 +56,15 @@ export default {
           return new Response(JSON.stringify({ error: "Failed to list users: " + authErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        // Filtrar por email
-        const matched = (authUsers?.users || []).filter(u =>
-          u.email && u.email.toLowerCase().includes(email.toLowerCase())
-        );
+        // Filtrar por email OU nome
+        const matched = (authUsers?.users || []).filter(u => {
+          const emailMatch = u.email && u.email.toLowerCase().includes(term.toLowerCase());
+          const nameMatch = u.user_metadata?.name
+            && String(u.user_metadata.name).toLowerCase().includes(term.toLowerCase());
+          const fullNameMatch = u.user_metadata?.full_name
+            && String(u.user_metadata.full_name).toLowerCase().includes(term.toLowerCase());
+          return emailMatch || nameMatch || fullNameMatch;
+        });
 
         console.log("Auth users found:", matched.length, "of", authUsers?.users?.length || 0);
 

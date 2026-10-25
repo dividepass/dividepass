@@ -6,6 +6,7 @@ import {
   Copy,
   Check,
   ChevronLeft,
+  ChevronRight,
   Shield,
   AlertTriangle,
   Calendar,
@@ -356,6 +357,7 @@ function ServiceCredentials() {
   // pela tela de acesso negado.
   const renewalModal = accessSubscription ? (
     <SubscriptionRenewalModal
+      key={showRenewal ? 'renewal-modal' : 'renewal-modal-closed'}
       open={showRenewal}
       subscription={accessSubscription}
       group={activeService?.group}

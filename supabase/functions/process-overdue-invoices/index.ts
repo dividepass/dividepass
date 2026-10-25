@@ -63,9 +63,19 @@ export default {
       const cutoff = fiveDaysAgo.toISOString().split("T")[0];
 
       // Busca faturas pendentes vencidas há mais de 5 dias
+      //
+      // O embed `subscription:user_subscriptions!inner(...)` foi removido: a
+      // tabela `invoices` NAO tem coluna `subscription_id` nem FK para
+      // `user_subscriptions`, entao o PostgREST rejeitava o SELECT inteiro
+      // e o job morria com 500 antes de processar qualquer fatura.
+      // A assinatura agora e resolvida separadamente, por (user_id, group_id).
+      //
+      // `service_id` tambem NAO existe em `invoices` (o servico vem do grupo):
+      // pedir uma coluna inexistente faz o PostgREST devolver 42703 e derruba
+      // o job inteiro. A coluna foi removida do select.
       const { data: overdueInvoices, error: invoiceError } = await supabaseAdmin
         .from("invoices")
-        .select("*, subscription:user_subscriptions!inner(id, status, group_id, user_id)")
+        .select("id, user_id, group_id, amount, due_date, status")
         .eq("status", "pending")
         .lt("due_date", cutoff);
 
@@ -76,11 +86,20 @@ export default {
       const processed: string[] = [];
 
       for (const invoice of overdueInvoices || []) {
-        const subscriptionId = invoice.subscription?.id;
         const userId = invoice.user_id;
-        const groupId = invoice.group_id || invoice.subscription?.group_id;
+        const groupId = invoice.group_id;
 
         if (!userId || !groupId) continue;
+
+        const { data: subRows } = await supabaseAdmin
+          .from("user_subscriptions")
+          .select("id, status, group_id, user_id")
+          .eq("user_id", userId)
+          .eq("group_id", groupId)
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        const subscription = (subRows && subRows[0]) || null;
 
         // 1. Marca fatura como falha/inadimplente
         await supabaseAdmin
@@ -89,6 +108,7 @@ export default {
           .eq("id", invoice.id);
 
         // 2. Cancela/expira a assinatura
+        const subscriptionId = subscription?.id || null;
         if (subscriptionId) {
           await supabaseAdmin
             .from("user_subscriptions")
@@ -120,8 +140,8 @@ export default {
         await supabaseAdmin.from("activity_logs").insert({
           user_id: userId,
           action: "update",
-          entity_type: "subscription",
-          entity_id: subscriptionId,
+          entity_type: subscriptionId ? "subscription" : "invoice",
+          entity_id: subscriptionId || invoice.id,
           description: `Membro removido por inadimplência. Fatura ${invoice.id} vencida há mais de 5 dias. Senha da credencial alterada.`,
         });
 

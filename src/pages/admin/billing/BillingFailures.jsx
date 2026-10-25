@@ -1,119 +1,352 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
-import { RefreshCw, Search, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Search, AlertTriangle, CheckCircle, Zap, Loader2, X, AlertCircle, Info } from 'lucide-react';
 import './BillingFailures.css';
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+
 function formatCurrency(value) {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value) || 0);
+}
+
+function localDateStr(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function formatDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('pt-BR');
+}
+
+async function callEdgeFunction(functionName, body) {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !sessionData?.session) {
+    throw new Error('Sessão do admin não encontrada. Faça login novamente.');
+  }
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${sessionData.session.access_token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const raw = await response.text();
+  let data;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new Error(`Resposta inválida de ${functionName} (HTTP ${response.status}): ${raw.slice(0, 200)}`);
+  }
+  if (!response.ok) {
+    throw new Error(data?.error || `HTTP ${response.status} ao chamar ${functionName}`);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+// Nomes de usuário/grupo resolvidos por id (não depende do nome da FK).
+async function fetchDirectory(userIds, groupIds) {
+  const users = [...new Set(userIds.filter(Boolean))];
+  const groups = [...new Set(groupIds.filter(Boolean))];
+  const [usersRes, groupsRes] = await Promise.all([
+    users.length
+      ? supabase.from('users').select('id, name, email').in('id', users)
+      : Promise.resolve({ data: [] }),
+    groups.length
+      ? supabase.from('groups').select('id, name').in('id', groups)
+      : Promise.resolve({ data: [] }),
+  ]);
+  return {
+    users: new Map((usersRes.data || []).map(u => [u.id, u])),
+    groups: new Map((groupsRes.data || []).map(g => [g.id, g])),
+  };
+}
+
+function Toast({ toast, onClose }) {
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = setTimeout(onClose, 7000);
+    return () => clearTimeout(timer);
+  }, [toast, onClose]);
+
+  if (!toast) return null;
+  return (
+    <div className={`failures-toast ${toast.type}`} role="status">
+      {toast.type === 'success' && <CheckCircle size={16} />}
+      {toast.type === 'error' && <AlertCircle size={16} />}
+      {toast.type === 'warning' && <AlertTriangle size={16} />}
+      {toast.type === 'info' && <Info size={16} />}
+      <span>{toast.message}</span>
+      <button type="button" onClick={onClose} aria-label="Fechar aviso"><X size={14} /></button>
+    </div>
+  );
 }
 
 function BillingFailures() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [failures, setFailures] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [loadErrors, setLoadErrors] = useState([]);
   const [filterPeriod, setFilterPeriod] = useState('all');
   const [filterGateway, setFilterGateway] = useState('all');
   const [filterAttempt, setFilterAttempt] = useState('all');
+  const [filterOrigin, setFilterOrigin] = useState('all');
   const [search, setSearch] = useState('');
   const [retryingId, setRetryingId] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const fetchFailures = useCallback(async () => {
-    setLoading(true);
-    let query = supabase
-      .from('billing_cycles')
-      .select(`
-        id, amount, attempt_number, error_message, error_code, next_retry_at,
-        charge_date, created_at, updated_at, gateway, gateway_transaction_id,
-        user_id, group_id, subscription_id,
-        user:users!billing_cycles_user_id_fkey (id, name, email),
-        group:groups!billing_cycles_group_id_fkey (id, name),
-        subscription:user_subscriptions!billing_cycles_subscription_id_fkey (
-          card_last4, card_brand, billing_cycle, gateway as sub_gateway, status,
-          service_id
-        ),
-        service:streaming_services!user_subscriptions_service_id_fkey (name)
-      `)
-      .eq('status', 'failed');
-
-    if (filterPeriod === 'today') {
-      const today = new Date().toISOString().split('T')[0];
-      query = query.eq('charge_date', today);
-    } else if (filterPeriod === 'week') {
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      query = query.gte('charge_date', weekAgo.toISOString().split('T')[0]);
-    } else if (filterPeriod === 'month') {
-      const monthAgo = new Date();
-      monthAgo.setMonth(monthAgo.getMonth() - 1);
-      query = query.gte('charge_date', monthAgo.toISOString().split('T')[0]);
-    }
-
-    if (filterGateway !== 'all') {
-      query = query.eq('gateway', filterGateway);
-    }
-
-    if (filterAttempt !== 'all') {
-      query = query.eq('attempt_number', parseInt(filterAttempt));
-    }
-
-    const { data } = await query.order('updated_at', { ascending: false });
-
-    let filtered = data || [];
-    if (search) {
-      const s = search.toLowerCase();
-      filtered = filtered.filter(f =>
-        f.user?.name?.toLowerCase().includes(s) ||
-        f.user?.email?.toLowerCase().includes(s) ||
-        f.group?.name?.toLowerCase().includes(s) ||
-        f.error_message?.toLowerCase().includes(s)
-      );
-    }
-
-    setFailures(filtered);
-    setLoading(false);
-  }, [filterPeriod, filterGateway, filterAttempt, search]);
+  const showToast = useCallback((type, message) => setToast({ type, message }), []);
+  const closeToast = useCallback(() => setToast(null), []);
 
   useEffect(() => {
-    fetchFailures();
-  }, [fetchFailures]);
+    let cancelled = false;
 
-  async function handleRetryCharge(failure) {
-    setRetryingId(failure.id);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-recurring-billing`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ subscription_id: failure.subscription_id, manual: true }),
+    async function fetchFailures() {
+      setLoading(true);
+      const errors = [];
+
+      const [cyclesRes, invoicesRes, retryingRes, subsRes] = await Promise.all([
+        // (a) ciclos de cobrança recusados pelo gateway
+        supabase
+          .from('billing_cycles')
+          .select(`
+            id, amount, attempt_number, error_message, error_code, next_retry_at,
+            charge_date, created_at, gateway, gateway_transaction_id,
+            user_id, group_id, subscription_id
+          `)
+          .eq('status', 'failed')
+          .order('created_at', { ascending: false })
+          .limit(200),
+        // (b) faturas com status de falha
+        supabase
+          .from('invoices')
+          .select('id, user_id, group_id, service_id, amount, due_date, status, gateway_transaction_id, paid_at')
+          .eq('status', 'failed')
+          .order('due_date', { ascending: false })
+          .limit(200),
+        // (c) assinaturas em retry (o gateway recusou e o cron vai tentar de novo)
+        supabase
+          .from('user_subscriptions')
+          .select(`
+            id, amount, status, billing_status, billing_cycle, retry_count, next_charge_at,
+            payment_method, user_id, group_id, service_id,
+            user:user_id (id, name, email),
+            group:group_id (id, name),
+            service:service_id (id, name)
+          `)
+          .eq('billing_status', 'retrying')
+          .order('next_charge_at', { ascending: true })
+          .limit(200),
+        // mapa de assinatura por usuário/grupo/serviço (para vincular faturas)
+        supabase
+          .from('user_subscriptions')
+          .select('id, user_id, group_id, service_id, status')
+          .eq('status', 'active'),
+      ]);
+
+      if (cyclesRes.error) errors.push(`billing_cycles: ${cyclesRes.error.message}`);
+      if (invoicesRes.error) errors.push(`invoices: ${invoicesRes.error.message}`);
+      if (retryingRes.error) errors.push(`user_subscriptions (retrying): ${retryingRes.error.message}`);
+      if (subsRes.error) errors.push(`user_subscriptions (mapa): ${subsRes.error.message}`);
+
+      const cycles = cyclesRes.data || [];
+      const invoices = invoicesRes.data || [];
+      const retrying = retryingRes.data || [];
+      const subs = subsRes.data || [];
+
+      const subByKey = new Map();
+      subs.forEach(s => {
+        const key = `${s.user_id}|${s.group_id}|${s.service_id}`;
+        if (!subByKey.has(key)) subByKey.set(key, s);
       });
-      const result = await resp.json();
-      if (result.success) {
-        alert('Cobrança reprocessada com sucesso!');
-        fetchFailures();
-      } else {
-        alert('Erro: ' + (result.error || 'Desconhecido'));
-      }
-    } catch (e) {
-      alert('Erro ao reprocessar: ' + e.message);
-    }
-    setRetryingId(null);
-  }
 
-  const filtered = failures;
+      const dir = await fetchDirectory(
+        [...cycles.map(c => c.user_id), ...invoices.map(i => i.user_id)],
+        [...cycles.map(c => c.group_id), ...invoices.map(i => i.group_id)],
+      );
+
+      const merged = [];
+
+      cycles.forEach(cycle => {
+        merged.push({
+          key: `ciclo-${cycle.id}`,
+          origem: 'ciclo',
+          subscriptionId: cycle.subscription_id || null,
+          userName: dir.users.get(cycle.user_id)?.name || '—',
+          userEmail: dir.users.get(cycle.user_id)?.email || '',
+          groupName: dir.groups.get(cycle.group_id)?.name || '—',
+          serviceName: '—',
+          amount: cycle.amount,
+          reason: cycle.error_message || null,
+          errorCode: cycle.error_code || null,
+          attempt: cycle.attempt_number || 0,
+          nextRetryAt: cycle.next_retry_at,
+          date: cycle.charge_date || cycle.created_at,
+          gateway: cycle.gateway || null,
+        });
+      });
+
+      invoices.forEach(invoice => {
+        const match = subByKey.get(`${invoice.user_id}|${invoice.group_id}|${invoice.service_id}`);
+        merged.push({
+          key: `fatura-${invoice.id}`,
+          origem: 'fatura',
+          subscriptionId: match ? match.id : null,
+          userName: dir.users.get(invoice.user_id)?.name || '—',
+          userEmail: dir.users.get(invoice.user_id)?.email || '',
+          groupName: dir.groups.get(invoice.group_id)?.name || '—',
+          serviceName: '—',
+          amount: invoice.amount,
+          reason: invoice.gateway_transaction_id
+            ? `Transação do gateway: ${invoice.gateway_transaction_id}`
+            : 'Fatura marcada como falha pelo gateway',
+          errorCode: null,
+          attempt: 0,
+          nextRetryAt: null,
+          date: invoice.due_date,
+          gateway: null,
+        });
+      });
+
+      retrying.forEach(sub => {
+        merged.push({
+          key: `assinatura-${sub.id}`,
+          origem: 'assinatura',
+          subscriptionId: sub.id,
+          userName: sub.user?.name || '—',
+          userEmail: sub.user?.email || '',
+          groupName: sub.group?.name || '—',
+          serviceName: sub.service?.name || '—',
+          amount: sub.amount,
+          reason: null,
+          errorCode: null,
+          attempt: sub.retry_count || 0,
+          nextRetryAt: sub.next_charge_at,
+          date: sub.next_charge_at,
+          gateway: null,
+        });
+      });
+
+      merged.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+
+      if (!cancelled) {
+        setRows(merged);
+        setLoadErrors(errors);
+      }
+      if (!cancelled) setLoading(false);
+    }
+
+    fetchFailures();
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  const handleRetryCharge = async (row) => {
+    if (!row.subscriptionId) {
+      showToast('error', 'Este item não tem assinatura vinculada — não há como reprocessar.');
+      return;
+    }
+    setRetryingId(row.key);
+    try {
+      const data = await callEdgeFunction('process-recurring-billing', {
+        manual: true,
+        subscription_id: row.subscriptionId,
+      });
+      const approved = Number(data.approved || 0);
+      const failed = Number(data.failed || 0);
+      const skipped = Number(data.skipped || 0);
+      const details = Array.isArray(data.details) ? data.details : [];
+      const own = details.find(d => d.subscription_id === row.subscriptionId);
+      const reason = own?.error || (Array.isArray(data.errors) && data.errors[0]) || null;
+
+      if (approved > 0) {
+        showToast('success', `Cobrança reprocessada e aprovada para ${row.userName}.`);
+      } else if (failed > 0) {
+        showToast('error', `A cobrança de ${row.userName} foi recusada novamente${reason ? `: ${reason}` : '.'}`);
+      } else if (skipped > 0) {
+        showToast('warning', `Reprocessamento ignorado para ${row.userName} (sem cartão salvo ou gateway não configurado).`);
+      } else {
+        showToast('info', `Nada foi cobrado para ${row.userName}: a assinatura não é elegível agora.`);
+      }
+      setRefreshKey(k => k + 1);
+    } catch (err) {
+      showToast('error', `Erro ao reprocessar ${row.userName}: ${err.message}`);
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  // Todos os filtros são aplicados no cliente sobre os dados já carregados:
+  // a busca não dispara uma query por tecla digitada.
+  const filtered = useMemo(() => {
+    const today = new Date();
+    const todayStr = localDateStr(today);
+    const weekAgo = new Date(today.getTime() - 7 * 86400000);
+    const monthAgo = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
+    const term = search.trim().toLowerCase();
+
+    return rows.filter(row => {
+      if (filterOrigin !== 'all' && row.origem !== filterOrigin) return false;
+
+      if (filterPeriod !== 'all') {
+        const date = row.date ? String(row.date).slice(0, 10) : '';
+        if (!date) return false;
+        if (filterPeriod === 'today' && date !== todayStr) return false;
+        if (filterPeriod === 'week' && date < localDateStr(weekAgo)) return false;
+        if (filterPeriod === 'month' && date < localDateStr(monthAgo)) return false;
+      }
+
+      if (filterGateway !== 'all' && row.gateway !== filterGateway) return false;
+
+      if (filterAttempt !== 'all' && String(row.attempt) !== filterAttempt) return false;
+
+      if (term) {
+        const haystack = [
+          row.userName,
+          row.userEmail,
+          row.groupName,
+          row.serviceName,
+          row.reason,
+          row.errorCode,
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
+      return true;
+    });
+  }, [rows, search, filterPeriod, filterGateway, filterAttempt, filterOrigin]);
 
   return (
     <div className="billing-failures-page">
       <div className="admin-header">
-        <h1>Dashboard de Falhas</h1>
-        <p>Gerencie cobranças recusadas e reprocessamentos</p>
+        <div>
+          <h1>Falhas de Cobrança</h1>
+          <p>Ciclos recusados, faturas com falha e assinaturas em retry — com o motivo de cada uma.</p>
+        </div>
+        <button className="btn btn-outline btn-sm" onClick={() => setRefreshKey(k => k + 1)} disabled={loading}>
+          <RefreshCw size={14} className={loading ? 'spinning' : ''} /> Atualizar
+        </button>
       </div>
+
+      {loadErrors.length > 0 && (
+        <div className="failures-error-banner">
+          <AlertCircle size={16} />
+          <div>
+            <strong>Não foi possível carregar parte das falhas:</strong>
+            <ul>
+              {loadErrors.map((err, i) => <li key={i}>{err}</li>)}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <div className="failures-filters">
         <div className="filter-group">
-          <label>Período</label>
-          <select value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}>
+          <label htmlFor="failures-period">Período</label>
+          <select id="failures-period" value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}>
             <option value="all">Todos</option>
             <option value="today">Hoje</option>
             <option value="week">Última Semana</option>
@@ -122,8 +355,18 @@ function BillingFailures() {
         </div>
 
         <div className="filter-group">
-          <label>Gateway</label>
-          <select value={filterGateway} onChange={e => setFilterGateway(e.target.value)}>
+          <label htmlFor="failures-origin">Origem</label>
+          <select id="failures-origin" value={filterOrigin} onChange={e => setFilterOrigin(e.target.value)}>
+            <option value="all">Todas</option>
+            <option value="ciclo">Ciclo de cobrança</option>
+            <option value="fatura">Fatura</option>
+            <option value="assinatura">Assinatura em retry</option>
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label htmlFor="failures-gateway">Gateway</label>
+          <select id="failures-gateway" value={filterGateway} onChange={e => setFilterGateway(e.target.value)}>
             <option value="all">Todos</option>
             <option value="iopay">IOPay</option>
             <option value="mercadopago">Mercado Pago</option>
@@ -134,9 +377,10 @@ function BillingFailures() {
         </div>
 
         <div className="filter-group">
-          <label>Tentativa</label>
-          <select value={filterAttempt} onChange={e => setFilterAttempt(e.target.value)}>
+          <label htmlFor="failures-attempt">Tentativa</label>
+          <select id="failures-attempt" value={filterAttempt} onChange={e => setFilterAttempt(e.target.value)}>
             <option value="all">Todas</option>
+            <option value="0">Sem tentativa</option>
             <option value="1">1a Tentativa</option>
             <option value="2">2a Tentativa</option>
             <option value="3">3a Tentativa</option>
@@ -144,10 +388,11 @@ function BillingFailures() {
         </div>
 
         <div className="filter-group search-group">
-          <label>Buscar</label>
+          <label htmlFor="failures-search">Buscar</label>
           <div className="search-input-wrap">
             <Search size={16} />
             <input
+              id="failures-search"
               type="text"
               placeholder="Nome, email, grupo, erro..."
               value={search}
@@ -162,7 +407,14 @@ function BillingFailures() {
       ) : filtered.length === 0 ? (
         <div className="failures-empty">
           <AlertTriangle size={48} />
-          <p>Nenhuma falha encontrada com os filtros selecionados.</p>
+          {rows.length === 0 ? (
+            <p>
+              Nenhuma falha registrada. As falhas aparecem aqui quando o gateway recusa uma cobrança
+              (o cron grava em <code>billing_cycles</code>).
+            </p>
+          ) : (
+            <p>Nenhum item corresponde aos filtros selecionados.</p>
+          )}
         </div>
       ) : (
         <div className="failures-table-wrap">
@@ -170,51 +422,60 @@ function BillingFailures() {
             <thead>
               <tr>
                 <th>Cliente</th>
-                <th>Plano</th>
+                <th>Serviço</th>
                 <th>Grupo</th>
+                <th>Origem</th>
                 <th>Valor</th>
                 <th>Tentativa</th>
-                <th>Erro</th>
-                <th>Última Tentativa</th>
-                <th>Próxima Tentativa</th>
-                <th>Ação</th>
+                <th>Motivo</th>
+                <th>Data</th>
+                <th>Próxima tentativa</th>
+                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map(f => (
-                <tr key={f.id}>
+              {filtered.map(row => (
+                <tr key={row.key}>
                   <td>
                     <div className="failure-user">
-                      <strong>{f.user?.name || 'N/A'}</strong>
-                      <span>{f.user?.email || ''}</span>
+                      <strong>{row.userName}</strong>
+                      <span>{row.userEmail}</span>
                     </div>
                   </td>
-                  <td>{f.service?.name || 'N/A'}</td>
-                  <td>{f.group?.name || 'N/A'}</td>
-                  <td className="failure-amount">{formatCurrency(f.amount)}</td>
+                  <td>{row.serviceName}</td>
+                  <td>{row.groupName}</td>
+                  <td><span className="failure-origin">{row.origem}</span></td>
+                  <td className="failure-amount">{formatCurrency(row.amount)}</td>
                   <td>
-                    <span className={`attempt-badge attempt-${f.attempt_number}`}>
-                      {f.attempt_number}a
+                    <span className={`attempt-badge attempt-${row.attempt}`}>
+                      {row.attempt > 0 ? `${row.attempt}a` : '—'}
                     </span>
                   </td>
-                  <td className="failure-error">{f.error_message || 'N/A'}</td>
-                  <td>{new Date(f.updated_at).toLocaleDateString('pt-BR')}</td>
-                  <td>
-                    {f.next_retry_at
-                      ? new Date(f.next_retry_at).toLocaleDateString('pt-BR')
-                      : '-'}
+                  <td className="failure-error" title={row.reason || row.errorCode || ''}>
+                    {row.reason || row.errorCode || 'Motivo não informado'}
                   </td>
+                  <td>{formatDate(row.date)}</td>
+                  <td>{row.nextRetryAt ? formatDate(row.nextRetryAt) : '—'}</td>
                   <td>
-                    {f.subscription?.status === 'active' && (
+                    <div className="failure-actions">
                       <button
                         className="retry-btn"
-                        onClick={() => handleRetryCharge(f)}
-                        disabled={retryingId === f.id}
+                        onClick={() => handleRetryCharge(row)}
+                        disabled={retryingId === row.key || !row.subscriptionId}
+                        title={row.subscriptionId ? 'Reprocessar agora' : 'Sem assinatura vinculada'}
                       >
-                        <RefreshCw size={14} className={retryingId === f.id ? 'spinning' : ''} />
-                        {retryingId === f.id ? 'Processando...' : 'Cobrar Agora'}
+                        {retryingId === row.key
+                          ? <><Loader2 size={14} className="spinning" /> Processando...</>
+                          : <><Zap size={14} /> Reprocessar agora</>}
                       </button>
-                    )}
+                      <button
+                        className="retry-btn secondary"
+                        onClick={() => navigate(`/admin/subscriptions/${row.subscriptionId}/edit`)}
+                        disabled={!row.subscriptionId}
+                      >
+                        Abrir assinatura
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -222,6 +483,8 @@ function BillingFailures() {
           </table>
         </div>
       )}
+
+      <Toast toast={toast} onClose={closeToast} />
     </div>
   );
 }

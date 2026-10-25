@@ -10,6 +10,45 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // ---------------------------------------------------------------------------
+  // AUTORIZACAO
+  //
+  // A funcao roda com `verify_jwt = false` (o cron manda um segredo, nao um
+  // JWT). Sem esta checagem ela viraria um endpoint PUBLICO que altera o
+  // status das assinaturas de qualquer pessoa.
+  //
+  // Aceita: o SERVICE_ROLE_KEY, o segredo guardado em `app_settings` ou o
+  // BILLING_CRON_SECRET do ambiente.
+  // ---------------------------------------------------------------------------
+  const serviceRoleKey = Deno.env.get("SERVICE_ROLE_KEY") || "";
+  const authHeader = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  let authorized = authHeader === serviceRoleKey && serviceRoleKey !== "";
+
+  if (!authorized && authHeader) {
+    const { data: secretRows } = await createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      serviceRoleKey,
+    ).from("app_settings").select("value").in("key", [
+      "recurring_billing_cron_secret",
+      "billing_cron_secret",
+      "subscription_status_cron_secret",
+    ]);
+
+    const accepted = [
+      Deno.env.get("BILLING_CRON_SECRET") || "",
+      ...(secretRows || []).map((r: any) => r.value || ""),
+    ].filter(Boolean);
+
+    authorized = accepted.includes(authHeader);
+  }
+
+  if (!authorized) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   try {
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -82,8 +121,15 @@ Deno.serve(async (req) => {
     totalUpdated += c4 || 0;
 
     // 5. Sync user_subscriptions status
-    await supabaseAdmin.rpc("exec_sql", {
-      query: `
+    //
+    // `exec_sql` nao existe em producao (404) e o `rpc()` do supabase-js v2
+    // devolve um builder que tem `.then()` mas NAO tem `.catch()` — usar
+    // `.catch()` aqui quebrava a function inteira com
+    // "supabaseAdmin.rpc(...).catch is not a function". O try/catch abaixo
+    // deixa a RPC falhar silenciosamente e o fallback direto faz o trabalho.
+    try {
+      await supabaseAdmin.rpc("exec_sql", {
+        query: `
         UPDATE user_subscriptions us
         SET status = CASE
           WHEN gm.payment_status = 'active' THEN 'active'::subscription_status
@@ -103,9 +149,10 @@ Deno.serve(async (req) => {
             ELSE us.status
           END
       `
-    }).catch(() => {
+      });
+    } catch {
       // rpc might not exist, fallback to direct queries
-    });
+    }
 
     // Fallback: direct update for user_subscriptions
     const { count: c5a } = await supabaseAdmin

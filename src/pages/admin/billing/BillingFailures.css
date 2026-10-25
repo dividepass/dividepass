@@ -235,3 +235,121 @@
     min-width: auto;
   }
 }
+
+/* ---------------------------------------------
+   Erro de carga, origem e ações
+   --------------------------------------------- */
+.failures-error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--error);
+  font-size: 0.85rem;
+}
+
+.failures-error-banner ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.failures-empty code {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.8rem;
+}
+
+.failure-origin {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.attempt-badge.attempt-0 {
+  background: rgba(107, 114, 128, 0.12);
+  color: #6B7280;
+}
+
+.failure-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.retry-btn.secondary {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.retry-btn.secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* ---------------------------------------------
+   Toast
+   --------------------------------------------- */
+.failures-toast {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  z-index: 1300;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  max-width: 420px;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.failures-toast.success { border-left: 3px solid var(--success); }
+.failures-toast.success svg { color: var(--success); }
+.failures-toast.error { border-left: 3px solid var(--error); }
+.failures-toast.error svg { color: var(--error); }
+.failures-toast.warning { border-left: 3px solid var(--warning); }
+.failures-toast.warning svg { color: var(--warning); }
+.failures-toast.info { border-left: 3px solid var(--primary); }
+.failures-toast.info svg { color: var(--primary); }
+
+.failures-toast span { flex: 1; }
+
+.failures-toast button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 0;
+}
+
+.failures-toast button:hover { color: var(--text); }
+
+@media (max-width: 600px) {
+  .failures-toast {
+    left: 1rem;
+    right: 1rem;
+    max-width: none;
+  }
+}
+

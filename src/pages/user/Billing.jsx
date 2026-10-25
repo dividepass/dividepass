@@ -784,8 +784,11 @@ function Billing() {
         </div>
       )}
 
-      {/* Renovação da assinatura vencida */}
+      {/* Renovação da assinatura vencida.
+          A `key` muda com a abertura: o modal remonta com o estado limpo
+          (sem precisar resetar por effect). */}
       <SubscriptionRenewalModal
+        key={renewTarget ? 'renewal-modal' : 'renewal-modal-closed'}
         open={!!renewTarget}
         subscription={renewTarget?.subscription}
         group={renewTarget?.group}

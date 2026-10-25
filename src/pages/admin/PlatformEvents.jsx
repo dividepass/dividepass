@@ -13,6 +13,36 @@ import {
 import './PlatformEvents.css';
 import './EventLog.css';
 
+/**
+ * Rótulo e cor do status de uma tentativa de pagamento.
+ *
+ * A tentativa (`payment_attempts`) passa por varios status ao longo da vida:
+ * `created` -> `polled_<status>` (a cada consulta do navegador) ->
+ * `webhook_approved` / `webhook_rejected` (quando o gateway avisa).
+ * Sem tratar esses prefixos, um pagamento já confirmado pelo webhook
+ * aparecia como "Pendente" na lista.
+ */
+function paymentStatusMeta(status) {
+  const raw = String(status || '');
+  if (raw === 'webhook_approved' || raw === 'approved' || raw === 'confirmed') {
+    return { label: 'Aprovado', tone: 'active' };
+  }
+  if (raw === 'webhook_rejected' || raw === 'failed' || raw === 'refunded') {
+    return { label: raw === 'refunded' ? 'Reembolsado' : 'Falhou', tone: 'rejected' };
+  }
+  if (raw === 'created') return { label: 'Criado', tone: 'pending' };
+  if (raw === 'pending') return { label: 'Pendente', tone: 'pending' };
+  if (raw.startsWith('polled_')) {
+    const polled = raw.slice('polled_'.length);
+    const known = ['approved', 'succeeded', 'paid', 'authorized', 'captured', 'completed', 'confirmed'];
+    const failed = ['failed', 'cancelled', 'canceled', 'rejected', 'refused', 'denied', 'expired', 'error'];
+    if (known.includes(polled)) return { label: 'Aprovado', tone: 'active' };
+    if (failed.includes(polled)) return { label: 'Falhou', tone: 'rejected' };
+    return { label: 'Aguardando gateway', tone: 'pending' };
+  }
+  return { label: raw || '—', tone: 'pending' };
+}
+
 function PlatformEvents() {
   const navigate = useNavigate();
   const [groups, setGroups] = useState([]);
@@ -1033,8 +1063,8 @@ function PlatformEvents() {
                       <span className="plan-badge">{p.gateway || '—'}</span>
                     </td>
                     <td>
-                      <span className={`status-badge ${p.status === 'approved' || p.status === 'confirmed' ? 'active' : p.status === 'failed' || p.status === 'refunded' ? 'rejected' : 'pending'}`}>
-                        {p.status === 'approved' ? 'Aprovado' : p.status === 'confirmed' ? 'Confirmado' : p.status === 'created' ? 'Criado' : p.status === 'pending' ? 'Pendente' : p.status === 'failed' ? 'Falhou' : p.status === 'refunded' ? 'Reembolsado' : p.status || '—'}
+                      <span className={`status-badge ${paymentStatusMeta(p.status).tone}`}>
+                        {paymentStatusMeta(p.status).label}
                       </span>
                     </td>
                     <td>
@@ -1326,8 +1356,8 @@ function PlatformEvents() {
               <div className="pe-detail-grid">
                 <div className="pe-detail-item">
                   <label>Status</label>
-                  <span className={`status-badge ${selectedPayment.status === 'approved' || selectedPayment.status === 'confirmed' ? 'active' : selectedPayment.status === 'failed' || selectedPayment.status === 'refunded' ? 'rejected' : 'pending'}`}>
-                    {selectedPayment.status === 'approved' ? 'Aprovado' : selectedPayment.status === 'confirmed' ? 'Confirmado' : selectedPayment.status === 'created' ? 'Criado' : selectedPayment.status === 'pending' ? 'Pendente' : selectedPayment.status === 'failed' ? 'Falhou' : selectedPayment.status === 'refunded' ? 'Reembolsado' : selectedPayment.status || '—'}
+                  <span className={`status-badge ${paymentStatusMeta(selectedPayment.status).tone}`}>
+                    {paymentStatusMeta(selectedPayment.status).label}
                   </span>
                 </div>
                 <div className="pe-detail-item">
@@ -1420,7 +1450,7 @@ function PlatformEvents() {
                   </>
                 )}
               </div>
-              {(selectedPayment.status !== 'approved' && selectedPayment.status !== 'confirmed') && (
+              {!['approved', 'confirmed', 'webhook_approved', 'webhook_rejected'].includes(selectedPayment.status) && (
                 <div style={{ marginTop: 16, padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <button

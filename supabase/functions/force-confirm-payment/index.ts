@@ -218,9 +218,11 @@ async function confirmIOPayment(
         .eq("group_id", group_id).eq("user_id", user_id)
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
       if (sub?.id) {
-        const { data: existing } = await supabaseAdmin
+        const { data: existingRows } = await supabaseAdmin
           .from("billing_cycles").select("id")
-          .eq("subscription_id", sub.id).eq("status", "pending").maybeSingle();
+          .eq("subscription_id", sub.id).eq("status", "pending")
+          .order("created_at", { ascending: false }).limit(1);
+        const existing = (existingRows && existingRows[0]) || null;
         if (!existing) {
           const cycle = subInfo?.billing_cycle || "monthly";
           const days = subInfo?.custom_cycle_days || null;

@@ -27,17 +27,24 @@ async function getSavingsData(
       officialPrice = service?.official_price ? Number(service.official_price) : null;
     }
 
-    // Buscar valor pago (pode ser menor se cupom foi usado)
+    // Buscar valor pago (pode ser menor se cupom foi usado).
+    //
+    // `payment_attempts` nao tem a coluna `final_amount`: asking por ela fazia
+    // o select falhar e o valor pago cair no default. E `.maybeSingle()`
+    // abortava quando ja existiam varias linhas para o mesmo transaction_id
+    // (o proprio polling criava uma linha a cada round).
     let paidAmount = defaultAmount;
     try {
-      const { data: attempt } = await supabaseAdmin
+      const { data: attemptRows } = await supabaseAdmin
         .from("payment_attempts")
-        .select("coupon_id, original_amount, discount_amount, final_amount")
+        .select("coupon_id, original_amount, discount_amount")
         .eq("gateway_transaction_id", gateway_payment_id)
-        .maybeSingle();
+        .order("created_at", { ascending: true })
+        .limit(1);
 
-      if (attempt?.final_amount != null) {
-        paidAmount = Number(attempt.final_amount);
+      const attempt = (attemptRows && attemptRows[0]) || null;
+      if (attempt?.original_amount != null && attempt?.discount_amount != null) {
+        paidAmount = Number(attempt.original_amount) - Number(attempt.discount_amount);
       }
     } catch (_) {
       // payment_attempts pode não existir — usar amount padrão
@@ -468,9 +475,11 @@ async function confirmIOPayment(
       .eq("group_id", group_id).eq("user_id", user_id)
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (sub?.id) {
-      const { data: existing } = await supabaseAdmin
+      const { data: existingRows } = await supabaseAdmin
         .from("billing_cycles").select("id")
-        .eq("subscription_id", sub.id).eq("status", "pending").maybeSingle();
+        .eq("subscription_id", sub.id).eq("status", "pending")
+        .order("created_at", { ascending: false }).limit(1);
+      const existing = (existingRows && existingRows[0]) || null;
       if (!existing) {
         const { error: bcErr } = await supabaseAdmin.from("billing_cycles").insert({
           subscription_id: sub.id, user_id, group_id, amount,
@@ -546,20 +555,29 @@ async function registerCouponUsage(
 ): Promise<void> {
   try {
     // Buscar coupon_id salvo em payment_attempts no momento da criação da transação
-    const { data: attempt } = await supabaseAdmin
+    //
+    // `final_amount` nao existe em `payment_attempts` (o select falhava e o
+    // cupom nunca era registrado) e `.maybeSingle()` abortava quando havia
+    // mais de uma tentativa com o mesmo transaction_id.
+    const { data: attemptRows } = await supabaseAdmin
       .from("payment_attempts")
-      .select("coupon_id, discount_amount, original_amount, final_amount")
+      .select("coupon_id, discount_amount, original_amount")
       .eq("gateway_transaction_id", gateway_payment_id)
-      .maybeSingle();
+      .order("created_at", { ascending: true })
+      .limit(1);
+
+    const attempt = (attemptRows && attemptRows[0]) || null;
 
     if (!attempt?.coupon_id) return;
 
-    const { data: existingUse } = await supabaseAdmin
+    const { data: existingUseRows } = await supabaseAdmin
       .from("coupon_uses")
       .select("id")
       .eq("coupon_id", attempt.coupon_id)
       .eq("user_id", user_id)
-      .maybeSingle();
+      .limit(1);
+
+    const existingUse = (existingUseRows && existingUseRows[0]) || null;
 
     if (existingUse) {
       console.log(`[registerCouponUsage] coupon_id=${attempt.coupon_id} já registrado para user=${user_id}`);
@@ -840,15 +858,45 @@ export default {
       console.log(`[check-iopay-tx] STEP 5b: reference_id OK (ref=${iopayReferenceId})`);
 
       // Log to payment_attempts
+      //
+      // ATUALIZA a tentativa existente em vez de inserir uma linha nova a cada
+      // polling. A duplicidade era a causa raiz do webhook quebrado: o
+      // `iopay-webhook` lia `payment_attempts` por `gateway_transaction_id`
+      // com `.maybeSingle()`, que falha com 2+ linhas — o webhook respondia
+      // 200 SEM confirmar nada, e so o "Verificar no Gateway" manual
+      // resolvia. Nao reproduzir essas duplicatas.
+      //
+      // Alvo: a linha MAIS ANTIGA (a de criacao), que e a que carrega
+      // `external_reference` e `coupon_id`. Se o polling mexesse na mais
+      // nova, o cupom nunca seria encontrado.
       if (pollAmount > 0) {
         try {
-          await supabaseAdmin.from("payment_attempts").insert({
-            user_id, group_id, gateway: "iopay", payment_method,
-            payment_type: bodyPaymentType || "unknown",
-            amount: pollAmount, status: `polled_${status}`,
-            gateway_transaction_id: transaction_id,
-            gateway_response: { status, raw_status: txRaw.status },
-          });
+          const { data: existingAttempts } = await supabaseAdmin
+            .from("payment_attempts")
+            .select("id")
+            .eq("gateway_transaction_id", transaction_id)
+            .order("created_at", { ascending: true })
+            .limit(1);
+
+          const existingAttempt = (existingAttempts && existingAttempts[0]) || null;
+
+          if (existingAttempt) {
+            await supabaseAdmin
+              .from("payment_attempts")
+              .update({
+                status: `polled_${status}`,
+                gateway_response: { status, raw_status: txRaw.status },
+              })
+              .eq("id", existingAttempt.id);
+          } else {
+            await supabaseAdmin.from("payment_attempts").insert({
+              user_id, group_id, gateway: "iopay", payment_method,
+              payment_type: bodyPaymentType || "unknown",
+              amount: pollAmount, status: `polled_${status}`,
+              gateway_transaction_id: transaction_id,
+              gateway_response: { status, raw_status: txRaw.status },
+            });
+          }
         } catch (e) { console.error("[check-iopay-tx] payment_attempts error:", e); }
       }
 

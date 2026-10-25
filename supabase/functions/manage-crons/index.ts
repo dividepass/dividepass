@@ -5,6 +5,34 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+/**
+ * Descricao e tipo de cada agendamento conhecido.
+ *
+ * `cron.job` guarda apenas o comando e a expressao de agendamento — nao tem
+ * coluna de descricao nem de proximo disparo. Essas informacoes sao
+ * calculadas aqui.
+ */
+const CRON_META: Record<string, { description: string; type: string; schedule: string; fullDescription: string }> = {
+  "process-recurring-billing": {
+    description: "Cobranças recorrentes - cobra cartões dos usuários com cobranças agendadas",
+    type: "billing",
+    schedule: "0 14 * * *",
+    fullDescription: "Executa todo dia às 11h BRT. Busca todas as assinaturas ativas com `next_charge_at` <= agora, cartão cadastrado, e `retry_count` < 3. Para cada uma, cria uma transação no gateway (IOPay) usando o cartão salvo. Se sucesso: avança `next_charge_at`, cria fatura, credita wallet. Se falha: incrementa `retry_count`, agenda retry (+1d/+2d), cancela após 3 tentativas.",
+  },
+  "process-overdue-invoices": {
+    description: "Faturas vencidas - processa faturas que passaram da data",
+    type: "overdue",
+    schedule: "0 6 * * *",
+    fullDescription: "Executa todo dia às 03h BRT. Busca faturas com status 'pending' cuja data de vencimento passou. Tenta cobrar novamente ou marca como overdue.",
+  },
+  "update-subscription-statuses": {
+    description: "Atualizar status de assinaturas",
+    type: "status",
+    schedule: "0 3 * * *",
+    fullDescription: "Executa todo dia às 00h BRT. Atualiza automaticamente o status das assinaturas baseado em regras: `first_attempt` → `overdue` após 3 dias sem pagamento, `overdue` → `cancelled` após mais dias.",
+  },
+};
+
 export default {
   fetch: async (req: Request) => {
     if (req.method === "OPTIONS") {
@@ -38,53 +66,39 @@ export default {
       const action = body.action || "list";
 
       if (action === "list") {
-        const { data, error } = await supabaseAdmin.rpc("exec_sql", {
-          query: `SELECT jobid, schedule, command, nodename, nodeport, database, username, active, jobname FROM cron.job ORDER BY jobid`
-        });
+        // A RPC `exec_sql` (SQL arbitrario) NAO existe em producao — era por
+        // causa dela que este painel mostrava uma lista INVENTADA de 3 jobs,
+        // sempre "Ativos", sem saber se o agendamento existia de verdade.
+        //
+        // Agora usa uma RPC estreita e dedicada (`manage_cron_jobs`), criada
+        // em database/add-cron-management.sql, que so le `cron.job`.
+        const { data, error } = await supabaseAdmin.rpc("manage_cron_jobs");
 
         if (error) {
-          // Fallback: tentar query direta
-          const { data: directData, error: directError } = await supabaseAdmin
-            .from("app_settings").select("key, value").eq("key", "recurring_billing_cron_secret");
-
-          // Listar crons conhecidos hardcoded + do banco
-          const knownCrons = [
-            {
-              jobid: 1,
-              jobname: "process-recurring-billing",
-              schedule: "0 14 * * *",
-              command: "SELECT net.http_post(...)",
-              active: true,
-              description: "Cobranças recorrentes - todo dia às 11h BRT",
-              next_run: getNextRun("0 14 * * *"),
-              type: "billing"
-            },
-            {
-              jobid: 2,
-              jobname: "process-overdue-invoices",
-              schedule: "0 6 * * *",
-              command: "SELECT net.http_post(...)",
-              active: true,
-              description: "Faturas vencidas - todo dia às 03h BRT",
-              next_run: getNextRun("0 6 * * *"),
-              type: "overdue"
-            },
-            {
-              jobid: 3,
-              jobname: "update-subscription-statuses",
-              schedule: "0 3 * * *",
-              command: "SELECT net.http_post(...)",
-              active: true,
-              description: "Atualizar status de assinaturas",
-              next_run: getNextRun("0 3 * * *"),
-              type: "status"
-            }
-          ];
-
-          return Response.json({ crons: knownCrons }, { headers: corsHeaders });
+          console.error("[manage-crons] manage_cron_jobs:", error.message);
+          return Response.json({
+            crons: [],
+            cron_source: "unavailable",
+            message:
+              "Nao foi possivel ler os agendamentos do banco. Rode database/add-cron-management.sql no SQL Editor do Supabase para habilitar a leitura real.",
+            error: error.message,
+          }, { headers: corsHeaders });
         }
 
-        return Response.json({ crons: data || [] }, { headers: corsHeaders });
+        const crons = (Array.isArray(data) ? data : []).map((job: any) => ({
+          jobid: job.jobid,
+          jobname: job.jobname,
+          schedule: job.schedule,
+          command: job.command,
+          active: job.active,
+          // `cron.job` nao tem `next_run` nem `description` — o pg_cron calcula
+          // o proximo disparo e nao o guarda. Aqui os dois sao calculados.
+          description: CRON_META[job.jobname]?.description || "",
+          next_run: job.schedule ? getNextRun(job.schedule) : "",
+          type: job.type || CRON_META[job.jobname]?.type || "custom",
+        }));
+
+        return Response.json({ crons, cron_source: "database" }, { headers: corsHeaders });
       }
 
       if (action === "toggle") {
@@ -93,15 +107,17 @@ export default {
           return new Response(JSON.stringify({ error: "jobid required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        const { error } = await supabaseAdmin.rpc("exec_sql", {
-          query: `SELECT cron.${active ? "schedule" : "unschedule"}(${jobid})`
+        // RPC estreita: so agenda/desagenda um job de cron.job existente.
+        const { error } = await supabaseAdmin.rpc("toggle_cron_job", {
+          p_jobid: Number(jobid),
+          p_active: !!active,
         });
 
         if (error) {
-          // Se nao conseguiu via rpc, informar que precisa configurar
+          console.error("[manage-crons] toggle_cron_job:", error.message);
           return Response.json({
             success: false,
-            message: `Não foi possível alterar cron via RPC. Configure manualmente no Supabase Dashboard > SQL Editor: SELECT cron.${active ? "schedule" : "unschedule"}(${jobid})`,
+            message: `Nao foi possivel alterar o agendamento via RPC (${error.message}). Configure manualmente no Supabase Dashboard > SQL Editor: SELECT cron.${active ? "schedule" : "unschedule"}(${jobid})`,
             needsManual: true
           }, { headers: corsHeaders });
         }
@@ -338,36 +354,34 @@ export default {
           next_run: "",
           type: "",
           affected_users: [],
+          overdue_invoices: [],
           recent_executions: [],
           stats: {},
         };
 
         // Mapear cron para seus dados
-        const cronMeta: Record<string, any> = {
-          "process-recurring-billing": {
-            description: "Cobranças recorrentes - cobra cartões dos usuários com cobranças agendadas",
-            schedule: "0 14 * * *",
-            type: "billing",
-            fullDescription: "Executa todo dia às 11h BRT. Busca todas as assinaturas ativas com `next_charge_at` <= agora, cartão cadastrado, e `retry_count` < 3. Para cada uma, cria uma transação no gateway (IOPay) usando o cartão salvo. Se sucesso: avança `next_charge_at`, cria fatura, credita wallet. Se falha: incrementa `retry_count`, agenda retry (+1d/+2d), cancela após 3 tentativas.",
-          },
-          "process-overdue-invoices": {
-            description: "Faturas vencidas - processa faturas que passaram da data",
-            schedule: "0 6 * * *",
-            type: "overdue",
-            fullDescription: "Executa todo dia às 03h BRT. Busca faturas com status 'pending' cuja data de vencimento passou. Tenta cobrar novamente ou marca como overdue.",
-          },
-          "update-subscription-statuses": {
-            description: "Atualizar status de assinaturas",
-            schedule: "0 3 * * *",
-            type: "status",
-            fullDescription: "Executa todo dia às 00h BRT. Atualiza automaticamente o status das assinaturas baseado em regras: `first_attempt` → `overdue` após 3 dias sem pagamento, `overdue` → `cancelled` após mais dias.",
-          },
-        };
-
-        const meta = cronMeta[jobname] || {};
+        const meta = CRON_META[jobname] || {};
         details.description = meta.fullDescription || meta.description || "";
         details.type = meta.type || "custom";
-        details.schedule = meta.schedule || "";
+
+        // O schedule real vem do banco (`cron.job`). O valor fixo aqui e
+        // apenas o fallback para quando o job nao esta agendado — assim a
+        // tela mostra a verdade em vez de umaschedule inventada.
+        let realSchedule = "";
+        try {
+          const { data: jobRows } = await supabaseAdmin.rpc("manage_cron_jobs");
+          const job = (Array.isArray(jobRows) ? jobRows : []).find(
+            (j: any) => j.jobname === jobname,
+          );
+          if (job) {
+            realSchedule = job.schedule || "";
+            details.next_run = job.schedule ? getNextRun(job.schedule) : "";
+            details.active = job.active;
+          }
+        } catch (e) {
+          console.error("[manage-crons] cron_details ao ler o job:", e);
+        }
+        details.schedule = realSchedule || meta.schedule || "";
 
         if (details.schedule) {
           details.next_run = getNextRun(details.schedule);
@@ -378,7 +392,7 @@ export default {
           // Assinaturas que seriam afetadas (próximas cobranças)
           const { data: upcomingSubs } = await supabaseAdmin
             .from("user_subscriptions")
-            .select("id, user_id, next_charge_at, amount, retry_count, billing_status, card_id")
+            .select("id, user_id, group_id, next_charge_at, amount, retry_count, billing_status, card_id, card_last4, card_brand, billing_cycle")
             .eq("status", "active")
             .not("card_id", "is", null)
             .eq("billing_status", "active")
@@ -388,7 +402,7 @@ export default {
           // Assinaturas com retry (falharam, tentando novamente)
           const { data: retrySubs } = await supabaseAdmin
             .from("user_subscriptions")
-            .select("id, user_id, next_charge_at, amount, retry_count, billing_status")
+            .select("id, user_id, group_id, next_charge_at, amount, retry_count, billing_status, card_id, card_last4, card_brand, billing_cycle")
             .eq("status", "active")
             .eq("billing_status", "retrying")
             .order("retry_count", { ascending: false });
@@ -422,7 +436,7 @@ export default {
               supabaseAdmin.from("groups").select("name").eq("id", (s as any).group_id).maybeSingle(),
               supabaseAdmin.from("streaming_services").select("name").eq("id", (s as any).service_id).maybeSingle(),
             ]);
-            return { ...s, user_name: user?.name, user_email: user?.email, group_name: group?.name, service_name: service?.name };
+            return { ...s, subscription_id: s.id, user_name: user?.name, user_email: user?.email, group_name: group?.name, service_name: service?.name };
           }));
 
           const retries = await Promise.all((retrySubs || []).map(async (s) => {
@@ -431,7 +445,7 @@ export default {
               supabaseAdmin.from("groups").select("name").eq("id", (s as any).group_id).maybeSingle(),
               supabaseAdmin.from("streaming_services").select("name").eq("id", (s as any).service_id).maybeSingle(),
             ]);
-            return { ...s, user_name: user?.name, user_email: user?.email, group_name: group?.name, service_name: service?.name };
+            return { ...s, subscription_id: s.id, user_name: user?.name, user_email: user?.email, group_name: group?.name, service_name: service?.name };
           }));
 
           details.stats = {
@@ -472,13 +486,80 @@ export default {
             overdue: overdueCount || 0,
           };
         } else if (jobname === "process-overdue-invoices") {
-          const { count: overdueCount } = await supabaseAdmin
+          // Faturas VENCIDAS de verdade.
+          //
+          // Antes contava TODAS as faturas `pending` — inclusive as que ainda
+          // nao venceram — e por isso o painel mostrava "46 Faturas vencidas"
+          // sem dizer QUEM eram. Agora filtra por vencimento real e devolve a
+          // lista com nome, valor, dias de atraso e a assinatura relacionada,
+          // para o admin ter em mao o que contornar.
+          const today = new Date().toISOString().split("T")[0];
+
+          const { data: overdueInvoices, error: overdueErr } = await supabaseAdmin
+            .from("invoices")
+            .select("id, user_id, group_id, service_id, amount, due_date, created_at")
+            .eq("status", "pending")
+            .lte("due_date", today)
+            .order("due_date", { ascending: true })
+            .limit(200);
+
+          if (overdueErr) {
+            console.error("[manage-crons] faturas vencidas:", overdueErr.message);
+          }
+
+          const invoiceRows = overdueInvoices || [];
+
+          const enriched = await Promise.all(invoiceRows.map(async (inv: any) => {
+            const [{ data: user }, { data: group }, { data: service }] = await Promise.all([
+              supabaseAdmin.from("users").select("name, email").eq("id", inv.user_id).limit(1),
+              supabaseAdmin.from("groups").select("name").eq("id", inv.group_id).limit(1),
+              supabaseAdmin.from("streaming_services").select("name").eq("id", inv.service_id).limit(1),
+            ]);
+
+            const dueDate = inv.due_date ? new Date(inv.due_date) : null;
+            const daysOverdue = dueDate
+              ? Math.max(0, Math.floor((Date.now() - dueDate.getTime()) / 86400000))
+              : 0;
+
+            // Assinatura que originou a fatura (para o botao de contorno).
+            const { data: subRows } = await supabaseAdmin
+              .from("user_subscriptions")
+              .select("id, status, billing_status, card_last4, next_charge_at")
+              .eq("user_id", inv.user_id)
+              .eq("group_id", inv.group_id)
+              .order("created_at", { ascending: false })
+              .limit(1);
+
+            const sub = (subRows && subRows[0]) || null;
+
+            return {
+              id: inv.id,
+              user_id: inv.user_id,
+              group_id: inv.group_id,
+              subscription_id: sub?.id || null,
+              user_name: (user && user[0] && user[0].name) || null,
+              user_email: (user && user[0] && user[0].email) || null,
+              group_name: (group && group[0] && group[0].name) || null,
+              service_name: (service && service[0] && service[0].name) || null,
+              amount: inv.amount,
+              due_date: inv.due_date,
+              days_overdue: daysOverdue,
+              card_last4: sub?.card_last4 || null,
+              subscription_status: sub?.status || null,
+            };
+          }));
+
+          const { count: pendingCount } = await supabaseAdmin
             .from("invoices")
             .select("id", { count: "exact", head: true })
             .eq("status", "pending");
 
+          details.overdue_invoices = enriched;
           details.stats = {
-            overdue_invoices: overdueCount || 0,
+            overdue_invoices: enriched.length,
+            amount_overdue: enriched.reduce((sum: number, i: any) => sum + Number(i.amount || 0), 0),
+            pending_invoices_total: pendingCount || 0,
+            without_card: enriched.filter((i: any) => !i.card_last4).length,
           };
         }
 

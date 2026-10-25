@@ -1013,3 +1013,260 @@
     min-width: auto;
   }
 }
+
+/* ---------------------------------------------
+   Avisos: fonte dos agendamentos e ajuste manual
+   --------------------------------------------- */
+.cron-source-warning,
+.cron-manual-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.cron-source-warning svg,
+.cron-manual-notice svg {
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.cron-source-warning p,
+.cron-manual-notice p {
+  margin: 0.35rem 0 0;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+.cron-source-warning code,
+.cron-manual-notice code {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.8rem;
+}
+
+.cron-notice-close {
+  margin-top: 0.6rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+
+.cron-notice-close:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* ---------------------------------------------
+   Tabelas dos detalhes (assinaturas e faturas)
+   --------------------------------------------- */
+.cron-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.cron-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.cron-table th {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.cron-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+
+.cron-table tbody tr:hover td {
+  background: var(--surface-hover);
+}
+
+.cron-table-user {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.cron-table-user strong {
+  font-size: 0.8rem;
+}
+
+.cron-table-user span {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.cron-card-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cron-no-card {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--error);
+  white-space: nowrap;
+}
+
+.cron-card-unknown {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cron-days-overdue {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--error);
+  white-space: nowrap;
+}
+
+.cron-charge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--primary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.cron-charge-btn:hover:not(:disabled) {
+  background: var(--primary);
+  color: #fff;
+}
+
+.cron-charge-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cron-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-start;
+}
+
+.cron-open-btn {
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cron-open-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.cron-open-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.details-empty-text {
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.search-error {
+  color: var(--error);
+}
+
+/* ---------------------------------------------
+   Toast
+   --------------------------------------------- */
+.cron-toast {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  z-index: 1300;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  max-width: 460px;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.cron-toast.success { border-left: 3px solid var(--success); }
+.cron-toast.success svg { color: var(--success); }
+.cron-toast.error { border-left: 3px solid var(--error); }
+.cron-toast.error svg { color: var(--error); }
+.cron-toast.warning { border-left: 3px solid var(--warning); }
+.cron-toast.warning svg { color: var(--warning); }
+.cron-toast.info { border-left: 3px solid var(--primary); }
+.cron-toast.info svg { color: var(--primary); }
+
+.cron-toast span { flex: 1; }
+
+.cron-toast button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 0;
+}
+
+.cron-toast button:hover { color: var(--text); }
+
+@media (max-width: 600px) {
+  .cron-toast {
+    left: 1rem;
+    right: 1rem;
+    max-width: none;
+  }
+}
