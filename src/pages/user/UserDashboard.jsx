@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ChevronLeft, ChevronRight, X, Pin, Star, Download, Smartphone, CheckCircle2, MessageSquare, TrendingUp, ChevronDown, AlertCircle, Info, Camera } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, X, Pin, Star, Download, Smartphone, CheckCircle2, MessageSquare, TrendingUp, ChevronDown, AlertCircle, Info, Camera, Lightbulb } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
@@ -8,6 +8,7 @@ import { supabase } from '../../lib/supabase';
 import { saveAvatar } from '../../lib/uploadAvatar';
 import ServicesCarousel from '../../components/ServicesCarousel';
 import SubscriptionsCarousel from '../../components/SubscriptionsCarousel';
+import FeedbackModal from '../../components/FeedbackModal';
 import { calculateUserSavings, getSavingsSummary, getAdminAlerts, fmtPercentage } from '../../utils/savingsService';
 import './UserDashboard.css';
 
@@ -170,6 +171,9 @@ function UserDashboard() {
   const [showSavingsBreakdown, setShowSavingsBreakdown] = useState(false);
   const [expandedServiceId, setExpandedServiceId] = useState(null);
   const [showAllSavings, setShowAllSavings] = useState(false);
+
+  // Popup de feedback livre
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
   // paidPayments PRIMEIRO — usado por hasRealPayments e totalSaved
   const [paidPayments, setPaidPayments] = useState([]);
@@ -534,11 +538,31 @@ function UserDashboard() {
       <section className="available-groups-section">
         <div className="section-title-row">
           <div>
-            <h2>🔥 Grupos disponíveis</h2>
+            <h2>🔥 Grupos disponíveis para assinar!</h2>
             <p className="section-subtitle">Serviços que já possuem grupos formados</p>
           </div>
         </div>
         <ServicesCarousel services={streamingServices} groups={groups} basePath="/dashboard/catalog/" />
+      </section>
+
+      {/* Feedback — CTA que convida o usuário a dizer o que falta na plataforma */}
+      <section className="feedback-cta-card">
+        <div className="feedback-cta-icon">
+          <Lightbulb size={22} />
+        </div>
+        <div className="feedback-cta-content">
+          <strong>Falta alguma coisa na DividePass?</strong>
+          <p>Sua ideia pode mudar a plataforma. Conte o que você gostaria de ter aqui — a gente lê todos os feedbacks.</p>
+        </div>
+        <div className="feedback-cta-action">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm feedback-cta-btn"
+            onClick={() => setShowFeedbackModal(true)}
+          >
+            <MessageSquare size={15} /> Dar feedback
+          </button>
+        </div>
       </section>
 
       {/* Comparativo Real de Economia */}
@@ -830,6 +854,14 @@ function UserDashboard() {
             </label>
           </div>
         </section>
+      )}
+
+      {/* Popup de feedback */}
+      {showFeedbackModal && (
+        <FeedbackModal
+          page="dashboard"
+          onClose={() => setShowFeedbackModal(false)}
+        />
       )}
     </div>
   );

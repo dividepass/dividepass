@@ -457,6 +457,83 @@
   margin-bottom: 3rem;
 }
 
+/* Feedback CTA — convite para o usuário sugerir o que falta na plataforma */
+.feedback-cta-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.1), rgba(124, 58, 237, 0.07));
+  border: 1px solid rgba(129, 140, 248, 0.28);
+  margin-bottom: 1.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Brilho decorativo na direita — dá destaque sem poluir o texto. */
+.feedback-cta-card::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -10%;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(129, 140, 248, 0.14) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.feedback-cta-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(129, 140, 248, 0.16);
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary-light, #818cf8);
+  flex-shrink: 0;
+}
+
+.feedback-cta-content {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.feedback-cta-content strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--secondary);
+  margin-bottom: 0.2rem;
+}
+
+.feedback-cta-content p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.feedback-cta-action {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.feedback-cta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
 /* Testimonial Prompt Card */
 .testimonial-prompt-card {
   display: flex;
@@ -716,6 +793,19 @@
 
   .testimonial-prompt-card {
     flex-wrap: wrap;
+  }
+
+  .feedback-cta-card {
+    flex-wrap: wrap;
+  }
+
+  .feedback-cta-action {
+    width: 100%;
+  }
+
+  .feedback-cta-btn {
+    width: 100%;
+    justify-content: center;
   }
 
   .testimonial-prompt-content {
