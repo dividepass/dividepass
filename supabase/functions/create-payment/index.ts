@@ -94,6 +94,39 @@ export default {
 
       console.log(`[create-payment] gateway=${gateway} type=${payment_type} group=${group_id}`);
 
+      // ── Grupo aguardando aprovação ──────────────────────────────────────
+      // Grupo criado por usuário só pode ser vendido depois da aprovação do
+      // admin. O grupo aparece no catálogo (a pessoa pode entrar na fila), mas
+      // ninguem paga enquanto ele não for aprovado.
+      //
+      // A renovação de uma assinatura já existente NÃO é bloqueada: a pessoa
+      // pagou antes e o acesso dela depende disso.
+      const isRenewal = body.renewal === true;
+      if (!isRenewal && payment_type !== "invoice") {
+        const { data: groupForApproval } = await supabaseAdmin
+          .from("groups")
+          .select("id, name, approval_status")
+          .eq("id", group_id)
+          .maybeSingle();
+
+        if (groupForApproval && groupForApproval.approval_status !== "approved") {
+          const isRejected = groupForApproval.approval_status === "rejected";
+          console.log(
+            `[create-payment] BLOQUEADO: grupo ${group_id} approval_status=${groupForApproval.approval_status}`,
+          );
+          return new Response(
+            JSON.stringify({
+              error: isRejected
+                ? "Este grupo foi recusado pela equipe e não aceita pagamentos."
+                : "Este grupo está aguardando aprovação da equipe DividePass. Os pagamentos são liberados assim que o grupo for aprovado.",
+              code: "group_not_approved",
+              approval_status: groupForApproval.approval_status,
+            }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+
       // ATENCAO: `discount_amount` e `final_amount` vem do BODY do cliente e
       // sao NAO CONFIAVEIS. O handler do IO Pay (handlers/iopay.ts) ignora
       // esses valores e recalcula o desconto a partir da tabela `coupons`

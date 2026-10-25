@@ -3,6 +3,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { dispatchNotification } from "../_shared/send-notification.ts";
+import { notifyAdminPayment } from "../_shared/admin-payment-email.ts";
 
 interface ConfirmParams {
   gateway: string;
@@ -722,6 +723,19 @@ export async function confirmPayment(params: ConfirmParams) {
       // Registrar cupom após confirmação do pagamento PIX (combined)
       await registerCouponUsagePIX(supabaseAdmin, gateway_payment_id, user_id, "combined");
     }
+
+    // Aviso por e-mail para o administrador: grupo, pessoa, valor, tipo e
+    // data/hora. A deduplicação é pela transação (email_logs), então o poll e
+    // o webhook não geram dois avisos do mesmo pagamento.
+    await notifyAdminPayment(supabaseAdmin, {
+      groupId: group_id,
+      userId: user_id,
+      amount,
+      paymentType: payment_type,
+      gateway,
+      transactionId: gateway_payment_id,
+      paymentMethod: payment_method || null,
+    });
 
   } else if (status === "rejected") {
     // Payment failed

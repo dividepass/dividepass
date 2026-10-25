@@ -1274,6 +1274,24 @@ function Checkout() {
     </div>
   );
 
+  // Grupo criado por usuário que a equipe ainda não aprovou: o grupo aparece
+  // no catálogo, mas o pagamento fica bloqueado até a aprovação.
+  if (group.approval_status === 'pending') {
+    return (
+      <div className="fade-in checkout-page">
+        <div className="empty-checkout">
+          <h2>Aguardando aprovação</h2>
+          <p>
+            Este grupo foi criado por um usuário e ainda está em análise pela equipe
+            DividePass. As inscrições e os pagamentos são liberados assim que o grupo
+            for aprovado.
+          </p>
+          <Link to="/dashboard/catalog" className="btn btn-primary">Ver Outros Grupos</Link>
+        </div>
+      </div>
+    );
+  }
+
   // Full group
   if (spots <= 0) {
     return (

@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGatewaySettings } from "../create-payment/handlers/settings.ts";
+import { notifyAdminPayment } from "../_shared/admin-payment-email.ts";
 
 /** Obtém official_price e paid_amount (após cupom) para rastrear economia de assinatura. */
 async function getSavingsData(
@@ -958,6 +959,20 @@ export default {
 
         if (result.success) {
           console.log(`[check-iopay-tx] CONFIRMED OK`);
+
+          // Aviso para o administrador: grupo, pessoa, valor, tipo e data/hora.
+          // Vai depois do retry para não duplicar, e nunca derruba a
+          // confirmação (falha de e-mail fica so no log).
+          await notifyAdminPayment(supabaseAdmin, {
+            groupId: group_id,
+            userId: user_id,
+            amount: pollAmount,
+            paymentType,
+            gateway: "iopay",
+            transactionId: transaction_id,
+            paymentMethod: payment_method || null,
+          });
+
           return Response.json({
             transaction_id, status, confirmed: true,
             amount: pollAmount, payment_method,

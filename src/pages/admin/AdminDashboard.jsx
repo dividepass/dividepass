@@ -103,6 +103,17 @@ function AdminDashboard() {
   const [activities, setActivities] = useState([]);
   const [openTickets, setOpenTickets] = useState([]);
   const [criticalTickets, setCriticalTickets] = useState([]);
+  const [pendingGroups, setPendingGroups] = useState([]);
+  const [approvingGroup, setApprovingGroup] = useState(null);
+  const [signups, setSignups] = useState({
+    day: 0,
+    week: 0,
+    month: 0,
+    subsDay: 0,
+    subsWeek: 0,
+    subsMonth: 0,
+    converted: 0,
+  });
   const [pending, setPending] = useState({
     failedPayments: 0,
     onboardingPending: 0,
@@ -127,6 +138,12 @@ function AdminDashboard() {
         const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
         const last24Hours = new Date(now.getTime() - (24 * 60 * 60 * 1000)).toISOString();
         const in7Days = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)).toISOString();
+        // Início do dia e da semana (segunda) para os cards de registros.
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+        startOfWeek.setHours(0, 0, 0, 0);
+        const weekStartIso = startOfWeek.toISOString();
 
         const [
           usersRes,
@@ -146,6 +163,9 @@ function AdminDashboard() {
           couponsExpiringRes,
           groupsToApproveRes,
           waitlistRes,
+          pendingGroupsRes,
+          newUsersRes,
+          newSubsRes,
         ] = await Promise.all([
           supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'user').maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
           supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active').maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
@@ -172,11 +192,25 @@ function AdminDashboard() {
             .then(r => ({ ...r, count: r.count || 0 })),
           // Grupos criados por usuário que ainda não foram aprovados.
           supabase.from('groups').select('id', { count: 'exact', head: true })
-            .is('approval_status', null)
+            .eq('approval_status', 'pending')
             .then(r => ({ ...r, count: r.count || 0 })),
           // Lista de espera: gente que quer entrar em um grupo.
           supabase.from('group_interest').select('id', { count: 'exact', head: true })
             .then(r => ({ ...r, count: r.count || 0 })),
+          // Grupos pendentes de aprovação (os mais novos primeiro) — a fila
+          // do operador começa por eles.
+          supabase.from('groups').select(`
+            id, name, created_at, price_per_slot, status,
+            owner:owner_id (id, name, email),
+            service:service_id (id, name)
+          `).eq('approval_status', 'pending')
+            .order('created_at', { ascending: false })
+            .limit(8),
+          // Registros do mês: quem criou conta e quem virou assinante.
+          supabase.from('users').select('id, created_at')
+            .eq('role', 'user').gte('created_at', firstDayOfMonth),
+          supabase.from('user_subscriptions').select('user_id, created_at')
+            .gte('created_at', firstDayOfMonth),
         ]);
 
         if (cancelled) return;
@@ -257,6 +291,27 @@ function AdminDashboard() {
           groupsToApprove: groupsToApproveRes.count || 0,
           waitlist: waitlistRes.count || 0,
         });
+
+        // Grupos pendentes: entram no topo da fila do operador.
+        setPendingGroups(pendingGroupsRes.data || []);
+
+        // Registros do dia/semana/mês e quem virou assinante.
+        const newUsers = newUsersRes.data || [];
+        const newSubs = newSubsRes.data || [];
+        const subUserIds = new Set(newSubs.map((s) => s.user_id));
+        const inWindow = (iso, from) => iso && new Date(iso) >= from;
+        const dayFrom = new Date(startOfDay);
+        const weekFrom = new Date(weekStartIso);
+        setSignups({
+          day: newUsers.filter((u) => inWindow(u.created_at, dayFrom)).length,
+          week: newUsers.filter((u) => inWindow(u.created_at, weekFrom)).length,
+          month: newUsers.length,
+          subsDay: newSubs.filter((s) => inWindow(s.created_at, dayFrom)).length,
+          subsWeek: newSubs.filter((s) => inWindow(s.created_at, weekFrom)).length,
+          subsMonth: newSubs.length,
+          // Quem se registrou no mês E já tem assinatura.
+          converted: newUsers.filter((u) => subUserIds.has(u.id)).length,
+        });
       } catch (err) {
         console.error('AdminDashboard fetch error:', err);
       } finally {
@@ -288,6 +343,50 @@ function AdminDashboard() {
    * que está esperando ele — os números ficam logo abaixo, como contexto.
    * A ordem é por severidade; item sem pendência não aparece.
    */
+  const approveGroup = async (groupId) => {
+    setApprovingGroup(groupId);
+    try {
+      const { error } = await supabase
+        .from('groups')
+        .update({ approval_status: 'approved', approved_at: new Date().toISOString() })
+        .eq('id', groupId);
+      if (error) throw error;
+
+      const group = pendingGroups.find((g) => g.id === groupId);
+      const adminUser = (await supabase.auth.getUser()).data.user?.id;
+      const { error: eventError } = await supabase.from('platform_events').insert({
+        event_type: 'group_approved',
+        title: 'Grupo aprovado',
+        message: `O grupo "${group?.name || ''}" foi aprovado e já pode receber pagamentos.`,
+        metadata: JSON.stringify({ group_id: groupId }),
+        created_by: adminUser,
+      });
+      if (eventError) console.error('AdminDashboard approve event error:', eventError);
+
+      // O dono do grupo é avisado dentro do app.
+      if (group?.owner?.id) {
+        const { error: notifError } = await supabase.from('notifications').insert({
+          user_id: group.owner.id,
+          title: 'Grupo aprovado!',
+          message: `Seu grupo "${group.name}" foi aprovado e já está visível no catálogo.`,
+          event_type: 'group_approved',
+          metadata: JSON.stringify({ group_id: groupId }),
+        });
+        if (notifError) console.error('AdminDashboard approve notification error:', notifError);
+      }
+
+      setPendingGroups((prev) => prev.filter((g) => g.id !== groupId));
+      setPending((prev) => ({
+        ...prev,
+        groupsToApprove: Math.max(0, prev.groupsToApprove - 1),
+      }));
+    } catch (err) {
+      console.error('AdminDashboard approve error:', err);
+    } finally {
+      setApprovingGroup(null);
+    }
+  };
+
   const queue = [
     {
       id: 'critical-tickets',
@@ -307,15 +406,7 @@ function AdminDashboard() {
       action: 'Ver falhas',
       to: '/admin/billing/failures',
     },
-    {
-      id: 'groups-to-approve',
-      icon: <CheckCircle2 size={17} />,
-      tone: 'warning',
-      title: 'Grupos criados por usuário aguardando aprovação',
-      count: pending.groupsToApprove,
-      action: 'Revisar grupos',
-      to: '/admin/platforms',
-    },
+
     {
       id: 'open-tickets',
       icon: <Ticket size={17} />,
@@ -325,6 +416,7 @@ function AdminDashboard() {
       action: 'Ver tickets',
       to: '/admin/support',
     },
+
     {
       id: 'waitlist',
       icon: <UserPlus size={17} />,
@@ -355,6 +447,27 @@ function AdminDashboard() {
   ].filter((item) => item.count > 0);
 
   const metricCards = [
+    {
+      icon: <UserPlus size={20} />,
+      iconClass: 'users',
+      label: 'Registros hoje',
+      value: signups.day.toLocaleString('pt-BR'),
+      sub: `${signups.subsDay} viraram assinante${signups.subsDay === 1 ? '' : 's'}`,
+    },
+    {
+      icon: <UserPlus size={20} />,
+      iconClass: 'subscriptions',
+      label: 'Registros na semana',
+      value: signups.week.toLocaleString('pt-BR'),
+      sub: `${signups.subsWeek} viraram assinante${signups.subsWeek === 1 ? '' : 's'}`,
+    },
+    {
+      icon: <UserPlus size={20} />,
+      iconClass: 'revenue',
+      label: 'Registros no mês',
+      value: signups.month.toLocaleString('pt-BR'),
+      sub: `${signups.converted} seguiram para a assinatura`,
+    },
     {
       icon: <DollarSign size={20} />,
       iconClass: 'revenue',
@@ -407,14 +520,64 @@ function AdminDashboard() {
       <section className="operator-queue" aria-labelledby="queue-title">
         <div className="queue-head">
           <h2 id="queue-title">Fila do operador</h2>
-          {queue.length > 0 ? (
-            <span className="queue-count">{queue.length} pendência{queue.length > 1 ? 's' : ''}</span>
+          {(queue.length > 0 || pendingGroups.length > 0) ? (
+            <span className="queue-count">
+              {queue.length + pendingGroups.length} pendência
+              {queue.length + pendingGroups.length > 1 ? 's' : ''}
+            </span>
           ) : (
             <span className="queue-count queue-count-ok">nada pendente</span>
           )}
         </div>
 
-        {queue.length === 0 ? (
+        {/* Grupos criados por usuário: o primeiro item da fila, com a
+            aprovação na mão. O grupo já aparece no catálogo, mas ninguém
+            paga nele até ser aprovado. */}
+        {pendingGroups.length > 0 && (
+          <div className="queue-groups">
+            <div className="queue-groups-head">
+              <span className="queue-groups-title">
+                <CheckCircle2 size={16} />
+                Grupos aguardando sua aprovação
+              </span>
+              <button
+                type="button"
+                className="queue-groups-see-all"
+                onClick={() => navigate('/admin/platforms')}
+              >
+                Ver todos <ArrowRight size={14} />
+              </button>
+            </div>
+            <ul className="queue-groups-list">
+              {pendingGroups.map((group) => (
+                <li key={group.id}>
+                  <div className="queue-group-row">
+                    <div className="queue-group-info">
+                      <span className="queue-group-name">{group.name}</span>
+                      <span className="queue-group-meta">
+                        {group.service?.name || 'Serviço'}
+                        {' · '}
+                        {group.owner?.name || 'Usuário'}
+                        {' · '}
+                        {formatRelativeTime(group.created_at)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="queue-group-approve"
+                      disabled={approvingGroup === group.id}
+                      onClick={() => approveGroup(group.id)}
+                    >
+                      {approvingGroup === group.id ? 'Aprovando...' : 'Aprovar'}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {queue.length === 0 && pendingGroups.length === 0 ? (
           <div className="queue-empty">
             <CheckCircle2 size={20} />
             <div>

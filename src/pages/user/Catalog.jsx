@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Check, BadgeCheck, Search, X, Bell, Pin, Star, Share2 } from 'lucide-react';
+import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Share2 } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
@@ -378,6 +378,11 @@ function Catalog() {
                       {group.verified && (
                         <span className="gc-verified" title="Verificado">
                           <BadgeCheck size={18} />
+                        </span>
+                      )}
+                      {group.approval_status === 'pending' && (
+                        <span className="gc-awaiting" title="Aguardando aprovação da equipe DividePass">
+                          <Clock size={13} /> Aguardando aprovação
                         </span>
                       )}
                     </div>

@@ -471,6 +471,24 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
   if (!customerId) {
     try {
       const token = await getToken(settings);
+      // O IOPay exige `address.city` e `address.state` na criação do cliente.
+      // O app ainda não coleta endereço do usuário, então usamos um padrão
+      // configurável em app_settings — sem isso NENHUM usuário novo consegue
+      // pagar (a criação do cliente devolvia 500 e o checkout morria ali).
+      const { data: addrRows } = await supabaseAdmin
+        .from("app_settings")
+        .select("key, value")
+        .in("key", ["iopay_default_address_city", "iopay_default_address_state"]);
+      const addrConfig: Record<string, string> = {};
+      (addrRows || []).forEach((s: { key: string; value: string }) => {
+        addrConfig[s.key] = s.value;
+      });
+
+      const fullName = (userProfile?.name || "Cliente").trim();
+      const nameParts = fullName.split(/\s+/);
+      const firstName = nameParts[0] || "Cliente";
+      const lastName = nameParts.slice(1).join(" ") || firstName;
+
       const resp = await fetch(`${getBaseUrl(settings)}v1/customer/new`, {
         method: "POST",
         headers: {
@@ -478,9 +496,14 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          first_name: userProfile?.name || "Cliente",
+          first_name: firstName,
+          last_name: lastName,
           email: userProfile?.email || "",
           phone: userProfile?.phone || "",
+          address: {
+            city: addrConfig.iopay_default_address_city || "Sao Paulo",
+            state: addrConfig.iopay_default_address_state || "SP",
+          },
         }),
       });
       const rawData = await resp.json();

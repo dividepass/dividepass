@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { notifyAdminPayment } from "../_shared/admin-payment-email.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -400,6 +401,20 @@ Deno.serve(async (req: Request) => {
     }
     result.confirmed = confirmResult.success;
     result.error = confirmResult.error || null;
+
+    // Confirmação manual pelo admin também avisa por e-mail (mesmo formato
+    // do aviso automático — a deduplicação é pela transação).
+    if (confirmResult.success) {
+      await notifyAdminPayment(supabaseAdmin, {
+        groupId: targetGroupId,
+        userId: targetUserId,
+        amount: targetAmount,
+        paymentType: targetPaymentType,
+        gateway: "iopay",
+        transactionId: txId,
+        paymentMethod: "pix",
+      });
+    }
 
     return new Response(JSON.stringify(result), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 

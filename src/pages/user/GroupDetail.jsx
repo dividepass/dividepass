@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Shield, Users, ChevronDown, ChevronUp, Star, AlertCircle, CheckCircle2, CreditCard, Share2, Check } from 'lucide-react';
+import { ArrowLeft, Loader2, Shield, Users, ChevronDown, ChevronUp, Star, AlertCircle, CheckCircle2, Clock, CreditCard, Share2, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { logPlatformEvent } from '../../lib/platformEventLogger';
@@ -136,6 +136,9 @@ function GroupDetail() {
 
   const price = Number(group?.price_per_slot) || 0;
   const cycle = group?.billing_cycle || 'monthly';
+  // Grupo criado por usuário que a equipe ainda não aprovou: aparece no
+  // catálogo, mas não aceita pagamento.
+  const awaitingApproval = group?.approval_status === 'pending';
   const siteUrl = (import.meta.env.VITE_SITE_URL || 'https://dividepass.com').replace(/\/$/, '');
 
   const handleCheckoutClick = () => {
@@ -201,6 +204,11 @@ function GroupDetail() {
                 <Shield size={12} /> Verificado
               </span>
             )}
+            {group?.approval_status === 'pending' && (
+              <span className="gd-badge awaiting" title="Aguardando aprovação da equipe DividePass">
+                <Clock size={12} /> Aguardando aprovação
+              </span>
+            )}
             <span className={`gd-badge status ${group?.status}`}>
               {group?.status === 'open' ? 'Aberto' : group?.status === 'forming' ? 'Formando' : 'Fechado'}
             </span>
@@ -228,6 +236,10 @@ function GroupDetail() {
         ) : isFull ? (
           <button className="btn btn-outline gd-cta-btn" disabled>
             Grupo Lotado
+          </button>
+        ) : awaitingApproval ? (
+          <button className="btn btn-outline gd-cta-btn" disabled>
+            Aguardando aprovação
           </button>
         ) : (
           <button type="button" onClick={handleCheckoutClick} className="btn btn-primary gd-cta-btn">
@@ -374,6 +386,10 @@ function GroupDetail() {
           </Link>
         ) : isFull ? (
           <button className="btn btn-outline gd-cta-btn" disabled>Grupo Lotado</button>
+        ) : awaitingApproval ? (
+          <button className="btn btn-outline gd-cta-btn" disabled>
+            Aguardando aprovação da equipe
+          </button>
         ) : (
           <Link to={`/dashboard/checkout/${group?.slug || group?.id}`} className="btn btn-primary gd-cta-btn">
             Entrar no Grupo — R$ {price.toFixed(2).replace('.', ',')} / {CYCLE_LABELS[cycle] || cycle}

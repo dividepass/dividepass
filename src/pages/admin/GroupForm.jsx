@@ -504,6 +504,10 @@ function GroupForm() {
         custom_cycle_days: formData.available_cycles.includes('days') ? parseInt(formData.custom_cycle_days) || null : null,
         plan_type: customPlanActive ? null : (planType || null),
         plan_type_custom: customPlanActive ? (planTypeCustom || null) : null,
+        // Grupo criado pelo painel admin já nasce aprovado: a fila de aprovação
+        // é para grupos que o USUÁRIO criou. Ao editar, o status de aprovação
+        // não é tocado (aprovar é ação explícita na tela de grupos).
+        ...(isEditing ? {} : { approval_status: 'approved', approved_at: new Date().toISOString() }),
       };
 
       let groupIdResult = groupId;
