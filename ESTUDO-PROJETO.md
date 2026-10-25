@@ -948,6 +948,90 @@ O botão "Agora não" do popup estava branco sobre branco. Causa: várias folhas
 
 ---
 
+## 12.6 Fila do operador, aprovação de grupo e e-mail de pagamento (2026-10-25)
+
+### O que foi pedido
+1. Grupo criado pelo usuário entra no **topo** da fila do operador, para o admin aprovar como verificado.
+2. O grupo **continua visível**, mas fica com status "aguardando aprovação" e **não registra pagamento** até ser aprovado.
+3. Cards na Visão Geral (admin) com quantos usuários fizeram **registro** no dia, na semana e no mês, e **quantos seguiraram para a assinatura**.
+4. **Overviewer de pagamentos**: a cada pagamento confirmado, um e-mail para `gwmorata@gmail.com` com nome do grupo, nome da pessoa, valor, tipo de pagamento, data e hora.
+
+### O que estava quebrado
+- **A fila nunca mostrava os grupos certainos.** O contador do painel usava `.is('approval_status', null)` (7 grupos) enquanto a tela de aprovação (`Platforms.jsx`) filtrava `'pending'`. Resultado: o admin via "7 para aprovar" e não conseguia aprovar nenhum. Os 7 `NULL` eram grupos do **próprio admin**, criados pelo painel, que não gravava `approval_status`.
+- **Não existia bloqueio de pagamento** para grupo não aprovado — nem no front, nem no back.
+- **E-mail**: a infra é **SMTP direto** (TLS 465, `mail.dividepass.com`), sem provedor transacional; o `SmtpClient` estava duplicado em 3 functions.
+
+### O modelo: `pending` = aguardando aprovação
+- `groups.approval_status` usa o enum `group_approval_status` (`pending`/`approved`/`rejected`).
+- `NULL` = grupo criado pelo painel admin **antes** do campo existir → backfill para `approved` (todos os `NULL` eram do admin, com membros pagantes). Hoje: **24 grupos, 0 `NULL`, 0 pendentes**.
+- O trigger `trg_guard_group_privileged` já forçava `pending` no insert de não-admin e bloqueia a alteração de `verified`/`is_official`/`approval_status`/`owner_id` por não-admin.
+- Grupo criado pelo **painel admin** nasce `approved` (`GroupForm.jsx`), porque o admin é o dono da curadoria.
+
+### Fila do operador: grupos no topo e aprovação na mão
+`AdminDashboard.jsx` ganhou o bloco **"Grupos aguardando sua aprovação"** como **primeiro item** da fila do operador (antes de tickets, falhas de pagamento e lista de espera), com nome do grupo, serviço, dono, tempo desde a criação e botão **Aprovar** inline.
+
+- **Aprovar** grava `approval_status='approved'` + `approved_at`, registra `platform_events` (`group_approved`) e cria a notificação do dono em `notifications`.
+- O item antigo da fila ("Grupos criados por usuário aguardando aprovação → Ver grupos") foi **removido**: ele apontava para `/admin/platforms` e não permitia agir. O contador passou a ser `.eq('approval_status','pending')`.
+
+### Bloqueio de pagamento: o back é a autoridade
+- `create-payment/index.ts` busca `groups.approval_status` e devolve **HTTP 403** `{ error, code: "group_not_approved" }` quando ≠ `approved`.
+- **Renovação (`body.renewal === true`) não é bloqueada** e **fatura (`payment_type='invoice'`) não é bloqueada** — só a inscrição nova em grupo não aprovado cai.
+- O front apenas orienta: badge **"Aguardando aprovação"** no card do catálogo (`Catalog.jsx`) e no cabeçalho do detalhe (`GroupDetail.jsx`), CTAs substituídos por "Aguardando aprovação" e uma tela própria no `Checkout.jsx`.
+
+### Cards de registros na Visão Geral
+Duas queries do mês (`users` com `role='user'` e `user_subscriptions`) e janelas calculadas em JS (dia; semana começando na segunda; mês). Três cards novos, no topo dos cards de métrica:
+
+| card | valor | subtítulo |
+|---|---|---|
+| Registros hoje | usuários criados hoje | quantos viraram assinante hoje |
+| Registros na semana | usuários da semana | quantos viraram assinante na semana |
+| Registros no mês | usuários do mês | quantos **seguiram para a assinatura** |
+
+A conversão é "usuário registrado no mês que já tem assinatura".
+
+### E-mail a cada pagamento confirmado
+- `supabase/functions/_shared/smtp.ts` (novo): `SmtpClient`, `loadSmtpConfig`, `sendMail` — extraído do `send-support-email` para não duplicar a conexão TLS.
+- `supabase/functions/_shared/admin-payment-email.ts` (novo): `notifyAdminPayment()` monta o e-mail (HTML + texto) com **grupo, pessoa, valor, tipo de pagamento, forma de pagamento e data/hora**, e grava o log em `email_logs`.
+- **Destino**: `app_settings.admin_notification_email` (valor: `gwmorata@gmail.com`), com fallback para o mesmo endereço.
+- **Dedup por transação**: `email_logs` com `event_type='admin_payment_notification'` e `raw_event.transaction_id` — a mesma transação nunca gera dois e-mails.
+- **Hook nos três caminhos de confirmação**: `check-iopay-tx` (poll do front), `confirm-payment` (webhook) e `force-confirm-payment` (confirmação manual no admin).
+- **Falha de e-mail nunca derruba a confirmação** — o `notifyAdminPayment` não lança exceção.
+
+### Bug de produção: o IOPay passou a exigir endereço
+O IOPay passou a exigir `address.city`/`address.state` na criação do cliente. O app não manda endereço e a tabela `users` não tem colunas de endereço → o `v1/customer/new` devolvia **HTTP 500 ("Cliente criado sem ID")** e o checkout morria ali. **42 dos 96 usuários não conseguiam pagar.**
+
+Correção em `create-payment/handlers/iopay.ts`: o cliente é criado com `first_name`, `last_name`, `email`, `phone` e `address` com padrão configurável (`app_settings.iopay_default_address_city` / `_state`, padrão `Sao Paulo`/`SP`). **Limitação conhecida**: endereço fiscal provisório até o app coletar o real.
+
+### Bug herdado: `notifications` sem nenhuma policy de RLS
+A tabela `notifications` estava com **RLS ligado e zero policies** → o Postgres nega tudo. Todo `supabase.from('notifications').insert(...)` feito pelo app era **descartado em silêncio**, sem erro na tela. Isso atingia `Platforms.jsx`, `Groups.jsx` e também a nova aprovação inline (que nascia sem notificar o dono).
+
+Correção: `database/fix-notifications-rls.sql` — admin gerencia tudo, usuário lê e marca como lida apenas as próprias. Triggers que gravam em `notifications` (ex.: "um membro do seu grupo saiu") não são afetados, porque rodam como dono da função.
+
+### Verificação
+- **Playwright** (dev server `:5199`, usuários de teste criados e removidos depois):
+  - grupo criado pelo usuário → `approval_status='pending'`;
+  - **fila do operador** com o grupo no **topo** e o botão **Aprovar** funcionando (`pending` → `approved` + `approved_at`), com `platform_events` gravado e **notificação criada para o dono**;
+  - badge **"Aguardando aprovação"** no card do catálogo e no detalhe do grupo (3 pontos de exibição), **sem CTA de pagamento**;
+  - **checkout bloqueado** com a tela "Aguardando aprovação" (rota `/checkout/:slug` e `/dashboard/checkout/:slug`);
+  - cards **Registros hoje / na semana / no mês** com a conversão;
+  - depois da aprovação: badge some, **checkout libera** e o grupo sai da fila.
+- **E-mail real enviado** (function temporária `test-admin-email`, já removida do Supabase **e do repo**): `{"sent":true}` para `gwmorata@gmail.com` com grupo "Spotify 01", pessoa "Jaíne Daniele de Souza", R$ 12,90, tipo `subscription`; a **2ª chamada com a mesma transação** devolveu `{"sent":false}` (dedup confirmado).
+- **Back**: grupo `pending` → **HTTP 403** `group_not_approved`; a **renovação no mesmo grupo não é bloqueada**; grupo aprovado segue o fluxo normal.
+- **IOPay**: cliente novo (sem `customer_id_iopay`) foi de **HTTP 500 → HTTP 200 com PIX** (R$ 9,90) depois da correção do endereço.
+- **Banco depois da limpeza**: 24 grupos, 96 usuários, 0 grupos pendentes, 0 grupos com `approval_status` nulo, trigger `trg_guard_group_privileged` ativo; resíduos de teste (usuários, auth, grupo, notificações, eventos) = **0**.
+
+### Decisão
+O grupo pendente **fica visível, mas não aceita dinheiro**. A trava de pagamento mora no **back** (`create-payment`) porque é lá que o dinheiro entra — o front só orienta. "Aguardando aprovação" é um **estado persistido** (`approval_status`), não um cálculo de tela: o admin aprova uma vez e o grupo libera sozinho.
+
+### Pendências que sobraram desta rodada
+- **Pagamento real não exercitado**: o ciclo "PIX pago de verdade → assinatura ativa → e-mail ao admin" exige pagar um PIX. O caminho até "pagamento gerado" está verificado.
+- **Endereço do cliente IOPay é provisório**: o app não coleta endereço do usuário; hoje sai o padrão de `app_settings`.
+- O `SmtpClient` duplicado em `send-support-email`/`send-password-reset`/`test-email` **não** foi refatorado (risco); o módulo novo é usado só pelo caminho novo.
+- `notifications.metadata` é `jsonb`, mas o app grava `JSON.stringify(...)` → fica guardado como jsonb do tipo **string**. É a convenção do repo (mantida), mas convém padronizar depois.
+- `payment_attempts.final_amount` e `coupons.status` continuam pendentes da rodada 5 (§12.5).
+
+---
+
 ## 13. Perguntas em aberto — respondidas
 
 1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam. Em produção existem `BILLING_CRON_SECRET` e `OVERDUE_CRON_SECRET` (rotacionados). **Continua em aberto:** quais jobs estão de fato agendados no `pg_cron`.
