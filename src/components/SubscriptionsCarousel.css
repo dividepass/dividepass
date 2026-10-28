@@ -102,6 +102,18 @@
   background: #ef4444;
 }
 
+/* O card virou `div` (o aviso de renovação tem botão próprio e não pode
+   ficar dentro de outro botão): o clique e o teclado seguem igual. */
+.sac-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Aviso de renovação ocupando a largura do card. */
+.sac-card .rrc-card {
+  width: 100%;
+}
+
 .sac-dots {
   display: flex;
   justify-content: center;

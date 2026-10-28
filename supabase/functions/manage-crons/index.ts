@@ -31,6 +31,12 @@ const CRON_META: Record<string, { description: string; type: string; schedule: s
     schedule: "0 3 * * *",
     fullDescription: "Executa todo dia às 00h BRT. Atualiza automaticamente o status das assinaturas baseado em regras: `first_attempt` → `overdue` após 3 dias sem pagamento, `overdue` → `cancelled` após mais dias.",
   },
+  "send-lifecycle-emails": {
+    description: "E-mails de ciclo de vida - boas-vindas, lembrete de renovação e aviso de atraso",
+    type: "email",
+    schedule: "0 12 * * *",
+    fullDescription: "Executa todo dia às 09h BRT. Envia os e-mails automáticos do cliente: (1) boas-vindas de quem se cadastrou e ainda não recebeu, (2) lembrete de renovação para as assinaturas que vencem nos próximos dias, (3) aviso de atraso para as que venceram e ainda estão dentro da carência de 7 dias. Cada evento tem trava de duplicidade (dedup_key), então rodar duas vezes não manda o mesmo e-mail duas vezes.",
+  },
 };
 
 export default {

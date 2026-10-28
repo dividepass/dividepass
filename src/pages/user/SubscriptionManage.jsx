@@ -8,10 +8,10 @@ import {
   Ban,
   AlertTriangle,
   CheckCircle,
+  Clock,
   Loader2,
   Shield,
   ExternalLink,
-  Clock,
   History,
   XCircle,
   User,
@@ -20,6 +20,21 @@ import {
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
+import { simulateAmount, brl } from '../../lib/platformFee';
+import { formatDateBR } from '../../lib/dateFormat';
+import {
+  ACCESS_ACTIVE,
+  ACCESS_CANCELLED,
+  ACCESS_OVERDUE,
+  ACCESS_PENDING,
+  daysUntilRenewal,
+  needsRenewalReminder,
+  subscriptionAccessLabel,
+  subscriptionAccessState,
+  subscriptionRenewalDate,
+} from '../../lib/subscriptionAccess';
+import RenewalReminderCard from '../../components/RenewalReminderCard';
+import SubscriptionRenewalModal from '../../components/SubscriptionRenewalModal';
 import './SubscriptionManage.css';
 
 function SubscriptionManage() {
@@ -32,6 +47,9 @@ function SubscriptionManage() {
   const [cancelledIds, setCancelledIds] = useState(new Set());
   const [billingHistory, setBillingHistory] = useState([]);
   const [cancelledSub, setCancelledSub] = useState(null);
+  // Renovação em aberto (vence em breve ou atrasada): o mesmo modal de
+  // pagamento usado nas outras telas.
+  const [showRenewal, setShowRenewal] = useState(false);
 
   const activeServices = getActiveServices();
   const baseSubscription = activeServices.find(s => s.id === subscriptionId) || cancelledSub || null;
@@ -135,8 +153,17 @@ function SubscriptionManage() {
 
   const service = streamingServices.find(s => s.id === subscription.service?.id);
   const { group } = subscription;
-  const isActive = subscription.status === 'active';
-  const nextChargeAt = subscription.next_charge_at;
+
+  // Estado derivado (mesma regra do resto do app): ativa, atrasada, pendente
+  // ou cancelada. O `status` cru do banco é legado e não decide nada sozinho.
+  const accessState = subscriptionAccessState(subscription);
+  const accessLabel = subscriptionAccessLabel(subscription);
+  const isCancelled = accessState === ACCESS_CANCELLED;
+  const isOverdue = accessState === ACCESS_OVERDUE;
+  // Zona de perigo: vale enquanto a assinatura está de pé (ativa ou atrasada).
+  const canCancel = accessState === ACCESS_ACTIVE || accessState === ACCESS_OVERDUE;
+
+  const renewalDate = subscriptionRenewalDate(subscription);
   const cardLast4 = subscription.card_last4;
   const cardBrand = subscription.card_brand;
   const retryCount = subscription.retry_count || 0;
@@ -146,18 +173,16 @@ function SubscriptionManage() {
   const owner = group?.owner;
   const ownerName = owner?.name || 'Administrador do grupo';
 
-  // Fee breakdown
+  // Detalhamento do valor — a margem vem da regra de faixas da plataforma
+  // (definida pelo preço MENSAL do grupo). Nenhuma porcentagem é mostrada ao
+  // usuário: ele vê quanto paga, quanto vai para a plataforma e quanto sobra
+  // para o dono do grupo.
   const subscriptionAmount = parseFloat(subscription.amount || group?.price_per_slot || 0);
-  const platformFeePercent = parseFloat(group?.platform_fee_percent || 3.95);
-  const gatewayFeePercent = parseFloat(group?.gateway_fee_percent || 4.98);
-  const platformFee = subscriptionAmount * (platformFeePercent / 100);
-  const gatewayFee = subscriptionAmount * (gatewayFeePercent / 100);
-  const netToOwner = subscriptionAmount - platformFee - gatewayFee;
+  const feeSim = simulateAmount(subscriptionAmount, group?.price_per_slot);
 
-  // Days until next charge
-  const daysUntilCharge = nextChargeAt
-    ? Math.ceil((new Date(nextChargeAt) - new Date()) / (1000 * 60 * 60 * 24))
-    : null;
+  // Dias até a próxima renovação (vem do módulo: é a mesma contagem que o
+  // card de renovação e o backend usam).
+  const daysUntilCharge = daysUntilRenewal(subscription);
 
   return (
     <div className="fade-in subscription-manage-page">
@@ -186,26 +211,38 @@ function SubscriptionManage() {
               <span className="modal-group-name">{group.name}</span>
             </div>
           </div>
-          <div className={`sub-status-badge ${isActive ? 'active' : 'cancelled'}`}>
-            {isActive ? <CheckCircle size={16} /> : <Ban size={16} />}
-            {isActive ? 'Ativa' : 'Cancelada'}
+          <div className={`sub-status-badge ${accessState}`}>
+            {accessState === ACCESS_ACTIVE && <CheckCircle size={16} />}
+            {accessState === ACCESS_OVERDUE && <AlertTriangle size={16} />}
+            {accessState === ACCESS_PENDING && <Clock size={16} />}
+            {accessState === ACCESS_CANCELLED && <Ban size={16} />}
+            {accessLabel}
           </div>
         </div>
 
         <div className="sub-manage-body">
+          {/* Aviso de renovação: vence em breve ou já está atrasada. */}
+          {needsRenewalReminder(subscription) && (
+            <RenewalReminderCard
+              subscription={subscription}
+              group={group}
+              onRenew={() => setShowRenewal(true)}
+            />
+          )}
+
           <div className="sub-detail-grid">
             <div className="sub-detail-item">
               <Calendar size={18} />
               <div>
                 <span>Data de início</span>
-                <strong>{new Date(subscription.started_at || subscription.created_at).toLocaleDateString('pt-BR')}</strong>
+                <strong>{formatDateBR(subscription.started_at || subscription.created_at)}</strong>
               </div>
             </div>
             <div className="sub-detail-item">
               <RotateCcw size={18} />
               <div>
                 <span>Próxima cobrança</span>
-                <strong>{nextChargeAt ? new Date(nextChargeAt).toLocaleDateString('pt-BR') : subscription.expires_at ? new Date(subscription.expires_at).toLocaleDateString('pt-BR') : 'Mensal'}</strong>
+                <strong>{renewalDate ? formatDateBR(renewalDate) : 'Mensal'}</strong>
               </div>
             </div>
             <div className="sub-detail-item">
@@ -252,7 +289,7 @@ function SubscriptionManage() {
                 <Clock size={18} />
                 <div>
                   <span>Último pagamento</span>
-                  <strong>{new Date(lastChargeAt).toLocaleDateString('pt-BR')}</strong>
+                  <strong>{formatDateBR(lastChargeAt)}</strong>
                 </div>
               </div>
             )}
@@ -282,31 +319,27 @@ function SubscriptionManage() {
             <div className="fee-breakdown">
               <div className="fee-row">
                 <span>Valor total</span>
-                <strong>R$ {subscriptionAmount.toFixed(2)}</strong>
+                <strong>R$ {brl(subscriptionAmount)}</strong>
               </div>
               <div className="fee-row fee-deduction">
-                <span>Taxa da plataforma ({platformFeePercent}%)</span>
-                <span>- R$ {platformFee.toFixed(2)}</span>
-              </div>
-              <div className="fee-row fee-deduction">
-                <span>Taxa gateway ({gatewayFeePercent}%)</span>
-                <span>- R$ {gatewayFee.toFixed(2)}</span>
+                <span>Taxa da plataforma</span>
+                <span>- R$ {brl(feeSim.platformFee)}</span>
               </div>
               <div className="fee-row fee-total">
                 <span>Líquido para o dono</span>
-                <strong>R$ {netToOwner.toFixed(2)}</strong>
+                <strong>R$ {brl(feeSim.net)}</strong>
               </div>
             </div>
           </div>
 
-          {/* Próxima cobrança destacada */}
-          {nextChargeAt && isActive && (
+          {/* Próxima cobrança destacada — só quando a assinatura está em dia. */}
+          {renewalDate && accessState === ACCESS_ACTIVE && daysUntilCharge !== null && daysUntilCharge > 0 && (
             <div className="sub-next-charge-highlight">
               <Calendar size={24} />
               <div>
                 <span>Próxima cobrança em</span>
                 <strong>{daysUntilCharge} {daysUntilCharge === 1 ? 'dia' : 'dias'}</strong>
-                <span className="charge-date">{new Date(nextChargeAt).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}</span>
+                <span className="charge-date">{formatDateBR(renewalDate)}</span>
               </div>
             </div>
           )}
@@ -353,10 +386,14 @@ function SubscriptionManage() {
             </a>
           )}
 
-          {isActive && (
+          {canCancel && (
             <div className="sub-danger-zone">
               <h3>Zona de perigo</h3>
-              <p>Cancelar sua assinatura resultará na perda imediata de acesso às credenciais e ao grupo.</p>
+              <p>
+                {isOverdue
+                  ? 'Cancelar agora encerra a assinatura sem esperar o fim da carência. Você perde o acesso às credenciais e ao grupo.'
+                  : 'Cancelar sua assinatura resultará na perda imediata de acesso às credenciais e ao grupo.'}
+              </p>
               <button
                 className="btn btn-danger btn-full"
                 onClick={handleCancel}
@@ -377,7 +414,7 @@ function SubscriptionManage() {
             </div>
           )}
 
-          {!isActive && (
+          {isCancelled && (
             <div className="sub-cancelled-notice">
               <AlertTriangle size={20} />
               <p>Esta assinatura foi cancelada. Para acessar novamente, assine um novo grupo.</p>
@@ -388,6 +425,22 @@ function SubscriptionManage() {
           )}
         </div>
       </div>
+
+      {/* Renovação: mesmo modal de pagamento das outras telas. */}
+      {needsRenewalReminder(subscription) && (
+        <SubscriptionRenewalModal
+          key={showRenewal ? 'renewal-modal' : 'renewal-modal-closed'}
+          open={showRenewal}
+          subscription={subscription}
+          group={group}
+          amount={Number(subscription.amount || 0)}
+          onClose={() => setShowRenewal(false)}
+          onPaid={() => {
+            setShowRenewal(false);
+            refresh?.();
+          }}
+        />
+      )}
     </div>
   );
 }

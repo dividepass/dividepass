@@ -5,6 +5,7 @@ import {
   DollarSign, TrendingUp, Banknote, CreditCard, Info
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { solicitarSaque } from '../../lib/walletApi';
 import { useAuth } from '../../hooks/useAuth';
 import './Wallet.css';
 
@@ -47,7 +48,9 @@ function Wallet() {
         const [balanceRes, transactionsRes, withdrawalsRes] = await Promise.all([
           supabase.from('user_wallets').select('balance').eq('user_id', user.id).maybeSingle(),
           supabase.from('wallet_transactions').select('*, group:group_id (name, service:service_id (name, color))').eq('user_id', user.id).order('created_at', { ascending: false }).limit(50),
-          supabase.from('wallet_withdrawals').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+          // wallet_withdrawals nao tem created_at em producao: o pedido e
+          // datado por requested_at.
+          supabase.from('wallet_withdrawals').select('*').eq('user_id', user.id).order('requested_at', { ascending: false }),
         ]);
 
         if (balanceRes.data) {
@@ -87,29 +90,30 @@ function Wallet() {
     setSubmitting(true);
     setError('');
     try {
-      const payload = {
-        user_id: user.id,
+      const resultado = await solicitarSaque({
         amount,
-        payment_method: withdrawMethod,
-        status: 'pending',
-      };
+        paymentMethod: withdrawMethod,
+        pixKey: withdrawMethod === 'pix' ? pixKey : null,
+        pixType: withdrawMethod === 'pix' ? pixType : null,
+        bankName: withdrawMethod === 'pix' ? null : bankName,
+        bankAgency: withdrawMethod === 'pix' ? null : bankAgency,
+        bankAccount: withdrawMethod === 'pix' ? null : bankAccount,
+        bankHolder: withdrawMethod === 'pix' ? null : bankHolder,
+      });
 
-      if (withdrawMethod === 'pix') {
-        payload.pix_key = pixKey;
-        payload.pix_type = pixType;
-      } else {
-        payload.bank_name = bankName;
-        payload.bank_agency = bankAgency;
-        payload.bank_account = bankAccount;
-        payload.bank_holder = bankHolder;
+      if (!resultado.ok) throw new Error(resultado.error);
+
+      // O saldo e o servidor que manda: recarrega em vez de estimar na tela.
+      const [saldoRes, saquesRes] = await Promise.all([
+        supabase.from('user_wallets').select('balance').eq('user_id', user.id).maybeSingle(),
+        supabase.from('wallet_withdrawals').select('*').eq('user_id', user.id).order('requested_at', { ascending: false }),
+      ]);
+      if (saldoRes.data) setBalance(parseFloat(saldoRes.data.balance) || 0);
+      if (saquesRes.data) {
+        setWithdrawals(saquesRes.data);
+        setTotalWithdrawn(saquesRes.data.filter(w => w.status !== 'cancelled').reduce((s, w) => s + (parseFloat(w.amount) || 0), 0));
       }
 
-      const { error: insertError } = await supabase.from('wallet_withdrawals').insert(payload);
-      if (insertError) throw insertError;
-
-      setBalance(prev => prev - amount);
-      setTotalWithdrawn(prev => prev + amount);
-      setWithdrawals(prev => [{ ...payload, created_at: new Date().toISOString(), id: 'temp' }, ...prev]);
       setShowWithdrawForm(false);
       setWithdrawAmount('');
       setPixKey('');
@@ -172,6 +176,17 @@ function Wallet() {
       cancelled: 'Cancelado',
     };
     return map[status] || status;
+  };
+
+  // Em producao os dados do PIX/banco ficam em payment_details (as colunas
+  // pix_key/bank_* so passam a existir depois da migration). Le os dois.
+  const withdrawalDetails = (w) => {
+    let extra = {};
+    try { extra = JSON.parse(w.payment_details || '{}'); } catch { extra = {}; }
+    return {
+      pixKey: w.pix_key || extra.pix_key || '',
+      bankName: w.bank_name || extra.bank_name || '',
+    };
   };
 
   if (loading) {
@@ -283,14 +298,19 @@ function Wallet() {
           </div>
         ) : (
           <div className="wallet-tx-list">
-            {withdrawals.map(w => (
+            {withdrawals.map(w => {
+              const dados = withdrawalDetails(w);
+              return (
               <div key={w.id} className="wallet-tx-row">
                 <div className="wallet-tx-icon debit">
                   <ArrowUpRight size={16} />
                 </div>
                 <div className="wallet-tx-info">
                   <strong>Saque via {w.payment_method === 'pix' ? 'PIX' : 'Transferência Bancária'}</strong>
-                  <span>{w.payment_method === 'pix' ? w.pix_key : w.bank_name}</span>
+                  <span>
+                    {(w.payment_method === 'pix' ? dados.pixKey : dados.bankName) || 'Sem dados informados'}
+                    {w.requested_at ? ` · ${formatDate(w.requested_at)}` : ''}
+                  </span>
                 </div>
                 <div className="wallet-tx-amounts">
                   <span className="wallet-tx-amount negative">- {formatCurrency(w.amount)}</span>
@@ -299,7 +319,8 @@ function Wallet() {
                   </span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

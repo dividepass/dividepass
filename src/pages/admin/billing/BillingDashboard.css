@@ -1,312 +1,739 @@
+/* ==========================================================================
+   Cobranças Recorrentes — /admin/billing
+   --------------------------------------------------------------------------
+   Linguagem visual: minimalista, hairline (bordas de 1px), um único acento
+   (índigo) e números tabulares. Tudo que antes era texto " grudado " mora
+   em tabelas com respiro real: padding de célula, cabeçalho em banda,
+   linhas com hover e scroll horizontal com no mínimo de largura.
+
+   NOTA DE ESPECIFICIDADE: App.css é importado DEPOIS deste arquivo
+   (App.jsx importa as páginas antes do CSS global), então qualquer regra
+   aqui que possa empatar com App.css precisa de um seletor mais
+   específico — por isso o prefixo `.billing-dashboard` é usado nas bases.
+   ========================================================================== */
+
+/* ------------------------------------------------------------- animações */
+
+@keyframes billingRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes billingFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes billingPop {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes billingSlideIn {
+  from { opacity: 0; transform: translateX(26px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes billingShimmer {
+  from { background-position: -220% 0; }
+  to   { background-position: 220% 0; }
+}
+
+/* ------------------------------------------------------------------ base */
+
 .billing-dashboard {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.5rem;
+  /* IMPORTANTE: esta animação é SÓ de opacidade. Um `transform` retido aqui
+     (ex.: translateY(0) com fill-mode "both") criaria um containing block e
+     quebraria o `position: fixed` do modal e do toast — eles passariam a se
+     posicionar dentro da página em vez da viewport. */
+  animation: billingFade 0.45s ease both;
 }
 
-.billing-dashboard .admin-header {
+/* ------------------------------------------------------------------ hero */
+
+.billing-dashboard .billing-hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.7rem;
   margin-bottom: 0;
+  padding: 0 0 1.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Fio de acento embaixo do título — dá identidade sem pesar. */
+.billing-dashboard .billing-hero::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 92px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--primary), var(--action));
+}
+
+.billing-hero-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 1.5rem;
   flex-wrap: wrap;
 }
 
-.billing-dashboard .admin-header h1 {
-  font-size: 1.75rem;
-  color: var(--text-main);
-}
-
-.billing-dashboard .admin-header p {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  margin-top: 0.25rem;
+.billing-hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
   max-width: 60ch;
 }
 
-.billing-header-actions {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.billing-metrics {
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.billing-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1.5rem;
-}
-
-.billing-section h2 {
-  font-size: 1.15rem;
-  color: var(--text-main);
-  margin-bottom: 1rem;
-  display: flex;
+.billing-hero-eyebrow {
+  display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  align-self: flex-start;
+  padding: 0.26rem 0.62rem;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  color: var(--primary);
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+.billing-dashboard .billing-hero h1 {
+  margin: 0;
+  font-size: clamp(1.55rem, 2.2vw, 2.05rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--text-main);
 }
 
-.billing-section-header {
+.billing-dashboard .billing-hero p {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.billing-hero-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
-.billing-section-header h2 {
-  margin-bottom: 0;
+.billing-icon-btn {
+  padding: 0.45rem 0.55rem;
+  min-width: 34px;
+}
+
+/* -------------------------------------------------------------- KPI strip */
+
+.billing-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.875rem;
+  animation: billingRise 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+}
+
+.billing-kpi {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 1.05rem 1.15rem 1.1rem;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.22s ease,
+    border-color 0.22s ease;
+}
+
+/* Barra de acento que aparece no hover. */
+.billing-kpi::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--kpi-accent, var(--primary));
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.billing-kpi:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--kpi-accent, var(--primary)) 42%, var(--border));
+  box-shadow: var(--shadow-md);
+}
+
+.billing-kpi:hover::before { opacity: 1; }
+
+.billing-kpi:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.billing-kpi--revenue { --kpi-accent: var(--primary); }
+.billing-kpi--subscriptions { --kpi-accent: var(--success); }
+.billing-kpi--profit { --kpi-accent: var(--info); }
+.billing-kpi--costs { --kpi-accent: var(--error); }
+.billing-kpi--tickets { --kpi-accent: var(--warning); }
+
+.billing-kpi-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.billing-kpi-label {
+  font-size: 0.69rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.billing-kpi-icon {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: var(--kpi-accent, var(--primary));
+  background: color-mix(in srgb, var(--kpi-accent, var(--primary)) 13%, transparent);
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.billing-kpi:hover .billing-kpi-icon {
+  transform: scale(1.08) rotate(-5deg);
+}
+
+.billing-kpi-value {
+  font-family: var(--font-title);
+  font-size: 1.7rem;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-kpi-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.billing-kpi-sub {
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+
+.billing-kpi-arrow {
+  flex-shrink: 0;
+  color: var(--kpi-accent, var(--primary));
+  opacity: 0;
+  transform: translate(-4px, 4px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.billing-kpi:hover .billing-kpi-arrow {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+
+/* -------------------------------------------------------------- seções */
+
+.billing-dashboard .billing-section {
+  position: relative;
+  padding: 1.3rem 1.5rem 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  animation: billingRise 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.billing-dashboard .billing-section--agenda { animation-delay: 0.08s; }
+.billing-dashboard .billing-section--nocard { animation-delay: 0.13s; }
+.billing-dashboard .billing-section--today { animation-delay: 0.18s; }
+.billing-dashboard .billing-section--failures { animation-delay: 0.23s; }
+
+.billing-dashboard .billing-section--warning {
+  border-color: color-mix(in srgb, var(--error) 30%, var(--border));
+  background:
+    radial-gradient(circle at 100% 0%, rgba(239, 68, 68, 0.08), transparent 20rem),
+    var(--surface);
+}
+
+.billing-section--warning .billing-section-eyebrow {
+  color: var(--error);
+}
+
+.billing-dashboard .billing-section-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.billing-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.billing-section-eyebrow {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.billing-dashboard .billing-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+  line-height: 1.3;
 }
 
 .billing-section-sub {
+  max-width: 70ch;
+  margin: 0;
   color: var(--text-muted);
-  font-size: 0.82rem;
-  margin-top: 0.25rem;
+  font-size: 0.83rem;
+  line-height: 1.5;
 }
 
 .billing-section-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .billing-section-total {
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-family: var(--font-title);
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   color: var(--success);
+  font-variant-numeric: tabular-nums;
 }
 
 .billing-pagination {
-  font-size: 0.8rem;
+  padding: 0 0.3rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------- tabelas */
+
+.billing-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* min-width garante que as 8 colunas não se esmaguem: texto colado é
+   justamente o que acontece quando a coluna perde o espaço dela. */
+.billing-table {
+  width: 100%;
+  min-width: 960px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.86rem;
+}
+
+.billing-table thead th {
+  padding: 0.7rem 0.68rem;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  text-align: left;
   white-space: nowrap;
 }
 
-/* ------------------------------------------------------------- agenda */
-
-.billing-agenda {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.billing-agenda-group {
-  border-left: 3px solid var(--border);
-  padding-left: 0.85rem;
-}
-
-.billing-agenda-group.overdue { border-left-color: var(--error); }
-.billing-agenda-group.today { border-left-color: var(--primary); }
-.billing-agenda-group.week { border-left-color: var(--warning); }
-.billing-agenda-group.later { border-left-color: var(--border-strong); }
-
-.billing-agenda-title {
-  font-size: 0.9rem;
-  font-weight: 700;
+.billing-table tbody td {
+  padding: 0.72rem 0.68rem;
+  border-bottom: 1px solid var(--border);
   color: var(--text-main);
-  margin: 0 0 0.5rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  vertical-align: middle;
+  transition: background 0.16s ease;
 }
 
-.billing-agenda-group.overdue .billing-agenda-title { color: var(--error); }
-
-.billing-agenda-count {
-  background: var(--surface-soft);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.05rem 0.5rem;
-  font-size: 0.72rem;
-  color: var(--text-muted);
+.billing-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
-.billing-row-no-card td {
-  background: rgba(239, 68, 68, 0.04);
+.billing-table tbody tr:hover td {
+  background: var(--primary-soft);
 }
+
+/* Colunas numéricas: alinhadas à direita e com dígitos tabulares. */
+.billing-th-num { text-align: right; }
+
+.billing-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.billing-nowrap { white-space: nowrap; }
+
+/* --------------------------------------------------------- células */
 
 .billing-cell-user {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: 0.18rem;
+  min-width: 0;
+  max-width: 175px;
 }
 
 .billing-cell-user strong {
-  font-size: 0.85rem;
-  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* O e-mail NUNCA pode quebrar no meio: sem nowrap o `overflow-wrap: anywhere`
+   cortava "joao.silva@email.com" em três linhas — é o "texto grudado" que
+   estragava a leitura da tabela. */
 .billing-cell-user span {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .billing-cell-stack {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: 0.18rem;
+  min-width: 0;
+  max-width: 150px;
+}
+
+.billing-cell-stack > span {
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .billing-cell-muted {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .billing-card-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.78rem;
+  gap: 0.28rem;
+  padding: 0.2rem 0.48rem;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
   color: var(--text-muted);
+  font-size: 0.73rem;
+  font-weight: 600;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .billing-no-card {
-  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #EF4444;
+  font-size: 0.72rem;
   font-weight: 700;
-  color: var(--error);
   white-space: nowrap;
 }
+
+/* -------------------------------------------------------- status badges */
+
+.billing-dashboard .status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.73rem;
+  font-weight: 650;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.billing-dashboard .status-badge.approved { background: rgba(16, 185, 129, 0.12); color: #10B981; }
+.billing-dashboard .status-badge.failed { background: rgba(239, 68, 68, 0.12); color: #EF4444; }
+.billing-dashboard .status-badge.processing { background: rgba(245, 158, 11, 0.14); color: #F59E0B; }
+.billing-dashboard .status-badge.pending { background: rgba(107, 114, 128, 0.14); color: #94A3B8; }
+.billing-dashboard .status-badge.active { background: rgba(16, 185, 129, 0.12); color: #10B981; }
+.billing-dashboard .status-badge.overdue { background: rgba(239, 68, 68, 0.12); color: #EF4444; }
+.billing-dashboard .status-badge.retrying { background: rgba(245, 158, 11, 0.14); color: #F59E0B; }
+
+/* ------------------------------------------------------------- botões */
 
 .billing-charge-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.4rem 0.75rem;
-  border: 1px solid var(--primary);
-  border-radius: var(--radius-sm);
-  background: transparent;
+  gap: 0.3rem;
+  padding: 0.36rem 0.62rem;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 38%, transparent);
   color: var(--primary);
-  font-size: 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
+  font-size: 0.73rem;
+  font-weight: 650;
   white-space: nowrap;
+  transition:
+    transform 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
 }
 
 .billing-charge-btn:hover:not(:disabled) {
   background: var(--primary);
+  border-color: var(--primary);
   color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(79, 70, 229, 0.28);
 }
 
 .billing-charge-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
 .billing-origin-badge {
   display: inline-block;
-  padding: 0.15rem 0.5rem;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0.16rem 0.55rem;
   border-radius: 999px;
   background: var(--surface-soft);
   border: 1px solid var(--border);
-  font-size: 0.7rem;
-  font-weight: 600;
   color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  white-space: nowrap;
 }
 
 .billing-attempt {
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--warning);
   white-space: nowrap;
 }
 
-.billing-attempt-high {
-  color: var(--error);
+.billing-attempt-high { color: #EF4444; }
+
+.billing-row-no-card td {
+  background: rgba(239, 68, 68, 0.045);
 }
 
-.billing-warning-section {
-  border-color: rgba(239, 68, 68, 0.35);
+.billing-table tbody tr:hover .billing-row-no-card td,
+.billing-table tbody tr:hover td.billing-row-no-card {
+  background: rgba(239, 68, 68, 0.08);
 }
 
-/* ---------------------------------------------------------- métricas */
+/* -------------------------------------------------------------- agenda */
 
-.billing-metric-card {
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  width: 100%;
+.billing-agenda {
+  display: flex;
+  flex-direction: column;
+  gap: 1.35rem;
 }
 
-.billing-metric-card:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
+.billing-agenda-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
 }
 
-/* ----------------------------------------------------- status badges */
+.billing-agenda-group.overdue { --agenda-accent: #EF4444; }
+.billing-agenda-group.today { --agenda-accent: var(--primary); }
+.billing-agenda-group.week { --agenda-accent: #F59E0B; }
+.billing-agenda-group.later { --agenda-accent: var(--text-soft); }
 
-.status-badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: capitalize;
-  white-space: nowrap;
-}
-
-.status-badge.approved { background: rgba(16, 185, 129, 0.1); color: #10B981; }
-.status-badge.failed { background: rgba(239, 68, 68, 0.1); color: #EF4444; }
-.status-badge.processing { background: rgba(245, 158, 11, 0.1); color: #F59E0B; }
-.status-badge.pending { background: rgba(107, 114, 128, 0.1); color: #6B7280; }
-.status-badge.active { background: rgba(16, 185, 129, 0.1); color: #10B981; }
-.status-badge.overdue { background: rgba(239, 68, 68, 0.1); color: #EF4444; }
-.status-badge.retrying { background: rgba(245, 158, 11, 0.1); color: #F59E0B; }
-
-.error-cell {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: 0.8rem;
-}
-
-.empty-state {
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  text-align: center;
-  padding: 2rem;
-}
-
-.billing-loading {
+.billing-agenda-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 200px;
-  color: var(--text-muted);
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
-/* ------------------------------------------- cobrança avulsa (panel) */
+.billing-agenda-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--agenda-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--agenda-accent) 18%, transparent);
+}
+
+.billing-dashboard .billing-agenda-title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-main);
+}
+
+.billing-agenda-count {
+  min-width: 1.55rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--agenda-accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--agenda-accent) 26%, transparent);
+  color: var(--agenda-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.billing-agenda-sum {
+  margin-left: auto;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------- estado vazio */
+
+.billing-dashboard .empty-state {
+  padding: 1.8rem 1.1rem;
+  background: transparent;
+  border: 1px dashed var(--border);
+  box-shadow: none;
+  border-radius: var(--radius-md);
+  color: var(--text-soft);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.billing-modal .empty-state {
+  border-radius: var(--radius-sm);
+}
+
+/* ------------------------------------------------------------ skeleton */
+
+.billing-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.billing-skeleton-row {
+  height: 42px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-soft) 25%,
+    color-mix(in srgb, var(--surface-soft) 45%, var(--surface)) 50%,
+    var(--surface-soft) 75%
+  );
+  background-size: 220% 100%;
+  animation: billingShimmer 1.4s linear infinite;
+}
+
+/* --------------------------------------------- cobrança avulsa (painel) */
 
 .billing-panel {
+  padding: 1.3rem 1.5rem 1.5rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1.5rem;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  animation: billingPop 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .billing-panel-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .billing-panel-header h3 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--text-main);
 }
 
@@ -318,19 +745,29 @@
 
 .billing-panel-form label {
   display: block;
-  margin-bottom: 0.25rem;
-  font-size: 0.8rem;
-  font-weight: 600;
+  margin-bottom: 0.35rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--text-muted);
 }
 
 .billing-panel-form input {
   width: 100%;
-  padding: 0.5rem;
+  padding: 0.6rem 0.7rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface-soft);
-  color: var(--text);
+  color: var(--text-main);
+  font-size: 0.9rem;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.billing-panel-form input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--ring);
 }
 
 .billing-method-options {
@@ -343,8 +780,12 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: var(--error);
-  font-size: 0.9rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, 0.1);
+  color: #EF4444;
+  font-size: 0.86rem;
+  line-height: 1.45;
 }
 
 .billing-panel-success {
@@ -352,91 +793,102 @@
   align-items: center;
   gap: 0.5rem;
   color: var(--success);
-  font-weight: 600;
+  font-weight: 650;
+  font-size: 0.9rem;
 }
 
 .billing-panel-info {
-  font-size: 0.9rem;
-  color: var(--text);
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--text-main);
 }
 
 .billing-panel-pix {
+  margin-bottom: 0.5rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
   background: var(--surface-soft);
   border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem;
   word-break: break-all;
   font-family: monospace;
   font-size: 0.8rem;
-  color: var(--text);
-  margin-bottom: 0.5rem;
+  line-height: 1.5;
+  color: var(--text-main);
 }
 
-.billing-panel-qr {
-  text-align: center;
-}
+.billing-panel-qr { text-align: center; }
 
 .billing-panel-qr img {
   max-width: 200px;
-  background: #FFFFFF;
   padding: 8px;
-  border-radius: 0.5rem;
+  border-radius: var(--radius-sm);
+  background: #FFFFFF;
 }
 
 .billing-panel-link {
   display: flex;
-  gap: 0.5rem;
   align-items: center;
+  gap: 0.5rem;
 }
 
 .billing-panel-link input {
   flex: 1;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 
-/* ------------------------------------------------- erro / resultado */
+/* --------------------------------------------------- erro / resultado */
 
 .billing-error-banner {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
+  gap: 0.6rem;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius-md);
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
-  color: var(--error);
+  color: #EF4444;
   font-size: 0.85rem;
+  line-height: 1.45;
 }
 
 .billing-force-result {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
+  gap: 0.6rem;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius-md);
   font-size: 0.85rem;
   font-weight: 500;
+  line-height: 1.45;
+  animation: billingPop 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .billing-force-result.success {
   background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
   color: #10B981;
 }
 
 .billing-force-result.error {
   background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
   color: #EF4444;
 }
 
 .billing-force-result.warning {
   background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
   color: #F59E0B;
 }
 
 .billing-force-result-body {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.4rem;
   flex: 1;
 }
 
@@ -448,88 +900,134 @@
 }
 
 .billing-force-dismiss {
+  padding: 0 0.25rem;
   background: none;
   border: none;
   color: inherit;
   cursor: pointer;
-  font-size: 1.1rem;
-  padding: 0 0.25rem;
+  font-size: 1.15rem;
+  line-height: 1;
   opacity: 0.7;
+  transition: opacity 0.18s ease;
 }
 
-.billing-force-dismiss:hover {
-  opacity: 1;
+.billing-force-dismiss:hover { opacity: 1; }
+
+/* ---------------------------------------------------------- error cell */
+
+/* Motivo do gateway: até 2 linhas com ellipsis + title para o texto cheio.
+   O wrapper é um BLOCO (não flex): dentro de um flex container o
+   `display: -webkit-box` seria blockified para `flow-root`, o line-clamp
+   deixaria de funcionar e a coluna colapsaria na largura da palavra mais
+   longa. O min-width impede que a coluna "Motivo" encolha. */
+.billing-reason {
+  display: block;
+  min-width: 230px;
+  max-width: 330px;
 }
 
-/* ------------------------------------------------------------ toast */
+.billing-reason .billing-cell-muted {
+  display: block;
+  margin-top: 0.25rem;
+  white-space: normal;
+  line-height: 1.45;
+}
+
+/* ATENÇÃO — COLISÃO DE CLASSE: `src/pages/user/Billing.css` também define
+   `.error-cell` (com `padding: 2rem` e `text-align: center`). Como todo o CSS
+   é bundlado em um arquivo único, a regra do app do usuário vazava para o
+   admin e inflava a célula "Motivo" em ~64px. O prefixo `.billing-dashboard`
+   aumenta a especificidade e vence a regra do outro arquivo. */
+.billing-dashboard .error-cell {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 320px;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 0.81rem;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+/* ------------------------------------------------------------- toast */
 
 .billing-toast {
   position: fixed;
-  top: 1.5rem;
-  right: 1.5rem;
+  top: 1.25rem;
+  right: 1.25rem;
   z-index: 1200;
   display: flex;
   align-items: flex-start;
   gap: 0.6rem;
   max-width: 420px;
   padding: 0.85rem 1rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--surface);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-lg);
   font-size: 0.85rem;
+  line-height: 1.45;
   color: var(--text);
+  animation: billingSlideIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .billing-toast.success { border-left: 3px solid var(--success); }
 .billing-toast.success svg { color: var(--success); }
 .billing-toast.error { border-left: 3px solid var(--error); }
-.billing-toast.error svg { color: var(--error); }
+.billing-toast.error svg { color: #EF4444; }
 .billing-toast.warning { border-left: 3px solid var(--warning); }
-.billing-toast.warning svg { color: var(--warning); }
+.billing-toast.warning svg { color: #F59E0B; }
 .billing-toast.info { border-left: 3px solid var(--primary); }
 .billing-toast.info svg { color: var(--primary); }
 
-.billing-toast span {
-  flex: 1;
-}
+.billing-toast span { flex: 1; }
 
 .billing-toast button {
+  display: flex;
+  align-items: center;
+  padding: 0;
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  padding: 0;
+  transition: color 0.18s ease;
 }
 
-.billing-toast button:hover {
-  color: var(--text);
-}
+.billing-toast button:hover { color: var(--text-main); }
 
 /* -------------------------------------------------------- drill-down */
 
 .billing-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  z-index: 1100;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
-  z-index: 1100;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(79, 70, 229, 0.18), transparent 26rem),
+    rgba(2, 6, 23, 0.62);
+  backdrop-filter: blur(10px) saturate(1.1);
+  animation: billingFade 0.22s ease both;
 }
 
 .billing-modal {
-  width: 640px;
+  display: flex;
+  flex-direction: column;
+  width: 720px;
   max-width: 100%;
-  max-height: 80vh;
-  overflow-y: auto;
+  max-height: 82vh;
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1.5rem;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: billingPop 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .billing-modal-header {
@@ -537,25 +1035,38 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.5rem;
+  padding: 1.05rem 1.35rem;
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--border);
 }
 
 .billing-modal-header h3 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--text-main);
 }
 
 .billing-modal-desc {
+  margin: 0;
+  padding: 0.95rem 1.35rem 0;
   color: var(--text-muted);
-  font-size: 0.85rem;
-  margin: 0 0 1rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.billing-modal-body {
+  padding: 0.95rem 1.35rem 1.35rem;
+  overflow-y: auto;
 }
 
 .billing-modal-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  padding: 0.95rem 1.35rem 1.35rem;
+  overflow-y: auto;
 }
 
 .billing-modal-row {
@@ -563,37 +1074,47 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.6rem 0.75rem;
+  padding: 0.7rem 0.85rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-soft);
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+
+.billing-modal-row:hover {
+  border-color: var(--primary);
+  transform: translateX(2px);
 }
 
 .billing-modal-row-info {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: 0.2rem;
   min-width: 0;
 }
 
 .billing-modal-row-info strong {
-  font-size: 0.85rem;
-  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text-main);
 }
 
 .billing-modal-row-info span {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--text-soft);
 }
 
 .billing-modal-value {
   font-weight: 700;
   white-space: nowrap;
-  color: var(--text);
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
 }
 
 .billing-modal-value.success { color: var(--success); }
-.billing-modal-value.failed { color: var(--error); }
+.billing-modal-value.failed { color: #EF4444; }
 
 /* ---------------------------------------------------------- spinner */
 
@@ -606,20 +1127,31 @@
   to { transform: rotate(360deg); }
 }
 
+/* ------------------------------------------------------------- responsivo */
+
 @media (max-width: 1200px) {
-  .billing-metrics {
-    grid-template-columns: repeat(2, 1fr);
+  .billing-kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 900px) {
-  .billing-metrics {
+  .billing-kpi-strip {
     grid-template-columns: 1fr;
   }
 
-  .billing-dashboard .admin-header {
+  .billing-hero-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .billing-dashboard .billing-section {
+    padding: 1.1rem 1rem 1.25rem;
+  }
+
+  .billing-agenda-sum {
+    margin-left: 0;
+    width: 100%;
   }
 }
 
@@ -628,5 +1160,28 @@
     left: 1rem;
     right: 1rem;
     max-width: none;
+  }
+
+  /* Sem flex-wrap o botão de atualizar ficava órfão numa linha sozinha. */
+  .billing-hero-actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .billing-hero-actions > .btn:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .billing-icon-btn {
+    justify-self: end;
+  }
+
+  .billing-kpi-value {
+    font-size: 1.5rem;
+  }
+
+  .billing-panel {
+    padding: 1.1rem 1rem 1.25rem;
   }
 }

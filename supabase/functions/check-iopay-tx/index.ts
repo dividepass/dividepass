@@ -257,6 +257,7 @@ async function confirmIOPayment(
             gateway_status: "authorized",
             gateway_subscription_id: gateway_payment_id,
             next_charge_at: nextChargeAt.toISOString(),
+            renewal_due_at: nextChargeAt.toISOString(),
             billing_status: "active",
             retry_count: 0,
             last_charge_at: new Date().toISOString(),
@@ -277,6 +278,7 @@ async function confirmIOPayment(
           status: "active", gateway: "iopay", gateway_subscription_id: gateway_payment_id,
           payment_method: paymentMethod || null,
           next_charge_at: nextChargeAt.toISOString(),
+          renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
           started_at: new Date().toISOString(),
           custom_cycle_days: days,
@@ -338,6 +340,9 @@ async function confirmIOPayment(
           gateway_status: "authorized",
           gateway_subscription_id: gateway_payment_id,
           next_charge_at: nextChargeAt.toISOString(),
+          // Pagamento aprovado: a renovacao passa a ser data + ciclo. Esta e a
+          // data que a regra de 7 dias usa (ela nao anda a cada retry).
+          renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active",
           retry_count: 0,
           last_charge_at: new Date().toISOString(),
@@ -355,6 +360,20 @@ async function confirmIOPayment(
         return { success: false, error: "subscription update failed: " + subErr.message };
       }
       console.log(`[confirmIOPayment] subscription updated: id=${subInfo.id} cycle=${cycle} next=${nextChargeAt.toISOString()}`);
+
+      // Assinatura regularizada: o membro volta a ter acesso no grupo.
+      // (Durante a carencia ele fica 'overdue'; depois de cancelado, o
+      // pagamento refaz o vinculo.)
+      await supabaseAdmin
+        .from("group_members")
+        .update({
+          status: "active",
+          payment_status: "active",
+          left_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("group_id", group_id)
+        .eq("user_id", user_id);
     } else {
       console.error("[confirmIOPayment] No subscription found! Creating fallback...");
       const { data: grp } = await supabaseAdmin.from("groups").select("service_id").eq("id", group_id).maybeSingle();
@@ -364,6 +383,7 @@ async function confirmIOPayment(
         status: "active", gateway: "iopay", gateway_subscription_id: gateway_payment_id,
         payment_method: paymentMethod || null,
         next_charge_at: nextChargeAt.toISOString(),
+        renewal_due_at: nextChargeAt.toISOString(),
         billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
         started_at: new Date().toISOString(),
         custom_cycle_days: days,

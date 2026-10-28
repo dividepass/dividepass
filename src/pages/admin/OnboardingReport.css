@@ -23,6 +23,31 @@
 .ob-report-stat.purple { color: #A855F7; }
 .ob-report-stat.red    { color: #EF4444; }
 
+/* Card que abre a sheet (Pessoas indicadas). */
+.ob-report-stat.is-clickable {
+  width: 100%;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.ob-report-stat.is-clickable:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
+}
+
+.ob-report-stat.is-clickable:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.ob-report-stat-chevron {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-soft);
+}
+
 .ob-report-stat-value {
   display: flex;
   align-items: baseline;
@@ -216,7 +241,9 @@
   color: var(--text-muted);
   font-style: italic;
 }.ob-invite-chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   padding: 0.18rem 0.5rem;
   border-radius: 999px;
   background: rgba(34, 197, 94, 0.14);
@@ -227,6 +254,14 @@
 }
 
 .ob-invite-chip:hover { background: rgba(34, 197, 94, 0.26); }
+
+/* Sem telefone não há link de WhatsApp — vira um rótulo neutro. */
+.ob-invite-chip.is-static {
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--text-muted);
+}
+
+.ob-invite-chip.is-static:hover { background: rgba(148, 163, 184, 0.18); }
 
 /* ═══ Gráficos de distribuição (mesmo padrão visual da pesquisa) ═══ */
 .charts-section {
@@ -492,6 +527,36 @@
   flex-shrink: 0;
 }
 
+/* Botão de WhatsApp no lead — abre a conversa com o texto já escrito. */
+.ob-whatsapp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 0.5rem;
+  background: rgba(37, 211, 102, 0.12);
+  border: 1px solid rgba(37, 211, 102, 0.35);
+  color: #22C55E;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.ob-whatsapp-btn:hover {
+  background: rgba(37, 211, 102, 0.2);
+  border-color: rgba(37, 211, 102, 0.55);
+  transform: translateY(-1px);
+}
+
+[data-theme="light"] .ob-whatsapp-btn {
+  color: #15803D;
+  background: rgba(37, 211, 102, 0.1);
+  border-color: rgba(37, 211, 102, 0.3);
+}
+
 /* Respostas curtas viram etiquetas, não colunas. */
 .ob-response-chips {
   display: flex;
@@ -677,5 +742,17 @@
 @media (max-width: 640px) {
   .ob-platform-group-label {
     min-width: 100%;
+  }
+
+  /* Em tela estreita o botão de WhatsApp fica só com o ícone. */
+  .ob-whatsapp-btn {
+    padding: 0.3rem 0.4rem;
+    font-size: 0;
+    gap: 0;
+  }
+
+  .ob-whatsapp-btn svg {
+    width: 15px;
+    height: 15px;
   }
 }

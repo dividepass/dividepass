@@ -1048,7 +1048,7 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
           custom_cycle_label: renewalMode
             ? (renewalSub?.custom_cycle_label || body.custom_cycle_label || null)
             : (body.custom_cycle_label || null),
-          ...(renewalMode ? {} : { next_charge_at: nextChargeAt.toISOString() }),
+          ...(renewalMode ? {} : { next_charge_at: nextChargeAt.toISOString(), renewal_due_at: nextChargeAt.toISOString() }),
           billing_status: "active",
         }, { onConflict: "user_id, group_id" });
 
@@ -1251,7 +1251,7 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
         card_id: idCard || null,
         card_last4: cardLast4,
         card_brand: cardBrand,
-        ...(renewalMode ? {} : { next_charge_at: nextChargeAt.toISOString() }),
+        ...(renewalMode ? {} : { next_charge_at: nextChargeAt.toISOString(), renewal_due_at: nextChargeAt.toISOString() }),
         billing_status: "active",
       }, { onConflict: "user_id, group_id" });
 

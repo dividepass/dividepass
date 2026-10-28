@@ -1176,6 +1176,61 @@ depende de quem escreveu.
 
 ---
 
+## 12.8 Carteiras e repasse dos grupos de terceiros (2026-10-25)
+
+### O sintoma
+`/admin/wallets` mostrava tudo zerado: 0 saques pendentes/realizados/recusados e
+`R$ 2,28` de "Saldo Total Usuários" — mesmo com **R$ 748,50** já recebidos
+(31 pagamentos pagos, visíveis na aba Financeiro).
+
+### O que estava realmente quebrado (medido em produção, sessão admin)
+
+| # | Achado | Evidência |
+|---|---|---|
+| 1 | **O caminho que grava o pagamento não credita a carteira.** O checkout/polling usa `check-iopay-tx`, que insere a linha em `payments` com `status='paid'` e **nunca chama `credit_wallet`**. Só o webhook (`confirm-payment`) creditava. | `supabase/functions/check-iopay-tx/index.ts` — nenhum `credit_wallet` no arquivo |
+| 2 | **No webhook, o crédito falhava mesmo.** `credit_wallet(p_reference_id UUID)` recebia o **id do gateway** (numérico em iopay/MP/stripe) → `22P02 invalid input syntax for type uuid`, engolido no `catch`. Só passavam os gateways com id em UUID (2 pagamentos de R$ 1,00 → R$ 0,91 cada = R$ 1,82). | `confirm-payment/index.ts` (4 blocos de crédito) |
+| 3 | **`wallet_withdrawals` nunca teve `pix_key`/`pix_type`/`bank_*`.** O app envia essas colunas no pedido de saque → `PGRST204 / 42703` ⇒ **todo pedido de saque falhava**. Também não existia `created_at` (o front ordenava por ela). | sonda 42703 via anon key |
+| 4 | **Falta de linha em `public.users` barra o crédito pela FK.** `user_wallets.user_id` e `wallet_transactions.user_id` referenciam `users(id)`; o trigger de cadastro (`handle_new_user`) está definido em 3 lugares divergentes e falhou numa janela, deixando usuários só no Auth. | `add-user-groups-and-wallet.sql:25,34` |
+| 5 | **"Marcar como pago" do admin debitava em duplicidade** e inseria em `wallet_transactions` a partir do browser — tabela com `INSERT` revogado (o insert falhava em silêncio). | `Wallets.jsx` (handleMarkPaid) |
+| 6 | **`process-recurring-billing` tinha a condição invertida**: creditava quando `group.is_official` (grupo da plataforma) e pulava o grupo de terceiro. | `process-recurring-billing/index.ts:690` |
+| 7 | **Policy de INSERT sobrando em `wallet_transactions`** ("Service role can insert wallet transactions", `WITH CHECK (true)` sem `TO`): qualquer autenticado podia forjar movimentação na própria carteira. | `supabase/migrations/20260724000000_add_wallet_insert_policies.sql` |
+
+### A verdade sobre os números
+Os **6 grupos com movimento** (Painel, Grupo 3, Max, ByeFIT, Wellhub, Grupo3) são
+**da própria plataforma** (dono = `admin@dividepass.com`). Os R$ 748,50 recebidos
+são 100% receita da plataforma; **nenhum grupo de terceiro recebeu pagamento
+ainda** (Pedro Marques e Damares têm grupos, mas sem pagamento). Por isso
+"A Repassar" de terceiro é R$ 0,00 — e os R$ 2,28 de saldo são o resto de dois
+créditos parciais que escaparam do bug.
+
+### O que foi feito
+- **`database/fix-wallet-repasse.sql`** (SQL Editor): colunas que faltam em
+  `wallet_withdrawals`; repõe `public.users` a partir de `auth.users`;
+  **trigger `trg_credit_wallet_on_payment`** que credita a carteira do dono
+  quando o pagamento vira `paid` (vale para *todo* caminho de pagamento);
+  RPCs `request_withdrawal` (reserva saldo) e `process_withdrawal` (admin paga
+  ou rejeita); fecha a policy de INSERT em `wallet_transactions`.
+- **`database/backfill-wallet-repasse.sql`**: repasse retroativo dos pagamentos
+  já feitos, com prévia (`v_do_it = FALSE`) e quebra de duplicidade.
+- **Front** (deploy `dpl_911g7npkz`): abas **"Repasse por grupo"** e
+  **"Carteiras"**, "Lucro da Plataforma" no lugar do "Lucro Líquido" (que
+  contava dinheiro de terceiro como lucro), chave PIX visível no pedido de
+  saque, e o saque do usuário (`Wallet.jsx`) funcionando.
+- **Edge functions**: o crédito saiu do código (confirm-payment,
+  mercado-pago-webhook, process-recurring-billing) — o banco é a fonte única.
+
+### Pendências desta rodada
+- Rodar `fix-wallet-repasse.sql` e depois `backfill-wallet-repasse.sql` (com
+  `v_do_it = TRUE`) no SQL Editor do Supabase.
+- **Deploy das edge functions** (a CLI não tem acesso à org do projeto): sem
+  isso, o `credit_wallet` continua sendo chamado pelo webhook e o
+  `REVOKE ... FROM service_role` (feito no script) devolve erro 42501 — inofensivo
+  porque o trigger já creditou, mas o log fica sujo.
+- Se rodar `fix-p0-security.sql` de novo, rodar o `fix-wallet-repasse.sql`
+  **depois** (o P0 restaura `GRANT EXECUTE ON ALL FUNCTIONS TO service_role`).
+
+---
+
 ## 13. Perguntas em aberto — respondidas
 
 1. **Quais cron jobs estão realmente agendados?** `exec_sql` não existe (404) → `manage-crons` list/toggle degradam. Em produção existem `BILLING_CRON_SECRET` e `OVERDUE_CRON_SECRET` (rotacionados). **Continua em aberto:** quais jobs estão de fato agendados no `pg_cron`.
@@ -1185,6 +1240,479 @@ depende de quem escreveu.
 5. **`MP_WEBHOOK_SECRET` está definido?** Sim, e a validação está ativa ✅.
 6. **`transaction_code` preenchido no fluxo de adesão?** Sim, e é a chave usada pela trava de replay.
 7. **`sb_secret_…` do projeto** — nesta sessão foi criado um **PAT de projeto** (não é chave de API); deve ser revogado ao final (pendência 2).
+
+---
+
+## 14. Redesenho do `/dashboard` e da landing `/` (2026-10-27)
+
+Rodada de UI/UX: 22 verificações automatizadas (Playwright) rodando em
+**produção** contra `https://dividepass.com`, todas verdes.
+
+### A FAQ da landing vazava: era colisão de CSS, não a animação
+
+O sintoma era "a resposta aparecia por trás do item fechado". A animação
+(`grid-template-rows: 0fr → 1fr`) estava certa — o problema era outro:
+
+**`src/pages/SeoPages.css` define classes `.faq-*` GLOBAIS** (`.faq-item`,
+`.faq-question`, `.faq-answer`, `.faq-answer p`, `.faq-question svg`…). Como
+o bundle é único (`build.codeSplitting: false`), essas regras vazam para
+todas as telas, inclusive a landing. E `.faq-answer { padding: 0 1.25rem 1.1rem;
+animation: faqSlideDown }` do SeoPages **sempre renderiza** a resposta —
+daí o texto vazando.
+
+**Regra.** Classe de CSS com nome genérico precisa ser escopada por página.
+Na landing as regras foram escopadas sob `.home-container` (`.home-container
+.faq-item`, `[data-theme="light"] .home-container .faq-item-open .faq-toggle`,
+…). Alternativa seria renomear as classes, mas escopar é menos invasivo.
+
+**Como isso hide**: o `SeoPages.css` também trazia `.faq-question:hover
+{ color: #c7d2fe }` e `.faq-question svg { color: rgba(255,255,255,0.3) }` —
+no tema claro o chevron ficava branco sobre branco (invisível) e o texto
+hover ficava lilás washed-out. Os dois sintomas eram o mesmo bug.
+
+### Fotos de usuário: a tabela `users` é inacessível para visitante
+
+`GET /rest/v1/users` com a anon key devolve **`[]`** (RLS) — logo
+`users.avatar_url` **nunca** chega na landing pública, e o contador de
+"pessoas entraram neste mês" é sempre 0. A **única** fonte de foto real
+lida pelo anon é **`testimonials.avatar_url`** (aprovados). O hero e os
+depoimentos passaram a buscar as fotos de lá, com o avatar do perfil como
+complemento.
+
+### O `.main-content` corta o que passa da margem
+
+`src/pages/user/UserLayout.css` tem `.main-content { overflow-x: hidden }`:
+overflow **não** vira scroll, vira **corte**. O sintoma "passa da margem" é
+conteúdo cortado, não barra de rolagem. O `.main-content` encolhe e o
+título de saudação (que traz o e-mail) estourava 71px a 390px.
+
+**Como medir overflow de verdade** (`node .tmp-verify/visual-local.mjs`):
+para cada elemento, achar o **ancestral que recorta** (`overflow-x` != visible).
+Se for `auto/scroll` é carrossel (ok). Se for `hidden/clip` e o elemento
+passa da borda do ancestral → **conteúdo cortado = bug**. Checar só
+`documentElement.scrollWidth` não basta: o corte acontece dentro do
+container, a página não ganha scroll.
+
+### Tokens `--home-*` presos no tema escuro
+
+`--home-*` (usados pela landing) só mudam dentro de `.home-container`. A
+seção de economia do dashboard herdava esses tokens → **os cards ficavam
+sempre escuros**, mesmo no tema claro. Remapeados para os tokens do app
+(`--surface`, `--border`, `--text-main`…).
+
+### Versionamento voltou a contar
+
+`APP_VERSION = '1.0.0.2'` era literal em `UserLayout.jsx` e
+`AdminLayout.jsx` desde o commit inicial. Agora:
+- `scripts/set-version.mjs` (roda no `prebuild`) grava `src/version.json`
+  com `1.0.<nº de commits>` + sha;
+- `vite.config.js` injeta `__APP_VERSION__` no bundle com a ordem:
+  `APP_VERSION` (env) → `src/version.json` → `git rev-list --count HEAD` →
+  `package.json`;
+- `src/lib/version.js` exporta `APP_VERSION` para os dois layouts.
+
+Cada commit/release sobe o número (hoje `v1.0.41`). No build da Vercel não
+há histórico git → o `src/version.json` enviado é preservado (comportamento
+esperado, log `[version] mantida … sem historico git completo`).
+
+### Como Funciona: 4 passos + card de destaque
+
+A section tinha grid de **5 colunas** (4 passos + card "Já tem uma
+assinatura?"). Ao virar 4 passos, o card de destaque **sumiu do desktop**
+(ele vivia dentro do wrapper mobile). Agora o card é um elemento solto
+(existe nos dois breakpoints) e, no desktop, vira uma faixa horizontal
+`ícone | texto | ação`.
+
+---
+
+## 15. Selos do grupo: verificado, anúncios e tipo de conta (2026-10-27)
+
+O dono pediu três coisas no card do grupo (catálogo/dashboard):
+1. **mais destaque para grupo verificado** (tag "Verificado pela DividePass",
+   porque compra verificada é compra mais segura);
+2. **tag de anúncio** — o grupo tem que dizer se a assinatura **tem** ou
+   **não tem** anúncios, com um seletor em `/admin/groups/new`,
+   `/admin/groups/[id]/edit` e `/dashboard/my-groups/create`;
+3. **logo da DividePass** no lugar do "DP" de texto no grupo oficial.
+
+### Nova coluna `groups.has_ads`
+
+`database/add-group-has-ads.sql`: `boolean` **nullable**.
+`true` = com anúncios, `false` = sem anúncios, `NULL` = **não mostrar**
+(o grupo fica **sem selo** no card — melhor que mentir).
+
+> Decisão do dono: o seletor tem **3 opções** — "Com anúncios",
+> "Sem anúncios" e **"Não mostrar"** — e **"Não mostrar" vem pré-selecionado**
+> por padrão. Ou seja: `NULL` deixou de ser "não informado" e passou a ser
+> uma **escolha** ("não quero selo"). Consequência: o campo `has_ads` é
+> **sempre enviado** no INSERT/UPDATE (inclusive `null`), senão um grupo que
+> antes tinha "Sem anúncios" continuaria exibindo o selo antigo quando o
+> dono voltasse para "Não mostrar".
+
+A coluna **não** entra na lista de campos privilegiados do trigger
+`guard_group_privileged_fields`: quem cria o grupo escolhe, o admin corrige
+depois. Não existe moderação nesse campo.
+
+### Como o front lida com a coluna ainda não existir
+
+O front **não pode** mandar `has_ads` antes da migration: o PostgREST
+devolve 42703 e o cadastro do grupo inteiro quebra. Ordem segura:
+
+1. `src/lib/groupHasAds.js` → `hasAdsColumnAvailable()` sonda
+   `select('*').limit(1)` e olha se `'has_ads' in row` (sonda **sem erro no
+   console** — filtrar por coluna inexistente geraria 400 a cada load).
+   Só cacheia resposta **positiva**: sem linhas não dá para provar que a
+   coluna existe, então o seletor fica escondido (nada quebra).
+2. `isMissingHasAdsColumn(error)` — se o banco responder 42703/PGRST204, o
+   insert/update é **refeito sem o campo** e o seletor se desliga.
+3. No wizard, depois que o rascunho é criado, a sonda roda de novo (agora há
+   uma linha visível) e libera o seletor da etapa 3.
+
+### Componentes novos (reusados em 4 telas)
+
+- `src/components/GroupTags.jsx` — selos do grupo: **Verificado pela
+  DividePass** (verde, o mais forte), **Sem anúncios** (verde),
+  **Com anúncios** (âmbar) e **tipo de conta** (neutro). Props:
+  `size`, `showPlanType`, `showVerified`.
+- `src/components/AdsToggle.jsx` — o seletor "a conta compartilhada tem
+  anúncios?" com **3 opções** (Com anúncios / Sem anúncios / **Não
+  mostrar**), usado no wizard (etapa 3, logo abaixo do tipo de conta) e no
+  painel admin. "Não mostrar" = `null` = grupo sem selo.
+
+### Onde os selos aparecem
+
+| Tela | O que mudou |
+|---|---|
+| Catálogo (`/dashboard/catalog/:id`) | selo de verificado **no lugar** do checkzinho, tag de anúncios, tag de tipo de conta, card verificado ganha fio verde, **logo da DividePass** no grupo oficial |
+| Detalhe do grupo | badge "Verificado pela DividePass" (verde preenchido) + tags de anúncio/tipo |
+| Meus Grupos | tags de verificado/anúncios/tipo de conta |
+| Wizard etapa 3 | seletor "A conta compartilhada tem anúncios?" com "Não mostrar" pré-selecionado (não trava o avanço) |
+| Admin criar/editar | mesmo seletor, logo abaixo do tipo de conta |
+
+O grupo oficial usa o **logo** (`src/assets/logo.png`) num chip
+quadrado (o mark tem pontas que um círculo cortaria) — e a busca do
+"admin_user" no catálogo foi removida (não existia mais usage).
+
+### Como testar antes da migration rodar
+
+`node .tmp-verify/visual-tags.mjs` intercepta `rest/v1/groups` e injeta
+`has_ads` no retorno (GET) + aceita a escrita (PATCH/POST) — simulando o
+banco com a coluna aplicada. `node .tmp-verify/visual-tags-sem-coluna.mjs`
+faz o contrário: banco **sem** a coluna, garantindo que o seletor some,
+nenhum payload leve `has_ads` e nenhum erro 42703 apareça.
+
+---
+
+## 16. Status da assinatura: ATIVA, ATRASADA e CANCELADA (2026-10-27)
+
+Rodada pedida pelo usuário: reduzir os status de assinatura ao que é
+realmente necessário e definir **quando** cada um acontece.
+
+### A regra (4 estados, derivados da data)
+
+| Estado | Quando | Aparece em "Meus Grupos" / "Assinaturas Ativas" | Aparece no Histórico |
+|---|---|---|---|
+| **Ativa** | data de renovação > agora | sim | sim |
+| **Atrasada** (vencida) | renovação < agora, **até 7 dias** de carência | sim (com card de renovação + botão de pagamento) | sim |
+| **Cancelada** | passou de 7 dias de atraso | **não** | **sim** |
+| **Pendente** | pagamento em aberto | sim | sim |
+
+Sumiu do painel: *Inativa* e *Expirada*. Os legados `expired` e `inactive`
+viram ATRASADA ou CANCELADA conforme a data — a UI só fala os 4 estados.
+
+**Durante a carência a assinatura continua `status='active'` no banco.**
+O estado ATRASADA é *derivado da data*, não do status. Motivo: a cobrança
+automática ainda precisa tentar o cartão; se o banco já dissesse
+"cancelada", a rotina recorrente pararia cedo demais.
+
+### Fonte de verdade: `renewal_due_at` (coluna nova)
+
+| Coluna | Comportamento | Usada como data de renovação? |
+|---|---|---|
+| `renewal_due_at` (nova) | só é gravada no **pagamento aprovado** (data + ciclo) | **sim** |
+| `next_charge_at` | anda a cada retry de cartão | não |
+| `expires_at` | legada (DATE) | fallback |
+
+O `next_charge_at` **não serve**: em cada retry ele avança e encurtaria a
+carência dos 7 dias. `renewal_due_at` só muda quando o dinheiro entra.
+
+### Contrato de domínio (front) — `src/lib/subscriptionAccess.js`
+
+Fonte única da regra no front (nada de calcular data dentro do componente):
+
+- `OVERDUE_GRACE_DAYS = 7` e `RENEWAL_REMINDER_DAYS = 2`
+- `subscriptionAccessState(sub)` → `ativa | atrasada | cancelada | pendente`
+- `isSubscriptionOverdue`, `isSubscriptionPastGrace`, `isSubscriptionCancelled`
+- `daysUntilRenewal`, `needsRenewalReminder` (dispara com 2 dias)
+- `isSubscriptionVisible` (a cancelada some das listas, mas fica no histórico)
+- `renewalDeadline`, `subscriptionRenewalDate`
+
+### Lifecycle (back) — `supabase/functions/_shared/subscriptionLifecycle.ts`
+
+Mesma semântica dos 7 dias, do lado do servidor:
+
+- `renewalDueAt(sub)` / `isOverdue` / `isPastGrace` / `graceEnd`
+- `cancelSubscription(...)` → assinatura `cancelled` + **desvincula o membro**
+  (`group_members.status/payment_status='cancelled'`, `left_at`) + cancela os
+  `billing_cycles` pendentes/failed/retrying + activity log + notificação
+  (usuário + dono do grupo)
+- `applySubscriptionLifecycle(...)` → marca membro `overdue` e normaliza
+  legado `expired` → `active` enquanto ainda dentro da carência
+
+### Crons
+
+| Cron | Hora UTC | O que faz agora |
+|---|---|---|
+| `update-subscription-statuses` | 03h | aplica o lifecycle; **não** mais marca `expired` por membro `overdue` (para a atrasada continuar visível); cancela assinatura de membro cancelado; reativa `expired` quando o membro volta a `active` |
+| `process-overdue-invoices` | 06h | fatura vencida → `failed`; membro → `overdue`; chama o lifecycle no fim |
+| `process-recurring-billing` | 14h | na 3ª falha de cartão **não** cancela nem desvincula (fica `status='active'`, `billing_status='cancelled'`, membro `overdue`) — para de cobrar o cartão recusado sem danificar a carência |
+
+### Pagamento aprovado (`transaction.succeeded`)
+
+Todos os caminhos de aprovação gravam a renovação e religam a assinatura:
+`check-iopay-tx`, `confirm-payment`, `force-confirm-payment`,
+`mercado-pago-webhook`, `create-payment/handlers/iopay`.
+
+- `renewal_due_at = data do pagamento + ciclo`
+- assinatura volta para `status='active'`
+- `check-iopay-tx` religa o membro: `status/payment_status='active'`, `left_at=null`
+
+### Card de renovação
+
+Novo componente `src/components/RenewalReminderCard.jsx` (+ `.css`).
+Aparece quando faltam **2 dias** para o vencimento **e** durante toda a
+carência (vencida), com botão que abre o `SubscriptionRenewalModal`
+(PIX/cartão). Entrou em `SubscriptionsCarousel`, `Billing`, `SubscriptionManage`
+e `ServiceCredentials`.
+
+### Bug corrigido no caminho
+
+`process-overdue-invoices` **resetava a senha da credencial de todo o grupo**
+quando um membro ficava overdue. Agora filtra por `assigned_to` — só a linha
+do membro afetado é regenerada.
+
+### Filtros do painel admin (`src/pages/admin/Subscriptions.jsx`)
+
+`Todas · Ativas · Atenção · Pendentes · Canceladas`. "Canceladas" é o status
+terminal de verdade (`cancelled` + o legado `inactive`); a atrasada legada
+(`expired`) fica em "Atenção", porque ainda dá para renovar. Os cards
+"Inativas" e "Expiradas" foram removidos e a métrica "Canceladas" ficou
+unificada.
+
+### Ordem de publicação (obrigatória)
+
+1. **SQL** — `database/subscription-status-rules.sql` (cria `renewal_due_at`,
+   faz backfill, normaliza os legados, cria 4 índices)
+2. **Edge functions** — deploy das 8 functions alteradas
+3. **Front** — deploy do front
+
+> Se o front subir antes do SQL, o PostgREST devolve **42703** (coluna
+> inexistente) e as telas de assinatura quebram.
+
+### Arquivos tocados nesta rodada
+
+- Contrato e filtros: `src/lib/subscriptionAccess.js`, `src/lib/subscriptionFilters.js`,
+  `src/lib/subscriptionWindows.js`
+- Admin: `src/pages/admin/Subscriptions.jsx`,
+  `src/pages/admin/billing/BillingDashboard.jsx`
+- Front: `src/components/RenewalReminderCard.jsx|.css`,
+  `src/components/SubscriptionsCarousel.jsx|.css`,
+  `src/pages/user/Billing.jsx|.css`, `SubscriptionHistory.jsx|.css`,
+  `SubscriptionManage.jsx|.css`, `ServiceCredentials.jsx|.css`,
+  `src/hooks/useAppData.js` (derivou `visibleSubscriptions`; a query busca
+  `active` + o legado `expired`)
+- Back: `supabase/functions/_shared/subscriptionLifecycle.ts` (novo),
+  `update-subscription-statuses`, `process-overdue-invoices`,
+  `process-recurring-billing`, `check-iopay-tx`, `confirm-payment`,
+  `force-confirm-payment`, `mercado-pago-webhook`, `create-payment/handlers/iopay`
+- SQL: `database/subscription-status-rules.sql` (novo)
+
+### Auditoria independente (verifier) e correções
+
+Uma revisão independente do conjunto (só leitura) não achou nenhum bug
+**crítico** ou **alto** — os 5 requisitos foram confirmados com evidência linha
+a linha. Apontou 3 médias e 6 baixas, **todas corrigidas**:
+
+| Achado | Correção |
+|---|---|
+| `ServiceCredentials.jsx` não checava `subRes.error`: se a coluna `renewal_due_at` não existisse (ordem de publicação errada), `sub = null` e o código caía em "sem assinatura → libera" — **fail-open**, entregando credencial de assinatura vencida | erro de consulta agora **bloqueia** o acesso (fail-closed, igual ao `catch`) |
+| `BillingDashboard.jsx` contava "Vencidas" por `next_charge_at`: depois do primeiro retry a contagem zerava, divergindo do painel de Assinaturas | passa a usar o filtro compartilhado `attentionServerFilter` (data de vencimento + fallback) |
+| A query do front buscava só `status = 'active'`: a **atrasada** legada (`expired`) ficava invisível até o job das 03h normalizá-la — e o card de renovação sumia junto | a query busca `active` + `expired`; o estado exibido continua sendo o derivado |
+| `confirm-payment` / `force-confirm-payment` religavam o membro sem zerar `left_at` (o cancelamento por carência grava `left_at`) | `left_at: null` ao religar o vínculo |
+| Cancelamento pelo painel admin não cancelava `billing_cycles` e usava `status = 'inactive'` no membro (que a tela de credenciais não bloqueia) | cancela os `billing_cycles` pendentes/failed/retrying, `billing_status = 'cancelled'` e membro `cancelled` + `payment_status = 'cancelled'` |
+| `'expired'` entrava em "Atenção" **e** em "Canceladas" ao mesmo tempo | `CANCELLED_STATUSES` passou a ser `['cancelled','inactive']` (terminal de verdade) e `LISTED_STATUSES` = `['active','expired','pending']` (a atrasada é "Atenção", não "Cancelada") |
+| Datas calculadas por fora do domínio: `admin/Subscriptions.jsx` (`dueDate`, `isRenewalSoon`), `subscriptionFilters.js` (janela de renovação + ordenação) e `Billing.jsx` (vencimento exibido) | todas passam a usar `renewalDeadline` / `subscriptionRenewalDate` / `renewal_due_at` |
+
+### Armadilha: dois enums com nomes parecidos (22P02)
+
+`billing_cycles.status` **não** aceita `'retrying'`. São dois enums
+diferentes:
+
+| Coluna | Enum | Valores |
+|---|---|---|
+| `user_subscriptions.billing_status` | `subscription_billing_status` | `active`, **`retrying`**, `cancelled` |
+| `billing_cycles.status` | `billing_status` | `pending`, `processing`, `approved`, `failed`, `cancelled` |
+| `user_subscriptions.status` | `subscription_status` | `active`, `inactive`, `cancelled`, `expired`, `pending` |
+| `group_members.payment_status` | `payment_flow_status` | `first_attempt`, `awaiting_entrance`, `entrance_paid`, `awaiting_subscription`, `active`, `expired`, `overdue`, `refunded`, `cancelled` |
+
+O "em retry" da ASSINATICA é `user_subscriptions.billing_status =
+'retrying'`; no CICLO de cobrança o retry é `status = 'failed'` com
+`next_retry_at` preenchido (daí o índice `idx_billing_cycles_next_retry ... WHERE
+status = 'failed'`).
+
+Usar `'retrying'` no ciclo dá **22P02 invalid input value for enum
+billing_status**. Isso já pegou em 3 lugares (a migration, o
+`subscriptionLifecycle` e o cancelamento pelo admin) — no backend a falha era
+**silenciosa**, porque o `update()` do supabase-js devolve `{ error }` em vez
+de lançar: as crons continuavam pendentes e ninguém via o erro.
+
+**Ainda vai cobrar** = `pending` (agendado) + `processing` (em voo) + `failed`
+(recusado, com retry marcado).
+
+**Status:** implementado e validado (`npm run build` ✅, `node --check` nas 9
+functions ✅, eslint limpo nos arquivos alterados — os erros restantes são
+pré-existentes e não têm relação com esta rodada).
+
+**Status da publicação (27/10/2026, 21h):**
+
+| Etapa | Estado |
+|---|---|
+| SQL (`database/subscription-status-rules.sql`) | ✅ **aplicado** — confirmado por sonda no banco: a coluna `renewal_due_at` responde sem 42703 |
+| Front (Vercel) | ✅ **publicado** — `https://dividepass.com`, bundle novo com `renewal_due_at` e o card de renovação |
+| Edge functions | ⏳ **pendente** — os arquivos de arquivo único estão prontos em `.tmp-verify/painel/` (ver `LEIA-ME.md` nessa pasta) |
+
+Sobre as edge functions: várias delas importam código de outras pastas
+(`../_shared/…`, `./handlers/…`) e o editor do painel do Supabase edita o
+entrypoint. `scripts/empacotar-function-painel.mjs` embute cada módulo num
+namespace e gera um **arquivo único** por função — assim o arquivo colado não
+depende de nenhuma pasta e funciona mesmo se o editor for de arquivo único.
+`scripts/validar-arquivos-painel.mjs` confere sintaxe, consistência dos
+namespaces, ausência de import local pendente e o enum de `billing_cycles`.
+
+**Armadilha do deploy manual:** `confirm-payment` **não é uma função** — é uma
+biblioteca que exporta `confirmPayment` e é embutida dentro dos webhooks
+(asaas, iopay, mercado-pago, pagarme, stripe). O `confirmPayment` novo já vai
+dentro deles; não há o que colar no painel. E nas funções de cron o interruptor
+**Verify JWT** do painel precisa continuar **desligado** — ligado, o gateway
+devolve 401 antes do código rodar e a cobrança recorrente nunca acontece.
+
+`node .tmp-verify/regra-status-teste.mjs` roda a regra do front contra os 28
+casos do requisito (limite de 7 dias, fallback de data, visibilidade,
+card de 2 dias) — **todos passam**.
+
+---
+
+## 16. Origem do lead (Totens / TVs) + card no admin + WhatsApp (2026-10-28)
+
+O dono pediu: (1) **Totens** e **TVs Publicidades** na etapa 4 do `/register`;
+(2) o card "onde nos achou" dentro de `/admin/onboarding`, porque a origem do
+lead é dado de negócio; (3) um **botão de WhatsApp** que já abre a conversa
+com o texto pronto.
+
+### A origem do lead mora em `users`, não no onboarding
+
+A pergunta "como você conheceu a DividePass?" é a **etapa 4 do `/register`**
+(antes do onboarding) e grava em `users.lead_source` +
+`users.lead_source_other` (via metadata do `auth.signUp` → trigger
+`on_auth_user_created`). O relatório de onboarding lê essa coluna.
+
+**Detalhe que importa:** o card conta **todos** os usuários que responderam
+(`users`), não só quem respondeu o onboarding — a pergunta é feita no
+cadastro, antes do fluxo de qualificação.
+
+"Outro" vira rótulo próprio na barra (`Outro: num shopping`), porque o
+texto digitado é a informação útil.
+
+### Botão de WhatsApp
+
+`src/lib/leadWhatsapp.js` (import com `.js` explícito — mesmo padrão de
+`src/lib/evolutionMetrics.js` — para o módulo poder ser testado em node
+puro). A mensagem é a do dono, com dois campos dinâmicos:
+
+- `[nome_cliente]` → primeiro nome (só o primeiro: "Eai Michael tudo bem?").
+- `[nomes_das_plataformas]` → plataformas de "Quer dividir"; se não houver,
+  cai para "Já usa"; se não houver nenhuma, a frase vira genérica
+  ("dividir assinaturas") para não sobrar "as assinatura ," quebrado.
+
+`buildLeadWhatsappUrl()` devolve `null` quando o telefone não é utilizável
+(menos de 10 dígitos) — o botão **some** em vez de abrir conversa quebrada.
+`phoneToWhatsApp` é tolerante (aceita qualquer coisa com dígito), então a
+validação do tamanho fica no `leadWhatsapp`.
+
+### Como testar o painel admin sem conta admin
+
+Não dá para auto-promover usuário (`PATCH role=admin` → 403). O truque do
+teste: interceptar o REST do Playwright e injetar `role: 'admin'` na
+resposta do **perfil** (`/rest/v1/users?id=eq.<uid>`), devolvendo uma lista
+sintética de leads na resposta da **lista**. Os leads sintéticos precisam
+ser os MESMOS ids nos perfis e nos interesses — senão o relatório fica
+vazio (a tela inteira é substituída pelo estado "Nenhum usuário entrou no
+onboarding ainda" quando `total === 0 && funnel.entered === 0`).
+
+`node .tmp-verify/visual-admin-onboarding.mjs` faz isso (13 checks).
+
+---
+
+## 17. Aba "Logs de Eventos" na ficha do usuário (2026-10-28)
+
+O `/admin/events` (registro de `platform_events`) é a **fonte** dos logs dos
+usuários. A ficha do usuário (`/admin/users/[id]`) ganhou a aba **"Logs de
+Eventos"**, com o **mesmo componente** do painel — não uma cópia.
+
+### Um componente, dois escopos
+
+`src/pages/admin/EventLog.jsx` ganhou a prop `userId`. Sem ela, o componente
+continua sendo o registro do painel (busca e período vêm do `PlatformEvents`).
+Com ela, o componente vira a ficha de um usuário: carrega a própria busca e o
+próprio período, porque na página do usuário não existe a barra de controles
+do painel.
+
+O que muda no escopo do usuário:
+
+- a lista inteira do usuário é carregada de uma vez (o volume é pequeno), então
+  a contagem e a ordenação são exatas e a busca é **local** — digitar não
+  dispara nova consulta;
+- o cabeçalho passa a falar "N eventos deste usuário" e "N no histórico";
+- o estado vazio é "Nenhum evento registrado para este usuário.";
+- o botão "Ver usuário" some (é o mesmo usuário) e no painel aparece o
+  **"Ver logs"**, que leva direto para `/admin/users/<id>?tab=events`.
+
+### A aba vive na URL
+
+O estado da aba saiu do `useState` e virou `?tab=` na URL (`?tab=events`).
+Assim quem abre o link chega direto na aba pedida — o mesmo princípio das
+páginas de detalhe com id no caminho.
+
+### O `metadata` é gravado em DOIS formatos (e isso quebrava o filtro)
+
+O `logPlatformEvent` do front grava `metadata: JSON.stringify(metadata)` — ou
+seja, **texto** dentro de uma coluna `jsonb`. As edge functions
+(`send-notification.ts`) gravam o **objeto**. As duas coisas convivem na mesma
+tabela.
+
+Consequência: `metadata->>'user_id'` (filtro do PostgREST) **quebra** —
+`jsonb ->> text` em um escalar jsonb dá erro no Postgres
+("cannot extract field from a scalar value") e derruba a consulta inteira,
+mesmo que a linha problemática não seja a do usuário procurado. Por isso o
+filtro por metadata no front só é um **best effort**, dentro de try/catch.
+
+`database/add-user-events-function.sql` resolve de vez: a função
+`admin_user_events(user_id, since, limit)` lê os dois formatos (objeto com
+`->>`, texto com regex) e é `SECURITY DEFINER` com a checagem de admin
+**dentro** da função (a RLS da tabela só deixa o admin, mas o SECURITY
+DEFINER passa por cima dela). Enquanto a função não está aplicada no banco, o
+front cai no caminho direto (`created_by` + tentativa por metadata) e a aba
+continua funcionando.
+
+### Verificação
+
+- `node .tmp-verify/visual-user-logs.mjs` — 23 checks: aba existe e abre pela
+  URL, só os eventos do usuário aparecem (nos dois caminhos), busca e período
+  filtram, a linha abre o detalhe, trocar de aba não perde o log, o log
+  continua quando a função do banco ainda não existe (fallback) e não há
+  estouro horizontal em 390px.
+- `node .tmp-verify/visual-events-platform.mjs` — 7 checks: o `/admin/events`
+  continua igual e o "Ver logs" leva para a aba do usuário.
 
 ---
 

@@ -1,9 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Save, Plus, Trash2, CheckCircle, X, Info, UserPlus, UserMinus, Camera, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, Plus, Trash2, CheckCircle, X, Info, UserPlus, UserMinus, Camera, RefreshCw, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import NotificationComposerCard from '../../components/NotificationComposerCard';
+import { simulatePrice, brl, MIN_PRICE_PER_SLOT } from '../../lib/platformFee';
+import { hasAdsColumnAvailable, isMissingHasAdsColumn } from '../../lib/groupHasAds';
+import AdsToggle from '../../components/AdsToggle';
 import './GroupForm.css';
 
 function Toast({ message, onClose }) {
@@ -19,6 +22,18 @@ function Toast({ message, onClose }) {
       <button onClick={onClose}><X size={14} /></button>
     </div>
   );
+}
+
+/**
+ * Limpa o termo da busca de usuário antes de montar o filtro do PostgREST.
+ *
+ * O valor vai entre aspas duplas (`"termo"`), mas aspas e barras invertidas
+ * fecham o valor, e `,` / `)` fecham a condição do `or(...)`. Trocar esses
+ * caracteres por espaço mantém a busca funcionando sem permitir que o termo
+ * altere o filtro.
+ */
+function sanitizeOwnerTerm(term) {
+  return String(term || '').replace(/["\\,()]/g, ' ').trim();
 }
 
 function GroupForm() {
@@ -60,6 +75,11 @@ function GroupForm() {
   const [ownerLoading, setOwnerLoading] = useState(false);
   const [currentOwnerName, setCurrentOwnerName] = useState('');
   const [ownerSearched, setOwnerSearched] = useState(false);
+  /* O campo de dono aparece na CRIAÇÃO também: às vezes o grupo é criado pelo
+     admin mas o dono real é outra pessoa. Em edição começa fechado (mostra o
+     dono atual) e abre no clique em "Trocar" — sem zerar o owner_id. */
+  const [ownerPicking, setOwnerPicking] = useState(!isEditing);
+  const [originalOwnerId, setOriginalOwnerId] = useState('');
 
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -69,6 +89,12 @@ function GroupForm() {
   const [hasProfiles, setHasProfiles] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [members, setMembers] = useState([]);
+  /* Atribuicao da credencial: `assigned_to = NULL` = compartilhada com todo
+     membro ativo. Com valor, a policy de leitura so libera a linha para
+     aquele usuario — os outros veem "credenciais nao disponiveis". */
+  const [credentialId, setCredentialId] = useState('');
+  const [credentialAssignedTo, setCredentialAssignedTo] = useState('');
+  const [sharingCredential, setSharingCredential] = useState(false);
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
 
@@ -81,6 +107,11 @@ function GroupForm() {
   const [planType, setPlanType] = useState('');
   const [planTypeCustom, setPlanTypeCustom] = useState('');
   const [customPlanActive, setCustomPlanActive] = useState(false);
+  /* A conta compartilhada tem anúncios? null = ainda não informado.
+     Só entra no payload quando a coluna has_ads existir no banco
+     (migration database/add-group-has-ads.sql). */
+  const [hasAds, setHasAds] = useState(null);
+  const [hasAdsColumn, setHasAdsColumn] = useState(true);
 
   const [emailCodeEnabled, setEmailCodeEnabled] = useState(false);
   const [emailAddress, setEmailAddress] = useState('');
@@ -99,19 +130,13 @@ function GroupForm() {
   const [addingMember, setAddingMember] = useState(false);
   const [groupAlertTitle, setGroupAlertTitle] = useState('Aviso do grupo');
   const [groupAlertMessage, setGroupAlertMessage] = useState('');
-  const [groupAlertChannels, setGroupAlertChannels] = useState('both');
+  const [groupAlertChannels, setGroupAlertChannels] = useState(['in_app', 'push']);
   const [sendingGroupAlert, setSendingGroupAlert] = useState(false);
   const [settings, setSettings] = useState({});
 
   const priceSimulation = useMemo(() => {
-    const price = parseFloat(formData.price_per_slot) || 0;
-    const gatewayRate = parseFloat(settings.gateway_fee_percent || '4.98') / 100;
-    const platformRate = parseFloat(settings.platform_fee_percent || '3.95') / 100;
-    const gatewayFee = price * gatewayRate;
-    const platformFee = price * platformRate;
-    const net = price - gatewayFee - platformFee;
-    return { price, gatewayFee, platformFee, net };
-  }, [formData.price_per_slot, settings]);
+    return simulatePrice(formData.price_per_slot);
+  }, [formData.price_per_slot]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -145,27 +170,45 @@ function GroupForm() {
     setProfiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleOwnerSearch = async (query) => {
-    setOwnerQuery(query);
-    setOwnerSearched(false);
-    if (query.trim().length < 2) { setOwnerResults([]); return; }
-    setOwnerLoading(true);
-    setOwnerSearched(true);
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('id, name, email')
-        .or(`name.ilike.%${query.trim()}%,email.ilike.%${query.trim()}%`)
-        .limit(8);
-      if (error) {
-        console.error('[GroupForm] owner search error:', error);
+  /*
+   * Busca do dono do grupo.
+   *
+   * O wildcard do PostgREST é `*` (NÃO `%`), e o valor precisa ir entre aspas
+   * duplas: `or=(name.ilike."*termo*",email.ilike."*termo*")`.
+   * Com `%` a query inteira quebra com HTTP 500 (foi o que acontecia antes),
+   * e sem aspas um termo com `)` ou `,` altera o filtro — daí a limpeza.
+   *
+   * A limpeza do estado fica no onChange (evento do usuário); aqui só a
+   * consulta com debounce.
+   */
+  useEffect(() => {
+    const term = ownerQuery.trim();
+    const safe = sanitizeOwnerTerm(term);
+    if (term.length < 2 || !safe) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('id, name, email')
+          .or(`name.ilike."*${safe}*",email.ilike."*${safe}*"`)
+          .limit(8);
+        if (error) {
+          console.error('[GroupForm] owner search error:', error);
+          setOwnerResults([]);
+        } else {
+          setOwnerResults(data || []);
+        }
+      } catch (err) {
+        console.error('[GroupForm] owner search error:', err);
+        setOwnerResults([]);
+      } finally {
+        setOwnerLoading(false);
       }
-      setOwnerResults(data || []);
-    } catch (err) {
-      console.error('[GroupForm] owner search error:', err);
-    }
-    setOwnerLoading(false);
-  };
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [ownerQuery]);
 
   const handleAddMember = async () => {
     if (!newMemberEmail.trim() || !groupId) return;
@@ -263,6 +306,38 @@ function GroupForm() {
     return idx >= 0 ? idx + 1 : null;
   };
 
+  /* Quem esta com a credencial atribuida. A policy de leitura do banco so
+     libera a linha para o proprio dono do `assigned_to`; os demais membros
+     veem "credenciais nao disponiveis" mesmo com a credencial configurada. */
+  const assignedMember = credentialAssignedTo
+    ? members.find(m => m.user_id === credentialAssignedTo)
+    : null;
+  const assignedMemberName = assignedMember
+    ? (assignedMember.user?.name || assignedMember.user?.email || 'membro do grupo')
+    : 'um membro que não está mais na lista';
+
+  /* Zera o `assigned_to` e devolve a credencial para o estado compartilhado:
+     todo membro ativo do grupo volta a enxergar. */
+  const handleShareCredential = async () => {
+    if (!groupId || !credentialId) return;
+    setSharingCredential(true);
+    try {
+      const { error } = await supabase
+        .from('group_credentials')
+        .update({ assigned_to: null, updated_at: new Date().toISOString() })
+        .eq('id', credentialId);
+
+      if (error) throw error;
+
+      setCredentialAssignedTo('');
+      setToast('Credencial compartilhada com todos os membros do grupo.');
+    } catch (err) {
+      setError('Erro ao compartilhar a credencial: ' + err.message);
+    } finally {
+      setSharingCredential(false);
+    }
+  };
+
   const groupAlertMembers = members.filter(m => m.status === 'active' || m.status === 'pending');
 
   const handleSendGroupAlert = async () => {
@@ -280,6 +355,11 @@ function GroupForm() {
       return;
     }
 
+    if (!groupAlertChannels.length) {
+      setError('Selecione pelo menos um canal de envio.');
+      return;
+    }
+
     setSendingGroupAlert(true);
     setError('');
 
@@ -288,11 +368,8 @@ function GroupForm() {
       const accessToken = sessionData?.session?.access_token;
       if (!accessToken) throw new Error('Você precisa estar logado.');
 
-      const channels = groupAlertChannels === 'push'
-        ? ['push']
-        : groupAlertChannels === 'alert'
-          ? ['in_app']
-          : ['in_app', 'push'];
+      /* Cada canal marcado dispara o seu próprio fluxo no back. */
+      const channels = [...groupAlertChannels];
 
       const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-notification`, {
         method: 'POST',
@@ -308,7 +385,7 @@ function GroupForm() {
           channels,
           event_type: 'group_alert',
           url: `/dashboard/groups/${groupId}`,
-          metadata: { group_id: groupId, source: 'admin_group_form' },
+          metadata: { group_id: groupId, source: 'admin_group_form', channels },
         }),
       });
 
@@ -356,6 +433,11 @@ function GroupForm() {
         if (servicesRes.error) throw servicesRes.error;
         if (!cancelled) setServices(servicesRes.data || []);
 
+        // A coluna has_ads entra por migration (database/add-group-has-ads.sql).
+        // Antes dela existir, o seletor fica oculto e o campo não é gravado —
+        // assim o admin nunca toma erro 42703 ao salvar o grupo.
+        if (!cancelled) setHasAdsColumn(await hasAdsColumnAvailable());
+
         if (isEditing && !cancelled) {
           setMembers(membersRes.data || []);
         }
@@ -365,6 +447,7 @@ function GroupForm() {
           const group = groupRes.data;
           if (group) {
             setOwnerId(group.owner_id || '');
+            setOriginalOwnerId(group.owner_id || '');
             setCurrentOwnerName(group.owner?.name || group.owner?.email || '');
             setFormData({
               service_id: group.service_id || '',
@@ -387,6 +470,7 @@ function GroupForm() {
             if (group.photo_url) setPhotoPreview(group.photo_url);
             if (group.plan_type) { setPlanType(group.plan_type); setCustomPlanActive(false); }
             if (group.plan_type_custom) { setPlanTypeCustom(group.plan_type_custom); setCustomPlanActive(true); }
+            setHasAds(group.has_ads === true ? true : (group.has_ads === false ? false : null));
           }
 
           if (credsRes.data) {
@@ -396,6 +480,8 @@ function GroupForm() {
             setCredentialUrl(credsRes.data.credential_url || '');
             setCredentialNotes(credsRes.data.credential_notes || '');
             setHasProfiles(credsRes.data.has_profiles || false);
+            setCredentialId(credsRes.data.id || '');
+            setCredentialAssignedTo(credsRes.data.assigned_to || '');
           }
 
           if (group) {
@@ -466,6 +552,9 @@ function GroupForm() {
   }, [groupId, isEditing, searchParams]);
 
   useEffect(() => {
+    // As taxas nao vem mais de app_settings: a margem da plataforma segue a
+    // regra de faixas (src/lib/platformFee.js), definida pelo preco MENSAL.
+    // Mantido o fetch das outras configurações do painel.
     supabase.from('app_settings').select('key, value').then(({ data }) => {
       const s = {};
       data?.forEach(d => { s[d.key] = d.value; });
@@ -496,7 +585,9 @@ function GroupForm() {
           : [],
         verified: !!formData.verified,
         status: formData.status,
-        owner_id: isEditing ? (ownerId || null) : (user?.id || null),
+        // Dono escolhido no formulário; sem escolha, o admin logado.
+        // (NUNCA null: grupo sem dono não tem quem receba o repasse.)
+        owner_id: ownerId || user?.id || null,
         email_code_enabled: emailCodeEnabled,
         email_code_method: emailCodeEnabled ? 'imap' : null,
         custom_cycle_months: formData.available_cycles.includes('custom') ? parseInt(formData.custom_cycle_months) || null : null,
@@ -504,6 +595,7 @@ function GroupForm() {
         custom_cycle_days: formData.available_cycles.includes('days') ? parseInt(formData.custom_cycle_days) || null : null,
         plan_type: customPlanActive ? null : (planType || null),
         plan_type_custom: customPlanActive ? (planTypeCustom || null) : null,
+        ...(hasAdsColumn ? { has_ads: hasAds } : {}),
         // Grupo criado pelo painel admin já nasce aprovado: a fila de aprovação
         // é para grupos que o USUÁRIO criou. Ao editar, o status de aprovação
         // não é tocado (aprovar é ação explícita na tela de grupos).
@@ -513,17 +605,31 @@ function GroupForm() {
       let groupIdResult = groupId;
 
       if (isEditing) {
-        const { error: updateError } = await supabase
+        let { error: updateError } = await supabase
           .from('groups')
           .update(groupPayload)
           .eq('id', groupId);
+        if (updateError && hasAdsColumn && isMissingHasAdsColumn(updateError)) {
+          // o banco ainda nao tem a coluna has_ads: refaz sem o campo
+          const { has_ads, ...semAds } = groupPayload;
+          setHasAdsColumn(false);
+          const retry = await supabase.from('groups').update(semAds).eq('id', groupId);
+          updateError = retry.error;
+        }
         if (updateError) throw updateError;
       } else {
-        const { data: newGroup, error: insertError } = await supabase
+        let { data: newGroup, error: insertError } = await supabase
           .from('groups')
           .insert(groupPayload)
           .select('id')
           .single();
+        if (insertError && hasAdsColumn && isMissingHasAdsColumn(insertError)) {
+          const { has_ads, ...semAds } = groupPayload;
+          setHasAdsColumn(false);
+          const retry = await supabase.from('groups').insert(semAds).select('id').single();
+          newGroup = retry.data;
+          insertError = retry.error;
+        }
         if (insertError) throw insertError;
         groupIdResult = newGroup.id;
 
@@ -647,7 +753,14 @@ function GroupForm() {
         await supabase.from('group_profiles').delete().eq('group_id', groupIdResult);
       }
 
-      setToast(isEditing ? 'Grupo atualizado com sucesso!' : 'Grupo criado com sucesso!');
+      const ownerChanged = isEditing && !!ownerId && !!originalOwnerId && ownerId !== originalOwnerId;
+      setToast(
+        ownerChanged
+          ? `Grupo atualizado! Dono alterado para ${currentOwnerName}.`
+          : isEditing
+            ? 'Grupo atualizado com sucesso!'
+            : 'Grupo criado com sucesso!'
+      );
       setTimeout(() => navigate('/admin/groups'), 1200);
     } catch (err) {
       setError(err.message);
@@ -761,11 +874,23 @@ function GroupForm() {
                 />
               )}
             </div>
+
+            {hasAdsColumn && (
+              <div className="form-group ads-field">
+                <label>A conta compartilhada tem anúncios?</label>
+                <AdsToggle
+                  value={hasAds}
+                  onChange={setHasAds}
+                  hint="Aparece como selo no card do grupo: 'Sem anúncios' (verde) ou 'Com anúncios' (âmbar). Com 'Não mostrar' o grupo fica sem selo."
+                />
+              </div>
+            )}
           </div>
 
           <div className="form-group">
             <label>Preço por vaga (R$) *</label>
-            <input type="number" step="0.01" min="0.01" name="price_per_slot" value={formData.price_per_slot} onChange={handleChange} required />
+            <input type="number" step="0.01" min={MIN_PRICE_PER_SLOT} name="price_per_slot" value={formData.price_per_slot} onChange={handleChange} required />
+            <small className="field-hint">Mínimo de R$ {brl(MIN_PRICE_PER_SLOT)} por vaga.</small>
           </div>
 
           {formData.price_per_slot > 0 && (
@@ -775,21 +900,17 @@ function GroupForm() {
                 <span>Simulação de recebimento</span>
               </div>
               <div className="sim-grid">
-                <div className="sim-row">
-                  <span>Valor cobrado</span>
-                  <strong>R$ {priceSimulation.price.toFixed(2)}</strong>
+                <div className="sim-row sim-row-charged">
+                  <span>Valor cobrado por pessoa</span>
+                  <span>R$ {brl(priceSimulation.price)}</span>
                 </div>
-                <div className="sim-row fee">
-                  <span>Taxa gateway ({(parseFloat(settings.gateway_fee_percent || '4.98')).toFixed(2)}%)</span>
-                  <span>- R$ {priceSimulation.gatewayFee.toFixed(2)}</span>
+                <div className="sim-row sim-row-platform">
+                  <span>Valor da plataforma</span>
+                  <strong>R$ {brl(priceSimulation.platformFee)}</strong>
                 </div>
-                <div className="sim-row fee">
-                  <span>Taxa plataforma ({(parseFloat(settings.platform_fee_percent || '3.95')).toFixed(2)}%)</span>
-                  <span>- R$ {priceSimulation.platformFee.toFixed(2)}</span>
-                </div>
-                <div className="sim-row total">
+                <div className="sim-row sim-row-total">
                   <span>Você recebe</span>
-                  <strong>R$ {priceSimulation.net.toFixed(2)}</strong>
+                  <strong>R$ {brl(priceSimulation.net)}</strong>
                 </div>
               </div>
             </div>
@@ -940,44 +1061,98 @@ function GroupForm() {
             </div>
           </div>
 
-          {isEditing && (
-            <div className="form-group">
-              <label>Criado por (dono do grupo)</label>
-              {ownerId ? (
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <span style={{ flex: 1, padding: '0.55rem 0.7rem', borderRadius: '0.5rem', border: '1px solid var(--border, #e2e8f0)', background: 'var(--surface, #fff)', fontSize: '0.85rem' }}>
-                    {currentOwnerName || ownerId.slice(0, 8) + '...'}
-                  </span>
-                  <button type="button" className="btn btn-sm" onClick={() => { setOwnerId(''); setOwnerQuery(''); setOwnerResults([]); setCurrentOwnerName(''); }}>Trocar</button>
+          <div className="form-group">
+            <label>Criado por (dono do grupo)</label>
+
+            {ownerId && !ownerPicking && (
+              <div className="owner-current">
+                <div className="owner-current-info">
+                  <strong>{currentOwnerName || `${ownerId.slice(0, 8)}...`}</strong>
+                  <small>
+                    {ownerId === user?.id ? 'você' : 'dono atual do grupo'}
+                  </small>
                 </div>
-              ) : (
-                <div style={{ position: 'relative' }}>
+                <button type="button" className="btn btn-sm" onClick={() => setOwnerPicking(true)}>
+                  Trocar
+                </button>
+              </div>
+            )}
+
+            {(ownerPicking || !ownerId) && (
+              <div className="owner-picker">
+                <div className="owner-search">
                   <input
                     type="text"
                     value={ownerQuery}
-                    onChange={e => handleOwnerSearch(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setOwnerQuery(value);
+                      const term = value.trim();
+                      if (term.length < 2 || !sanitizeOwnerTerm(term)) {
+                        setOwnerResults([]);
+                        setOwnerSearched(false);
+                        setOwnerLoading(false);
+                      } else {
+                        setOwnerLoading(true);
+                        setOwnerSearched(true);
+                      }
+                    }}
                     placeholder="Buscar por nome ou e-mail..."
                     disabled={ownerLoading}
                   />
-                  {ownerLoading && <span style={{ position: 'absolute', right: '0.6rem', top: '50%', transform: 'translateY(-50%)' }}>⏳</span>}
-                  {ownerSearched && ownerResults.length === 0 && !ownerLoading && (
-                    <div style={{ padding: '0.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>Nenhum usuário encontrado</div>
-                  )}
-                  {ownerResults.length > 0 && (
-                    <div className="platform-dropdown" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, maxHeight: 200, overflowY: 'auto', borderRadius: '0.5rem', border: '1px solid var(--border, #e2e8f0)', background: 'var(--surface, #fff)', boxShadow: '0 8px 24px -4px rgba(15,23,42,0.15)' }}>
-                      {ownerResults.map(u => (
-                        <button key={u.id} type="button" style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem', width: '100%', padding: '0.5rem 0.7rem', border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.85rem', color: 'var(--text, #0f172a)', textAlign: 'left' }} onClick={() => { setOwnerId(u.id); setOwnerQuery(''); setOwnerResults([]); setCurrentOwnerName(u.name || u.email); }}>
-                          <strong>{u.name || 'Sem nome'}</strong>
-                          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted, #94a3b8)' }}>{u.email}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  {ownerLoading && <Loader2 size={15} className="spin owner-search-spinner" />}
                 </div>
-              )}
-              <small className="field-hint">O dono recebe os pagamentos na carteira</small>
-            </div>
-          )}
+
+                {ownerSearched && ownerResults.length === 0 && !ownerLoading && (
+                  <p className="owner-empty">Nenhum usuário encontrado</p>
+                )}
+
+                {ownerResults.length > 0 && (
+                  <div className="owner-results">
+                    {ownerResults.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        className="owner-result"
+                        onClick={() => {
+                          setOwnerId(u.id);
+                          setCurrentOwnerName(u.name || u.email);
+                          setOwnerQuery('');
+                          setOwnerResults([]);
+                          setOwnerSearched(false);
+                          setOwnerPicking(false);
+                        }}
+                      >
+                        <strong>{u.name || 'Sem nome'}</strong>
+                        <span>{u.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {ownerId && (
+                  <button
+                    type="button"
+                    className="owner-cancel"
+                    onClick={() => {
+                      setOwnerPicking(false);
+                      setOwnerQuery('');
+                      setOwnerResults([]);
+                      setOwnerSearched(false);
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            )}
+
+            <small className="field-hint">
+              {ownerId
+                ? 'O dono recebe os pagamentos na carteira e gerencia o grupo.'
+                : 'Busque para colocar outra pessoa como dona. Sem escolha, o grupo fica com você.'}
+            </small>
+          </div>
         </section>
 
         <section className="form-section">
@@ -985,6 +1160,39 @@ function GroupForm() {
           <p className="section-desc">
             Configure as credenciais de acesso ao serviço. Compartilhadas entre todos os membros do grupo.
           </p>
+
+          {credentialId && (
+            <div className={`cred-assignment ${credentialAssignedTo ? 'is-locked' : 'is-shared'}`}>
+              {credentialAssignedTo ? (
+                <>
+                  <AlertTriangle size={16} />
+                  <div className="cred-assignment-text">
+                    <strong>Credencial vinculada a {assignedMemberName}.</strong>
+                    <span>
+                      Nesse estado, so essa pessoa enxerga o acesso — os outros membros do grupo
+                      veem "credenciais nao disponiveis". Compartilhe para liberar para todo mundo.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline"
+                    onClick={handleShareCredential}
+                    disabled={sharingCredential}
+                  >
+                    {sharingCredential ? 'Compartilhando...' : 'Compartilhar com todos'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={16} />
+                  <div className="cred-assignment-text">
+                    <strong>Credencial compartilhada com todo membro ativo do grupo.</strong>
+                    <span>Todos do grupo veem o mesmo acesso.</span>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="form-grid">
             <div className="form-group">

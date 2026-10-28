@@ -4,6 +4,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { dispatchNotification } from "../_shared/send-notification.ts";
 import { notifyAdminPayment } from "../_shared/admin-payment-email.ts";
+import { notifySubscriptionCreated } from "../_shared/subscription-emails.ts";
 
 interface ConfirmParams {
   gateway: string;
@@ -198,27 +199,12 @@ export async function confirmPayment(params: ConfirmParams) {
           .single();
 
         if (group?.owner_id) {
-          const { data: settings } = await supabaseAdmin
-            .from("app_settings")
-            .select("key, value")
-            .in("key", ["gateway_fee_percent", "platform_fee_percent"]);
-
-          const settingsMap: Record<string, string> = {};
-          (settings || []).forEach((s: any) => { settingsMap[s.key] = s.value; });
-
-          const gatewayFee = parseFloat(settingsMap.gateway_fee_percent || "4.98");
-          const platformFee = parseFloat(settingsMap.platform_fee_percent || "3.95");
-          const totalFeePercent = gatewayFee + platformFee;
-          const netAmount = amount - (amount * totalFeePercent / 100);
-
-          await supabaseAdmin.rpc("credit_wallet", {
-            p_user_id: group.owner_id,
-            p_amount: netAmount,
-            p_description: `Taxa de adesão - ${gateway}`,
-            p_reference_type: "payment",
-            p_reference_id: gateway_payment_id,
-            p_group_id: group_id,
-          });
+          // O repasse para a carteira do dono do grupo e feito pelo TRIGGER
+          // trg_credit_wallet_on_payment, no banco, assim que a linha em
+          // `payments` entra com status 'paid'. Creditar aqui duplicaria o
+          // valor (o trigger ja creditou) - e ainda falhava quando o id do
+          // gateway nao era UUID, engolindo o erro no catch.
+          console.log("Repasse do grupo sera feito pelo trigger do banco:", group_id);
         }
       } catch (walletErr) {
         console.error("Wallet credit error (entrance):", walletErr);
@@ -296,6 +282,9 @@ export async function confirmPayment(params: ConfirmParams) {
             gateway_status: "authorized",
             gateway_subscription_id: gateway_payment_id,
             next_charge_at: nextChargeAt.toISOString(),
+            // Pagamento aprovado: vencimento do ciclo = data + ciclo (fonte da
+            // verdade da regra de status; nao anda a cada retry).
+            renewal_due_at: nextChargeAt.toISOString(),
             billing_status: "active",
             retry_count: 0,
             last_charge_at: new Date().toISOString(),
@@ -313,6 +302,7 @@ export async function confirmPayment(params: ConfirmParams) {
           status: "active", gateway: gateway, gateway_subscription_id: gateway_payment_id,
           payment_method: payment_method || null,
           next_charge_at: nextChargeAt.toISOString(),
+          renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
           started_at: new Date().toISOString(),
           custom_cycle_days: days,
@@ -383,27 +373,8 @@ export async function confirmPayment(params: ConfirmParams) {
       // Credit wallet for entrance portion
       try {
         if (group?.owner_id && !group?.is_official) {
-          const { data: settings } = await supabaseAdmin
-            .from("app_settings")
-            .select("key, value")
-            .in("key", ["gateway_fee_percent", "platform_fee_percent"]);
-
-          const settingsMap: Record<string, string> = {};
-          (settings || []).forEach((s: any) => { settingsMap[s.key] = s.value; });
-
-          const gatewayFee = parseFloat(settingsMap.gateway_fee_percent || "4.98");
-          const platformFee = parseFloat(settingsMap.platform_fee_percent || "3.95");
-          const totalFeePercent = gatewayFee + platformFee;
-          const entranceNetAmount = entranceAmount - (entranceAmount * totalFeePercent / 100);
-
-          await supabaseAdmin.rpc("credit_wallet", {
-            p_user_id: group.owner_id,
-            p_amount: entranceNetAmount,
-            p_description: `Taxa de adesão (pagamento combinado) - ${gateway}`,
-            p_reference_type: "payment",
-            p_reference_id: gateway_payment_id,
-            p_group_id: group_id,
-          });
+          // Repasse feito pelo trigger do banco (ver nota no bloco de adesao).
+          console.log("Repasse da taxa de adesao (combinado) sera feito pelo trigger do banco:", group_id);
         }
       } catch (walletErr) {
         console.error("Wallet credit error (combined entrance):", walletErr);
@@ -412,27 +383,8 @@ export async function confirmPayment(params: ConfirmParams) {
       // Credit wallet for subscription portion
       try {
         if (group?.owner_id && !group?.is_official) {
-          const { data: settings } = await supabaseAdmin
-            .from("app_settings")
-            .select("key, value")
-            .in("key", ["gateway_fee_percent", "platform_fee_percent"]);
-
-          const settingsMap: Record<string, string> = {};
-          (settings || []).forEach((s: any) => { settingsMap[s.key] = s.value; });
-
-          const gatewayFee = parseFloat(settingsMap.gateway_fee_percent || "4.98");
-          const platformFee = parseFloat(settingsMap.platform_fee_percent || "3.95");
-          const totalFeePercent = gatewayFee + platformFee;
-          const subNetAmount = subscriptionAmount - (subscriptionAmount * totalFeePercent / 100);
-
-          await supabaseAdmin.rpc("credit_wallet", {
-            p_user_id: group.owner_id,
-            p_amount: subNetAmount,
-            p_description: `1ª mensalidade (pagamento combinado) - ${gateway}`,
-            p_reference_type: "payment",
-            p_reference_id: gateway_payment_id,
-            p_group_id: group_id,
-          });
+          // Repasse feito pelo trigger do banco (ver nota no bloco de adesao).
+          console.log("Repasse da 1a mensalidade (combinado) sera feito pelo trigger do banco:", group_id);
         }
       } catch (walletErr) {
         console.error("Wallet credit error (combined subscription):", walletErr);
@@ -468,7 +420,7 @@ export async function confirmPayment(params: ConfirmParams) {
 
           await supabaseAdmin
             .from("user_subscriptions")
-            .update({ expires_at: nextDue.toISOString() })
+            .update({ expires_at: nextDue.toISOString(), renewal_due_at: nextDue.toISOString() })
             .eq("user_id", user_id)
             .eq("group_id", group_id);
         }
@@ -501,6 +453,17 @@ export async function confirmPayment(params: ConfirmParams) {
       } catch (refErr) {
         console.error("Referral processing error (combined):", refErr);
       }
+
+      // E-mail de "assinatura confirmada" para o cliente. A trava de
+      // duplicidade é o `dedup_key` (que carrega o `created_at` da
+      // assinatura), então o poll do front e o webhook do gateway não
+      // mandam dois e-mails — e a renovação do ciclo seguinte também não
+      // (a chave é a mesma).
+      await notifySubscriptionCreated(supabaseAdmin, {
+        userId: user_id,
+        groupId: group_id,
+        transactionId: gateway_payment_id,
+      });
 
       return { success: true, payment_type: "combined" };
 
@@ -543,6 +506,9 @@ export async function confirmPayment(params: ConfirmParams) {
             gateway_status: "authorized",
             gateway_subscription_id: gateway_payment_id,
             next_charge_at: nextChargeAt.toISOString(),
+            // Pagamento aprovado: vencimento do ciclo = data + ciclo (fonte da
+            // verdade da regra de status; nao anda a cada retry).
+            renewal_due_at: nextChargeAt.toISOString(),
             billing_status: "active",
             retry_count: 0,
             last_charge_at: new Date().toISOString(),
@@ -566,6 +532,7 @@ export async function confirmPayment(params: ConfirmParams) {
           status: "active", gateway: gateway, gateway_subscription_id: gateway_payment_id,
           payment_method: payment_method || null,
           next_charge_at: nextChargeAt.toISOString(),
+          renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
           started_at: new Date().toISOString(),
           custom_cycle_days: days,
@@ -633,6 +600,10 @@ export async function confirmPayment(params: ConfirmParams) {
         status: "active",
         payment_status: "active",
         joined_at: new Date().toISOString(),
+        // O cancelamento por carência grava `left_at` no vínculo. Ao pagar de
+        // novo o vínculo é refeito — sem zerar, o membro ficaria com status
+        // "ativo" e data de saída preenchida ao mesmo tempo.
+        left_at: null,
       };
 
       let memberError = null;
@@ -723,27 +694,8 @@ export async function confirmPayment(params: ConfirmParams) {
           .single();
 
         if (group?.owner_id) {
-          const { data: settings } = await supabaseAdmin
-            .from("app_settings")
-            .select("key, value")
-            .in("key", ["gateway_fee_percent", "platform_fee_percent"]);
-
-          const settingsMap: Record<string, string> = {};
-          (settings || []).forEach((s: any) => { settingsMap[s.key] = s.value; });
-
-          const gatewayFee = parseFloat(settingsMap.gateway_fee_percent || "4.98");
-          const platformFee = parseFloat(settingsMap.platform_fee_percent || "3.95");
-          const totalFeePercent = gatewayFee + platformFee;
-          const netAmount = amount - (amount * totalFeePercent / 100);
-
-          await supabaseAdmin.rpc("credit_wallet", {
-            p_user_id: group.owner_id,
-            p_amount: netAmount,
-            p_description: `Assinatura - ${gateway}`,
-            p_reference_type: "payment",
-            p_reference_id: gateway_payment_id,
-            p_group_id: group_id,
-          });
+          // Repasse feito pelo trigger do banco (ver nota no bloco de adesao).
+          console.log("Repasse da assinatura sera feito pelo trigger do banco:", group_id);
         }
       } catch (walletErr) {
         console.error("Wallet credit error (subscription):", walletErr);
@@ -804,7 +756,7 @@ export async function confirmPayment(params: ConfirmParams) {
 
             await supabaseAdmin
               .from("user_subscriptions")
-              .update({ expires_at: nextDue.toISOString() })
+              .update({ expires_at: nextDue.toISOString(), renewal_due_at: nextDue.toISOString() })
               .eq("id", sub.id);
           }
         }
@@ -842,6 +794,17 @@ export async function confirmPayment(params: ConfirmParams) {
       // O cupom desta assinatura ja foi registrado acima (com o tipo
       // "subscription"). Registrar de novo aqui, com o tipo "combined",
       // duplicava o uso do cupom na confirmacao de assinatura.
+      //
+      // E-mail de "assinatura confirmada" para o cliente (ver nota no
+      // branch "combined"). A chave de dedup carrega o `created_at` da
+      // assinatura: assinatura nova manda o e-mail, renovação do mesmo
+      // ciclo não manda de novo.
+      await notifySubscriptionCreated(supabaseAdmin, {
+        userId: user_id,
+        groupId: group_id,
+        transactionId: gateway_payment_id,
+      });
+
       return { success: true, payment_type: "subscription" };
     }
 

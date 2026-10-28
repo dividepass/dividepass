@@ -61,6 +61,17 @@
   color: #EF4444;
 }
 
+/* Atrasada: ainda é possível renovar (a carência de 7 dias está correndo). */
+.sub-status-badge.overdue {
+  background: rgba(245, 158, 11, 0.1);
+  color: #F59E0B;
+}
+
+.sub-status-badge.pending {
+  background: rgba(14, 165, 233, 0.1);
+  color: #0EA5E9;
+}
+
 .sub-manage-body {
   padding: 1.5rem 2rem;
 }

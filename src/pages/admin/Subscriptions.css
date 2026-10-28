@@ -7,13 +7,6 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-.subscriptions-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-
 .stat-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -118,112 +111,12 @@
   color: #34d399;
 }
 
-/* Renewal stats cards */
-.subscriptions-renewals {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.renewal-card {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-}
-
-.renewal-card svg {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.renewal-card div {
-  flex: 1;
-}
-
-.renewal-count {
-  display: block;
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--secondary);
-  line-height: 1;
-}
-
-.renewal-card small {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-}
-
-.renewal-value {
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--primary);
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-.renewal-value em {
-  font-style: normal;
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  margin-left: 2px;
-}
-
 .sub-value-equivalent {
   display: block;
   font-size: 0.75rem;
   font-weight: 500;
   color: var(--text-muted);
   margin-top: 2px;
-}
-
-.renewal-card.alert {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.25);
-}
-
-.renewal-card.alert svg {
-  color: #ef4444;
-}
-
-.renewal-card.alert .renewal-count {
-  color: #ef4444;
-}
-
-.renewal-card.warning {
-  background: rgba(245, 158, 11, 0.08);
-  border-color: rgba(245, 158, 11, 0.25);
-}
-
-.renewal-card.warning svg {
-  color: #f59e0b;
-}
-
-.renewal-card.warning .renewal-count {
-  color: #f59e0b;
-}
-
-.renewal-card.critical {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.3);
-}
-
-.renewal-card.critical svg {
-  color: #ef4444;
-}
-
-.renewal-card.critical .renewal-count {
-  color: #ef4444;
-  font-weight: 800;
-}
-
-.renewal-card.critical .renewal-value {
-  color: #ef4444;
 }
 
 /* Cycle cell in table */
@@ -753,53 +646,6 @@
   }
 }
 
-/* ── Clickable Stat Cards ─────────────────────────────── */
-.stat-card.clickable,
-.renewal-card.clickable {
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.stat-card.clickable:hover,
-.renewal-card.clickable:hover {
-  background: rgba(99, 102, 241, 0.06);
-  border-color: rgba(99, 102, 241, 0.3);
-}
-
-.stat-detail-hint {
-  display: block;
-  font-size: 0.65rem;
-  color: #818cf8;
-  font-weight: 500;
-  margin-top: 2px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.stat-card.clickable:hover .stat-detail-hint,
-.renewal-card.clickable:hover .stat-detail-hint {
-  opacity: 1;
-}
-
-.renewal-hint {
-  position: absolute;
-  bottom: 4px;
-  right: 8px;
-  font-size: 0.6rem;
-  color: #818cf8;
-  font-weight: 500;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.renewal-card.clickable {
-  position: relative;
-}
-
-.renewal-card.clickable:hover .renewal-hint {
-  opacity: 1;
-}
-
 /* ── Stat Detail Modal ─────────────────────────────────── */
 .stat-detail-modal {
   width: 640px;
@@ -1038,76 +884,14 @@
 }
 
 /* ── Card "Precisam de atenção" ────────────────────────── */
-.stat-card.attention svg {
-  color: var(--text-muted);
-}
-
-.stat-card.attention.has-issue {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.3);
-}
-
-.stat-card.attention.has-issue svg {
-  color: var(--error);
-}
-
-.stat-card.attention.has-issue span {
-  color: var(--error);
-}
+/* (removido: o card virou a métrica `.subs-metric-attention`) */
 
 .stat-detail-warn {
   color: #f59e0b !important;
 }
 
 /* ── Tira de próximas renovações (só contagem) ─────────── */
-.renewal-strip {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  padding: 0.6rem 0.9rem;
-  margin-bottom: 1.25rem;
-}
-
-.renewal-strip-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  margin-right: 0.25rem;
-}
-
-.renewal-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.35rem;
-  padding: 0.35rem 0.75rem;
-  border-radius: 2rem;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.renewal-chip strong {
-  font-size: 0.95rem;
-  font-weight: 800;
-  color: var(--secondary);
-}
-
-.renewal-chip:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-}
+/* (removida: a contagem virou a linha `.subs-renewals` no fim do arquivo) */
 
 /* ── Paginação ──────────────────────────────────────────── */
 .subscriptions-pagination {
@@ -1197,5 +981,403 @@
 
 .stat-detail-flag svg {
   color: var(--error);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Layout minimalista da tela de assinaturas
+
+   Todas as classes novas são prefixadas com `.subs-` DE PROPÓSITO:
+   o Vite concatena todo o CSS do app num bundle único, então um nome
+   solto (`.stat-card`, `.filter-box`) vaza para as outras telas —
+   foi o que aconteceu com `.error-cell` no painel de cobranças.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Cabeçalho ─────────────────────────────────────────────── */
+.subs-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* ── Métricas: uma linha só, sem caixinha ──────────────────── */
+.subs-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.85rem;
+  padding: 0 0 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.subs-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.2rem 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 0.5rem;
+  transition: opacity 0.15s;
+}
+
+.subs-metric:hover {
+  opacity: 0.72;
+}
+
+.subs-metric:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+
+.subs-metric-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--secondary);
+}
+
+.subs-metric-value svg {
+  color: inherit;
+}
+
+.subs-metric-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.subs-metric-note {
+  font-size: 0.7rem;
+  color: var(--text-soft, var(--text-muted));
+  white-space: nowrap;
+}
+
+.subs-metric-attention.is-alert .subs-metric-value,
+.subs-metric-attention.is-alert .subs-metric-label {
+  color: var(--error);
+}
+
+/* ── Renovações ─────────────────────────────────────────────── */
+.subs-renewals {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
+}
+
+.subs-renewals-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.subs-renewal-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 2rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.subs-renewal-chip strong {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--secondary);
+}
+
+.subs-renewal-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.subs-renewals-hint {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--text-soft, var(--text-muted));
+}
+
+/* ── Toolbar: busca + campos ───────────────────────────────── */
+.subs-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.65rem;
+}
+
+.subs-search {
+  flex: 1 1 260px;
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0 0.7rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.subs-search:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+
+.subs-search > svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.subs-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 0.55rem 0;
+  color: var(--text-main);
+  outline: none;
+  font-size: 0.88rem;
+}
+
+.subs-search input::placeholder {
+  color: var(--text-soft, var(--text-muted));
+}
+
+.subs-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 0.35rem;
+}
+
+.subs-search-clear:hover {
+  color: var(--text-main);
+  background: var(--surface-soft);
+}
+
+/* Select com rótulo: o texto pequeno diz o que é o campo */
+.subs-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.subs-field > span {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding-left: 0.15rem;
+}
+
+.subs-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  color: var(--text-main);
+  font-size: 0.85rem;
+  padding: 0.5rem 1.9rem 0.5rem 0.65rem;
+  cursor: pointer;
+  min-width: 9.5rem;
+}
+
+.subs-field select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.subs-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.85rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.subs-refresh:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* ── Pílulas de status ─────────────────────────────────────── */
+.subs-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 1.1rem;
+}
+
+.subs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.32rem 0.7rem;
+  border-radius: 2rem;
+  border: 1px solid transparent;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.subs-pill b {
+  font-weight: 700;
+  font-size: 0.72rem;
+  color: var(--text-soft, var(--text-muted));
+  background: var(--surface);
+  border-radius: 2rem;
+  padding: 0.05rem 0.42rem;
+  min-width: 1.4rem;
+  text-align: center;
+}
+
+.subs-pill:hover {
+  color: var(--text-main);
+}
+
+.subs-pill.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.subs-pill.is-active b {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+/* ── Tabela ─────────────────────────────────────────────────── */
+.subscriptions-page .subscriptions-table th {
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-size: 0.75rem;
+  padding: 0.7rem 1rem;
+  white-space: nowrap;
+}
+
+.subscriptions-page .subscriptions-table td {
+  padding: 0.7rem 1rem;
+  vertical-align: middle;
+}
+
+.subscriptions-page .subscriptions-table tbody tr {
+  transition: background 0.12s;
+}
+
+.subscriptions-page .subscriptions-table tbody tr:hover {
+  background: var(--surface-soft);
+}
+
+/* Vencida: fundo discreto + barra na lateral (a linha é a informação). */
+.subscriptions-page .renewal-overdue-row {
+  background: rgba(239, 68, 68, 0.06);
+  box-shadow: inset 3px 0 0 var(--error);
+}
+
+.subscriptions-page .renewal-overdue-row:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.subscriptions-page .status-cell {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.subscriptions-page .user-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 0.85rem;
+}
+
+.subscriptions-page .cycle-label {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* "vence em 3 dias" — o prazo relativo ao lado da data */
+.subs-due {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.subs-due.is-overdue {
+  color: var(--error);
+  font-weight: 600;
+}
+
+/* ── Responsivo ─────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .subs-metrics {
+    gap: 0.9rem 1.3rem;
+  }
+
+  .subs-renewals-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .subs-metric-value {
+    font-size: 1.25rem;
+  }
+
+  .subs-toolbar {
+    align-items: stretch;
+  }
+
+  .subs-field,
+  .subs-field select {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .subs-refresh {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
 }
 

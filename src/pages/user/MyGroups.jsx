@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Settings, Trash2, Globe, X, AlertTriangle, Loader2 } from 'lucide-react';
+import { Plus, Settings, Trash2, Globe, X, AlertTriangle, Loader2, ArrowRight } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
+import GroupTags from '../../components/GroupTags';
 import './MyGroups.css';
 
 function DeleteGroupModal({ groupName, onConfirm, onCancel, loading }) {
@@ -60,6 +61,8 @@ function MyGroups() {
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    // apaga as credenciais junto (rascunhos podem ter uma linha gravada)
+    await supabase.from('group_credentials').delete().eq('group_id', deleteTarget.id);
     const { error } = await supabase.from('groups').delete().eq('id', deleteTarget.id);
     setDeleting(false);
     if (!error) {
@@ -101,8 +104,9 @@ function MyGroups() {
             const activeMembers = group.members?.filter(m => m.status === 'active').length || 0;
             const spots = group.max_size ? Math.max(0, group.max_size - activeMembers) : null;
             const full = spots === 0;
+            const isDraft = group.status === 'draft';
             return (
-              <div key={group.id} className="my-group-card">
+              <div key={group.id} className={`my-group-card ${isDraft ? 'is-draft' : ''}`}>
                 <div className="mg-top">
                   {group.photo_url ? (
                     <div className="mg-photo">
@@ -120,44 +124,61 @@ function MyGroups() {
                   <div className="mg-info">
                     <div className="mg-name-row">
                       <h3>{group.name}</h3>
-                      {group.plan_type && <span className="gc-ref">{group.plan_type}</span>}
-                      {group.plan_type_custom && !group.plan_type && <span className="gc-ref">{group.plan_type_custom}</span>}
+                      {isDraft && <span className="mg-draft-badge">Rascunho</span>}
                     </div>
+                    <GroupTags group={group} size="sm" className="mg-tags" />
                     <div className="mg-stats-row">
-                      {group.max_size ? (
-                        <span className="gc-members">{activeMembers} de {group.max_size} membros</span>
+                      {isDraft ? (
+                        <span className="gc-members">Criação não concluída — continue de onde parou</span>
                       ) : (
-                        <span className="gc-members">{activeMembers} {activeMembers === 1 ? 'membro' : 'membros'}</span>
-                      )}
-                      {spots !== null && (
-                        <span className={`gc-vagas ${full ? 'full' : ''}`}>{full ? 'CHEIO' : `${spots} VAGAS`}</span>
+                        <>
+                          {group.max_size ? (
+                            <span className="gc-members">{activeMembers} de {group.max_size} membros</span>
+                          ) : (
+                            <span className="gc-members">{activeMembers} {activeMembers === 1 ? 'membro' : 'membros'}</span>
+                          )}
+                          {spots !== null && (
+                            <span className={`gc-vagas ${full ? 'full' : ''}`}>{full ? 'CHEIO' : `${spots} VAGAS`}</span>
+                          )}
+                        </>
                       )}
                     </div>
-                    <div className="mg-mobile-price">
-                      <span className="gc-price-value">
-                        R$ {parseFloat(group.price_per_slot || 0).toFixed(2).replace('.', ',')}
-                        <small>/mês</small>
-                      </span>
-                    </div>
+                    {!isDraft && (
+                      <div className="mg-mobile-price">
+                        <span className="gc-price-value">
+                          R$ {parseFloat(group.price_per_slot || 0).toFixed(2).replace('.', ',')}
+                          <small>/mês</small>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="gc-divider desktop-only" />
+                {!isDraft && <div className="gc-divider desktop-only" />}
 
-                <div className="mg-price desktop-only">
-                  <span className="gc-price-value">
-                    R$ {parseFloat(group.price_per_slot || 0).toFixed(2).replace('.', ',')}
-                    <small>/mês</small>
-                  </span>
-                </div>
+                {!isDraft && (
+                  <div className="mg-price desktop-only">
+                    <span className="gc-price-value">
+                      R$ {parseFloat(group.price_per_slot || 0).toFixed(2).replace('.', ',')}
+                      <small>/mês</small>
+                    </span>
+                  </div>
+                )}
 
                 <div className="gc-divider" />
 
                 <div className="mg-actions">
-                  <Link to={`/dashboard/my-groups/${group.id}/manage`} className="btn btn-primary btn-sm">
-                    <Settings size={15} />
-                    Gerenciar
-                  </Link>
+                  {isDraft ? (
+                    <Link to={`/dashboard/my-groups/create?draft=${group.id}`} className="btn btn-primary btn-sm">
+                      <ArrowRight size={15} />
+                      Continuar
+                    </Link>
+                  ) : (
+                    <Link to={`/dashboard/my-groups/${group.id}/manage`} className="btn btn-primary btn-sm">
+                      <Settings size={15} />
+                      Gerenciar
+                    </Link>
+                  )}
                   <button className="btn btn-sm btn-danger-outline" onClick={() => handleDeleteClick(group)}>
                     <Trash2 size={15} />
                   </button>

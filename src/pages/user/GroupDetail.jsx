@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2, Shield, Users, ChevronDown, ChevronUp, Star, AlertC
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { logPlatformEvent } from '../../lib/platformEventLogger';
+import GroupTags from '../../components/GroupTags';
 import './GroupDetail.css';
 
 const CYCLE_LABELS = {
@@ -200,8 +201,8 @@ function GroupDetail() {
           <p className="gd-header-sub">{service?.full_name || service?.name}</p>
           <div className="gd-header-tags">
             {group?.verified && (
-              <span className="gd-badge verified">
-                <Shield size={12} /> Verificado
+              <span className="gd-badge verified" title="A equipe DividePass conferiu este grupo. Compra mais segura.">
+                <Shield size={12} /> Verificado pela DividePass
               </span>
             )}
             {group?.approval_status === 'pending' && (
@@ -216,6 +217,7 @@ function GroupDetail() {
               <Users size={12} /> {spots > 0 ? `${spots} vaga${spots > 1 ? 's' : ''}` : 'Lotado'}
             </span>
           </div>
+          <GroupTags group={group} showVerified={false} className="gd-group-tags" />
         </div>
         <div className="gd-header-price">
           <span className="gd-price-value">R$ {price.toFixed(2).replace('.', ',')}</span>

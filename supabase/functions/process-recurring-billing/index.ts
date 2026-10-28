@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { dispatchNotification } from "../_shared/send-notification.ts";
+import { notifyPaymentFailed } from "../_shared/subscription-emails.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -261,50 +262,76 @@ async function handleFailedCharge(
     .eq("id", billingCycleId);
 
   if (newRetryCount >= 3) {
+    // A regra oficial de cancelamento é a CARÊNCIA DE 7 DIAS (medida a partir
+    // da data de renovação), não o número de tentativas de cartão.
+    //
+    // O código antigo cancelava a assinatura aqui, desvinculava o membro do
+    // grupo e derrubava a senha de credencial de TODO o grupo — em ~3 dias,
+    // muito antes da carência. Agora:
+    //   - a assinatura continua 'active' (a carência decide quando cancelar);
+    //   - `billing_status = 'cancelled'` para de tentar o cartão recusado;
+    //   - o membro fica 'overdue' e visível no grupo, com o card de renovação.
+    const { data: subForDates } = await supabaseAdmin
+      .from("user_subscriptions")
+      .select("renewal_due_at, next_charge_at, expires_at")
+      .eq("id", sub.id)
+      .maybeSingle();
+
+    const dueRaw = subForDates?.renewal_due_at || subForDates?.next_charge_at || subForDates?.expires_at || null;
+    const dueText = dueRaw ? String(dueRaw).trim() : null;
+    const dueDate = dueText
+      ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(dueText) ? `${dueText}T23:59:59.999` : dueText)
+      : null;
+    const graceEnd = dueDate && !Number.isNaN(dueDate.getTime())
+      ? new Date(dueDate.getTime() + 7 * 24 * 60 * 60 * 1000)
+      : null;
+
     await supabaseAdmin
       .from("user_subscriptions")
       .update({
         retry_count: newRetryCount,
         billing_status: "cancelled",
-        status: "cancelled",
+        status: "active",
         last_charge_at: new Date().toISOString(),
       })
       .eq("id", sub.id);
     await supabaseAdmin
       .from("group_members")
-      .update({ status: "inactive", payment_status: "cancelled", left_at: new Date().toISOString() })
+      .update({ payment_status: "overdue", updated_at: new Date().toISOString() })
       .eq("group_id", sub.group_id)
       .eq("user_id", sub.user_id);
 
+    // Só a credencial DESTE membro é invalidada (o filtro antigo pegava as
+    // credenciais do grupo inteiro e derrubava o acesso de quem estava em dia).
     try {
-      const { data: credentials } = await supabaseAdmin
+      const newPassword = Math.random().toString(36).substring(2, 10);
+      await supabaseAdmin
         .from("group_credentials")
-        .select("id, login_password")
+        .update({ login_password: newPassword, updated_at: new Date().toISOString() })
         .eq("group_id", sub.group_id)
-        .single();
-      if (credentials?.login_password) {
-        const newPassword = Math.random().toString(36).substring(2, 10);
-        await supabaseAdmin.from("group_credentials").update({ login_password: newPassword }).eq("id", credentials.id);
-      }
+        .eq("assigned_to", sub.user_id);
     } catch (e) { console.error("Credential reset error:", e); }
 
-    await logBillingAction(supabaseAdmin, sub.id, sub.user_id, sub.group_id, "subscription_cancelled", {
+    await logBillingAction(supabaseAdmin, sub.id, sub.user_id, sub.group_id, "charge_failed_final", {
       billing_cycle_id: billingCycleId,
       retry_count: newRetryCount,
       error_message: errorMsg,
+      grace_end: graceEnd ? graceEnd.toISOString() : null,
     });
 
     await dispatchNotification(supabaseAdmin, {
-      title: "Assinatura cancelada por falha",
-      message: `A assinatura do grupo "${groupName}" foi cancelada após ${newRetryCount} tentativas sem sucesso.`,
+      title: "Renovação em atraso",
+      message: graceEnd
+        ? `Não conseguimos renovar a assinatura do grupo "${groupName}". Regularize até ${graceEnd.toLocaleDateString("pt-BR")} — depois disso a assinatura é cancelada.`
+        : `Não conseguimos renovar a assinatura do grupo "${groupName}". Regularize para não perder o acesso.`,
       event_type: "subscription_cancelled",
-      metadata: { user_id: sub.user_id, group_id: sub.group_id, retry_count: newRetryCount, error_message: errorMsg },
+      metadata: { user_id: sub.user_id, group_id: sub.group_id, retry_count: newRetryCount, error_message: errorMsg, grace_end: graceEnd ? graceEnd.toISOString() : null },
       audience: { type: "users", user_ids: [sub.user_id, ownerId].filter(Boolean) },
       channels: ["in_app", "push"],
       url: `/dashboard/groups/${sub.group_id}`,
     }).catch((e) => console.error("push notification error (failed cancel):", e));
 
-    console.log(`X Subscription ${sub.id} CANCELLED after ${newRetryCount} failures`);
+    console.log(`X Subscription ${sub.id} charge failed ${newRetryCount}x — assinatura mantida ate a carencia de 7 dias`);
 
     return { cancelled: true, retryCount: newRetryCount };
 
@@ -344,6 +371,17 @@ async function handleFailedCharge(
       channels: ["in_app", "push"],
       url: `/dashboard/groups/${sub.group_id}`,
     }).catch((e) => console.error("push notification error (failed retry):", e));
+
+    // E-mail para o cliente: o cartão não autorizou e haverá nova tentativa.
+    // A trava de duplicidade usa a data da tentativa, então a mesma falha não
+    // gera dois e-mails — mas uma nova tentativa, sim.
+    await notifyPaymentFailed(supabaseAdmin, {
+      userId: sub.user_id,
+      groupId: sub.group_id,
+      amount: sub.amount,
+      retryDate: nextRetry,
+      attempt: newRetryCount,
+    });
 
     console.log(`! Subscription ${sub.id} retry ${newRetryCount}/3 scheduled for ${nextRetry.toISOString()}`);
   }
@@ -650,8 +688,12 @@ const baseQuery = supabaseAdmin
                 .update({
                   retry_count: 0,
                   billing_status: "active",
+                  status: "active",
                   last_charge_at: new Date().toISOString(),
                   next_charge_at: nextChargeDate.toISOString(),
+                  // Vencimento do ciclo recem-pago (data + ciclo). E a data
+                  // que a regra de 7 dias usa: ela nao anda a cada retry.
+                  renewal_due_at: nextChargeDate.toISOString(),
                   gateway_subscription_id: txResult.transactionId,
                   gateway_status: txStatus.status,
                 })
@@ -687,24 +729,13 @@ const baseQuery = supabaseAdmin
               });
 
               try {
-                if (!group.is_official) {
-                  console.log(`Skipping wallet credit: group ${sub.group_id} is not official`);
-                } else {
-                  const { data: stg } = await supabaseAdmin
-                    .from("app_settings")
-                    .select("key, value")
-                    .in("key", ["gateway_fee_percent", "platform_fee_percent"]);
-                  const stgMap: Record<string, string> = {};
-                  (stg || []).forEach((s: any) => { stgMap[s.key] = s.value; });
-                  const fee = parseFloat(stgMap.gateway_fee_percent || "4.98") + parseFloat(stgMap.platform_fee_percent || "3.95");
-                  const net = sub.amount - (sub.amount * fee / 100);
-                  await supabaseAdmin.rpc("credit_wallet", {
-                    p_user_id: group.owner_id, p_amount: net,
-                    p_description: `Assinatura recorrente - ${service?.name || ""}`,
-                    p_reference_type: "payment", p_reference_id: txResult.transactionId,
-                    p_group_id: sub.group_id,
-                  });
-                }
+                // O repasse para a carteira do dono e feito pelo TRIGGER
+                // trg_credit_wallet_on_payment, no banco (assim que a linha em
+                // `payments` entra como 'paid'). Aqui nao credita mais, para
+                // nao duplicar. A condicao tambem estava invertida: o grupo
+                // OFICIAL e da plataforma (nao tem repasse) e o de terceiro que
+                // recebe.
+                console.log(`Repasse da renovacao do grupo ${sub.group_id} sera feito pelo trigger do banco`);
               } catch (e) { console.error("Wallet credit error:", e); }
 
               await logBillingAction(supabaseAdmin, sub.id, sub.user_id, sub.group_id, "charge_success", {

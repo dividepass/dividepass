@@ -5,10 +5,41 @@ import { supabase } from '../../../lib/supabase';
 import { cycleLabel, cycleMonths, cycleTotalFromMonthly, round2 } from '../../../lib/subscriptionCycles';
 import './SubscriptionEdit.css';
 
-const STATUS_OPTIONS = ['active', 'inactive', 'cancelled', 'expired', 'pending', 'first_attempt', 'overdue'];
+/**
+ * Status que o BANCO aceita em `user_subscriptions.status`.
+ *
+ * O enum `subscription_status` do Postgres é
+ * ('active','inactive','cancelled','expired','pending'). 'overdue' e
+ * 'first_attempt' NÃO existem nessa coluna — eles pertencem ao enum
+ * `payment_flow_status`, que é a `group_members.payment_status`.
+ *
+ * Mandar 'overdue' para cá quebrava o save com:
+ *   invalid input value for enum subscription_status: "overdue"
+ */
+const DB_STATUS_VALUES = ['active', 'inactive', 'cancelled', 'expired', 'pending'];
+
+/**
+ * Opções do select de status.
+ *
+ * `overdue` é um valor SÓ DE INTERFACE ("Atrasada (vencida)"): no banco a
+ * assinatura vencida é `status='expired'` com a data de cobrança no passado
+ * — é assim que `isSubscriptionOverdue` (usado no painel) decide. No save a
+ * escolha vira essa combinação, e o membro vai para
+ * `group_members.payment_status='overdue'`, que é a linguagem do ciclo de
+ * cobrança.
+ */
+const STATUS_OPTIONS = [
+  { value: 'active', label: 'Ativa' },
+  { value: 'overdue', label: 'Atrasada (vencida)' },
+  { value: 'inactive', label: 'Inativa' },
+  { value: 'pending', label: 'Pendente' },
+  { value: 'expired', label: 'Expirada' },
+  { value: 'cancelled', label: 'Cancelada' },
+];
+
 const CYCLE_OPTIONS = ['monthly', 'quarterly', 'semiannual', 'annual', 'days', 'custom'];
 
-const statusLabel = (s) => ({ active: 'Ativa', inactive: 'Inativa', cancelled: 'Cancelada', expired: 'Expirada', pending: 'Pendente', first_attempt: 'Primeira Tentativa', overdue: 'Atrasada' }[s] || s);
+const statusLabel = (s) => ({ active: 'Ativa', inactive: 'Inativa', cancelled: 'Cancelada', expired: 'Expirada', pending: 'Pendente', overdue: 'Atrasada (vencida)' }[s] || s);
 
 const money = (v) => `R$ ${Number(v || 0).toFixed(2)}`;
 
@@ -392,6 +423,22 @@ export default function SubscriptionEdit() {
     }
   };
 
+  /**
+   * Valor exibido no select de status.
+   *
+   * Uma assinatura expirada com a cobrança no passado É uma assinatura
+   * vencida no sistema (`isSubscriptionOverdue` olha a DATA, não o status).
+   * Mostrar "Atrasada (vencida)" evita que o admin veja "Expirada" numa
+   * assinatura que o painel lista como vencida.
+   */
+  const statusNoSelect = () => {
+    if (!sub) return 'active';
+    if (sub.status === 'expired' && sub.next_charge_at && new Date(sub.next_charge_at) < new Date()) {
+      return 'overdue';
+    }
+    return sub.status;
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -413,18 +460,43 @@ export default function SubscriptionEdit() {
         : Number(sub.amount);
       const newAmount = amountToSave;
 
+      // ── Status ───────────────────────────────────────────────────
+      //
+      // 'overdue' é escolha de INTERFACE. No banco a assinatura vencida é
+      // `status='expired'` com a data de cobrança no passado — é assim que
+      // `isSubscriptionOverdue` decide e é assim que o painel lista. Traduzir
+      // aqui evita mandar valor de enum inválido (o banco recusava com
+      // "invalid input value for enum subscription_status").
+      const querVencida = sub.status === 'overdue';
+      const statusParaGravar = querVencida ? 'expired' : sub.status;
+
+      if (!DB_STATUS_VALUES.includes(statusParaGravar)) {
+        throw new Error(
+          `Status inválido "${sub.status}". Valores aceitos: ${DB_STATUS_VALUES.join(', ')}.`
+        );
+      }
+
+      let nextChargeParaGravar = sub.next_charge_at || null;
+      if (querVencida) {
+        // "Atrasada" significa que a renovação passou: se a data ainda estiver
+        // no futuro, ela vai para agora (senão o painel não marcaria a
+        // assinatura como vencida).
+        const jaVencida = nextChargeParaGravar && new Date(nextChargeParaGravar) < new Date();
+        if (!jaVencida) nextChargeParaGravar = new Date().toISOString();
+      }
+
       const payload = {
         amount: round2(amountToSave),
         billing_cycle: sub.billing_cycle,
         custom_cycle_days: sub.billing_cycle === 'days' ? (sub.custom_cycle_days || null) : null,
         custom_cycle_months: sub.billing_cycle === 'custom' ? (sub.custom_cycle_months || null) : null,
-        status: sub.status,
+        status: statusParaGravar,
         card_id: sub.card_id || null,
         card_last4: sub.card_last4 || null,
         card_brand: sub.card_brand || null,
         started_at: sub.started_at || null,
         expires_at: sub.expires_at || null,
-        next_charge_at: sub.next_charge_at || null,
+        next_charge_at: nextChargeParaGravar,
         updated_at: new Date().toISOString(),
       };
 
@@ -476,19 +548,44 @@ export default function SubscriptionEdit() {
         group_id: sub.group_id,
       });
 
-      if (sub.status === 'cancelled' || sub.status === 'inactive') {
+      const agora = new Date().toISOString();
+
+      if (querVencida) {
+        // Assinatura vencida: o membro entra em 'overdue' e o prazo de
+        // renovação vai para o passado — é o que o cron das 03h e o card
+        // "Precisam de atenção" leem.
         await supabase
           .from('group_members')
-          .update({ status: 'inactive', left_at: new Date().toISOString(), payment_status: 'cancelled' })
+          .update({
+            payment_status: 'overdue',
+            subscription_deadline: nextChargeParaGravar,
+            updated_at: agora,
+          })
           .eq('group_id', sub.group_id)
           .eq('user_id', sub.user_id);
-      } else if (sub.status === 'active') {
+      } else if (statusParaGravar === 'cancelled' || statusParaGravar === 'inactive') {
         await supabase
           .from('group_members')
-          .update({ payment_status: 'active' })
+          .update({ status: 'inactive', left_at: agora, payment_status: 'cancelled', updated_at: agora })
+          .eq('group_id', sub.group_id)
+          .eq('user_id', sub.user_id);
+      } else if (statusParaGravar === 'active') {
+        // Reativar: o membro volta para 'active' e o prazo volta a acompanhar
+        // a próxima cobrança — senão o cron marcaria overdue na hora.
+        await supabase
+          .from('group_members')
+          .update({
+            payment_status: 'active',
+            subscription_deadline: nextChargeParaGravar,
+            updated_at: agora,
+          })
           .eq('group_id', sub.group_id)
           .eq('user_id', sub.user_id);
       }
+
+      // Mantém o formulário em sincronia com o que foi gravado (senão um
+      // segundo save reenviaria a data antiga).
+      setSub(prev => ({ ...prev, ...payload }));
 
       if (cycleChanged && sub.status === 'active') {
         const nextCharge = new Date();
@@ -507,7 +604,10 @@ export default function SubscriptionEdit() {
           .eq('group_id', sub.group_id)
           .eq('user_id', sub.user_id);
 
+        setSub(prev => ({ ...prev, next_charge_at: nextCharge.toISOString() }));
         setSuccess('Assinatura atualizada. Próxima cobrança re-agendada.');
+      } else if (querVencida) {
+        setSuccess('Assinatura marcada como vencida. Ela entra em "Precisam de atenção".');
       } else {
         setSuccess('Assinatura atualizada com sucesso!');
       }
@@ -752,9 +852,14 @@ export default function SubscriptionEdit() {
 
           <div className="form-group">
             <label>Status</label>
-            <select value={sub.status} onChange={(e) => setSub({ ...sub, status: e.target.value })}>
-              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
+            <select value={statusNoSelect()} onChange={(e) => setSub({ ...sub, status: e.target.value })}>
+              {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            <span className="field-hint">
+              "Atrasada (vencida)" grava <strong>expirada</strong> com a cobrança no passado — é assim
+              que o sistema representa uma assinatura vencida, e ela passa a entrar em
+              "Precisam de atenção".
+            </span>
           </div>
 
           <div className="form-row-2">

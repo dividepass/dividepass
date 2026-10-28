@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, UsersRound } from 'lucide-react';
+import { Users, UsersRound, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import NotificationComposerCard from '../../components/NotificationComposerCard';
 import { UserSearchSelect, GroupSearchSelect } from '../../components/SearchSelect';
@@ -16,9 +16,10 @@ function Announcements() {
     target: 'all',
     selectedUsers: [],
     selectedGroup: null,
-    channels: 'both',
+    channels: ['in_app', 'push'],
   });
   const [error, setError] = useState(null);
+  const [success, setSuccess] = useState('');
 
   const fetchAnnouncements = async () => {
     setLoading(true);
@@ -49,7 +50,7 @@ function Announcements() {
     return () => { cancelled = true; };
   }, []);
 
-  const resetForm = () => {
+  const resetForm = ({ keepSuccess = false } = {}) => {
     setForm({
       title: '',
       message: '',
@@ -57,9 +58,10 @@ function Announcements() {
       target: 'all',
       selectedUsers: [],
       selectedGroup: null,
-      channels: 'both',
+      channels: ['in_app', 'push'],
     });
     setError(null);
+    if (!keepSuccess) setSuccess('');
   };
 
   const submitAnnouncement = async () => {
@@ -78,6 +80,11 @@ function Announcements() {
       return;
     }
 
+    if (!form.channels.length) {
+      setError('Selecione pelo menos um canal de envio.');
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -88,11 +95,9 @@ function Announcements() {
         throw new Error('Você precisa estar autenticado.');
       }
 
-      const channels = form.channels === 'push'
-        ? ['push']
-        : form.channels === 'alert'
-          ? ['in_app']
-          : ['in_app', 'push'];
+      /* Cada canal marcado dispara o seu próprio fluxo no back:
+         notificação dentro do app, e-mail, push e WhatsApp. */
+      const channels = [...form.channels];
 
       let audience;
       switch (form.target) {
@@ -110,6 +115,7 @@ function Announcements() {
         source: 'admin_announcements',
         announcement_type: form.type,
         target: form.target,
+        channels: [...form.channels],
       };
 
       if (form.target === 'users') {
@@ -155,7 +161,11 @@ function Announcements() {
         metadata,
       });
 
-      resetForm();
+      /* O resumo deixa claro o que SAIU e o que ficou de fora — e-mail
+         sem SMTP ou WhatsApp sem token não podem falhar em silêncio. */
+      setSuccess(resumoEnvio(result, form.channels));
+
+      resetForm({ keepSuccess: true });
       fetchAnnouncements();
     } catch (err) {
       setError('Erro ao enviar notificação: ' + err.message);
@@ -287,9 +297,16 @@ function Announcements() {
             recipientsLabel={getRecipientsLabel()}
             scopeBadge={form.type === 'urgent' ? 'Urgente' : 'Aviso manual'}
             submitLabel="Publicar Aviso"
-            description="Escolha o canal de envio e publique o aviso manualmente."
+            description="Marque os canais que deve receber o aviso — cada canal marcado roda o seu próprio envio."
             buttonType="button"
           />
+
+          {success && (
+            <div className="announcement-success">
+              <CheckCircle2 size={16} />
+              {success}
+            </div>
+          )}
         </form>
       </div>
 
@@ -369,3 +386,39 @@ function Announcements() {
 }
 
 export default Announcements;
+
+/**
+ * Resumo do que saiu, por canal. Cada canal devolve o seu próprio contador
+ * no back — um canal que ficou de fora (SMTP sem senha, WhatsApp sem token)
+ * aparece aqui em vez de sumir em silêncio.
+ */
+function resumoEnvio(result, channels) {
+  const partes = [];
+
+  if (channels.includes('in_app')) {
+    const n = result.notifications || 0;
+    partes.push(`${n} notificaç${n !== 1 ? 'ões' : 'ão'} no app`);
+  }
+  if (channels.includes('push')) {
+    const push = result.push || {};
+    partes.push(`${push.sent || 0}/${push.attempted || 0} push`);
+  }
+  if (channels.includes('email')) {
+    const email = result.email || {};
+    if (email.error) {
+      partes.push(`e-mail não enviado (${email.error})`);
+    } else {
+      partes.push(`${email.sent || 0}/${email.attempted || 0} e-mail`);
+    }
+  }
+  if (channels.includes('whatsapp')) {
+    const wa = result.whatsapp || {};
+    if (wa.error) {
+      partes.push(`WhatsApp não enviado (${wa.error})`);
+    } else {
+      partes.push(`${wa.sent || 0}/${wa.attempted || 0} WhatsApp`);
+    }
+  }
+
+  return `Aviso publicado — ${partes.join(', ')}.`;
+}

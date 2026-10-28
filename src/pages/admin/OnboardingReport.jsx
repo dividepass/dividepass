@@ -10,9 +10,13 @@ import {
   Info,
   ChevronDown,
   ChevronRight,
+  MessageCircle,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { ONBOARDING_STEPS, categoryLabel, labelForValue } from '../../lib/onboardingQuestions';
+import { phoneToWhatsApp } from '../../lib/maskPhone';
+import { buildLeadWhatsappUrl } from '../../lib/leadWhatsapp';
+import InvitesSheet from './InvitesSheet';
 import './OnboardingReport.css';
 
 const INTEREST_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'platforms');
@@ -33,8 +37,12 @@ const ANSWER_CHIP_LABEL = {
   shares_with: 'Compartilha com',
 };
 
+/* Mensagem de WhatsApp para o lead: o texto é o do dono, com os campos
+   [nome_cliente] e [nomes_das_plataformas] preenchidos. */
+
 export default function OnboardingReport() {
   const [rows, setRows] = useState([]);
+  const [users, setUsers] = useState([]);
   const [interests, setInterests] = useState([]);
   const [invites, setInvites] = useState([]);
   const [incomplete, setIncomplete] = useState([]);
@@ -46,6 +54,7 @@ export default function OnboardingReport() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('recent');
   const [expanded, setExpanded] = useState(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,7 +72,7 @@ export default function OnboardingReport() {
         // Select enxuto para não puxar email_verified e cpf de 100+ usuários à toa.
         supabase
           .from('users')
-          .select('id, name, email, avatar_url, created_at, onboarding_started_at, onboarding_completed_at, onboarding_step'),
+          .select('id, name, email, phone, avatar_url, created_at, onboarding_started_at, onboarding_completed_at, onboarding_step, lead_source, lead_source_other'),
         supabase.from('user_onboarding_profiles').select('*'),
         supabase.from('user_onboarding_interests').select('*'),
         supabase.from('user_onboarding_invites').select('*'),
@@ -99,6 +108,11 @@ export default function OnboardingReport() {
         ...completed.map((u) => u.id),
         ...responders.map((u) => u.id),
       ]);
+
+      /* A lista completa de usuários, e não só os que responderam: quem
+         indicou alguém pode não ter deixado resposta salva, e a sheet
+         precisa mostrar quem indicou cada contato. */
+      setUsers(users);
 
       setRows(
         responders.map((u) => ({
@@ -213,6 +227,34 @@ export default function OnboardingReport() {
 
     return out;
   }, [rows]);
+
+  /* "Onde nos encontraram" — a origem do lead (etapa 4 do /register).
+     Vem de users.lead_source, não das respostas do onboarding: a pergunta
+     é feita no cadastro, antes do onboarding. Conta TODOS os usuários que
+     responderam, e não só quem respondeu o onboarding. */
+  const leadSourceChart = useMemo(() => {
+    const counts = new Map();
+    let answered = 0;
+
+    for (const row of users) {
+      const src = (row.lead_source || '').trim();
+      if (!src) continue;
+      answered++;
+
+      // "Outro" traz o texto digitado pela pessoa — vira o rótulo da barra.
+      const detalhe = src === 'Outro' && row.lead_source_other
+        ? `Outro: ${String(row.lead_source_other).trim().slice(0, 28)}`
+        : src;
+
+      counts.set(detalhe, (counts.get(detalhe) || 0) + 1);
+    }
+
+    const items = [...counts.entries()]
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'pt-BR'));
+
+    return { answered, items };
+  }, [users]);
 
   const servicesById = useMemo(
     () => Object.fromEntries(services.map((s) => [s.id, s])),
@@ -344,9 +386,15 @@ export default function OnboardingReport() {
   const stats = [
     { label: 'Responderam o onboarding', value: total, icon: <CheckCircle2 size={18} />, tone: 'green' },
     { label: 'Já compartilha', value: alreadyShares, icon: <Share2 size={18} />, tone: 'purple' },
-    { label: 'Pessoas indicadas', value: invites.length, icon: <UserPlus size={18} />, tone: 'red' },
+    { label: 'Pessoas indicadas', value: invites.length, icon: <UserPlus size={18} />, tone: 'red', action: 'invites' },
     { label: 'Não paga assinatura', value: paysNothing, icon: <TrendingUp size={18} />, tone: 'orange' },
   ];
+
+  /* Quem indicou cada contato — a sheet agrupa por essa pessoa. */
+  const usersById = useMemo(
+    () => Object.fromEntries(users.map((u) => [u.id, u])),
+    [users]
+  );
 
   // ── Lista ──────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -452,20 +500,44 @@ export default function OnboardingReport() {
           </section>
 
           <div className="ob-report-stats">
-            {stats.map((s) => (
-              <div key={s.label} className={`ob-report-stat ${s.tone}`}>
-                {s.icon}
-                <div>
-                  <span className="ob-report-stat-value">
-                    {s.value}
-                    {total > 0 && s.label !== 'Responderam o onboarding' && (
-                      <em>{Math.round((s.value / total) * 100)}%</em>
-                    )}
-                  </span>
-                  <span className="ob-report-stat-label">{s.label}</span>
+            {stats.map((s) => {
+              const content = (
+                <>
+                  {s.icon}
+                  <div>
+                    <span className="ob-report-stat-value">
+                      {s.value}
+                      {total > 0 && s.label !== 'Responderam o onboarding' && (
+                        <em>{Math.round((s.value / total) * 100)}%</em>
+                      )}
+                    </span>
+                    <span className="ob-report-stat-label">{s.label}</span>
+                  </div>
+                  {s.action === 'invites' && <ChevronRight size={16} className="ob-report-stat-chevron" />}
+                </>
+              );
+
+              /* O card de indicações abre a sheet com a lista completa. */
+              if (s.action === 'invites') {
+                return (
+                  <button
+                    type="button"
+                    key={s.label}
+                    className={`ob-report-stat ${s.tone} is-clickable`}
+                    onClick={() => setSheetOpen(true)}
+                    aria-haspopup="dialog"
+                  >
+                    {content}
+                  </button>
+                );
+              }
+
+              return (
+                <div key={s.label} className={`ob-report-stat ${s.tone}`}>
+                  {content}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="ob-report-tabs" role="tablist">
@@ -497,6 +569,36 @@ export default function OnboardingReport() {
 
           {tab === 'overview' && (
             <div className="charts-section">
+              {/* De onde vieram as pessoas — primeira pergunta de negócio,
+                  antes das respostas de qualificação. */}
+              <div className="chart-card">
+                <div className="chart-header">
+                  <h3>Onde nos encontraram</h3>
+                  <span className="chart-total">{leadSourceChart.answered} respostas</span>
+                </div>
+                {leadSourceChart.answered === 0 ? (
+                  <p className="ob-report-empty">Ninguém respondeu ainda.</p>
+                ) : (
+                  <div className="chart-bars">
+                    {leadSourceChart.items.map((item) => {
+                      const pct = leadSourceChart.answered ? (item.count / leadSourceChart.answered) * 100 : 0;
+                      return (
+                        <div className="bar-row" key={item.label}>
+                          <span className="bar-label">{item.label}</span>
+                          <div className="bar-track">
+                            <div className="bar-fill" style={{ width: `${pct}%` }} />
+                          </div>
+                          <div className="bar-value">
+                            <span className="bar-count">{item.count}</span>
+                            <span className="bar-pct">{pct.toFixed(0)}%</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {distribution.map((q) => (
                 <div className="chart-card" key={q.key}>
                   <div className="chart-header">
@@ -686,6 +788,13 @@ export default function OnboardingReport() {
                       });
                     }
 
+                    /* Botão de WhatsApp: o texto do dono já vem pronto, com o
+                       nome da pessoa e as plataformas que ela marcou. */
+                    const quer = wanted.flatMap((g) => g.items.map((p) => p.name));
+                    const usa = used.flatMap((g) => g.items.map((p) => p.name));
+                    const plataformas = quer.length ? quer : usa;
+                    const waHref = buildLeadWhatsappUrl(row.phone, row.name, plataformas);
+
                     return (
                       <article className={`ob-response ${open ? 'is-open' : ''}`} key={row.id}>
                         <header className="ob-response-head">
@@ -705,6 +814,18 @@ export default function OnboardingReport() {
                           <span className="ob-response-time">
                             {relativeTime(row.answers?.created_at || row.created_at)}
                           </span>
+                          {waHref && (
+                            <a
+                              className="ob-whatsapp-btn"
+                              href={waHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={`Chamar ${row.name || row.email} no WhatsApp`}
+                            >
+                              <MessageCircle size={14} />
+                              WhatsApp
+                            </a>
+                          )}
                           <button
                             className="ob-expand-btn"
                             onClick={() => setExpanded(open ? null : row.id)}
@@ -785,24 +906,49 @@ export default function OnboardingReport() {
                           <div className="ob-group-block">
                             <span className="ob-group-title">Convidaria</span>
                             <div className="ob-platform-list">
-                              {row.invites.map((iv) => (
-                                <a
-                                  key={iv.id}
-                                  href={`https://wa.me/${iv.phone}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="ob-invite-chip"
-                                  title={`Falar com ${iv.name} no WhatsApp`}
-                                >
-                                  {iv.name}
-                                </a>
-                              ))}
+                              {row.invites.map((iv) => {
+                                /* O número vem sem o código do país — o link
+                                   do WhatsApp precisa dele para funcionar. */
+                                const waNumber = phoneToWhatsApp(iv.phone);
+                                if (!waNumber) {
+                                  return (
+                                    <span key={iv.id} className="ob-invite-chip is-static">
+                                      {iv.name}
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <a
+                                    key={iv.id}
+                                    href={`https://wa.me/${waNumber}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="ob-invite-chip"
+                                    title={`Falar com ${iv.name} no WhatsApp`}
+                                  >
+                                    <MessageCircle size={12} />
+                                    {iv.name}
+                                  </a>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
 
                         {open && (
                           <div className="ob-detail-grid">
+                            {row.lead_source && (
+                              <div className="ob-detail-item">
+                                <span className="ob-detail-q">Onde nos encontraram</span>
+                                <span className="ob-detail-a">
+                                  {row.lead_source}
+                                  {row.lead_source === 'Outro' && row.lead_source_other
+                                    ? ` — ${row.lead_source_other}`
+                                    : ''}
+                                </span>
+                              </div>
+                            )}
+
                             {distribution.map((q) => {
                               const value = row.answers?.[q.column];
                               const isBool = q.column === 'already_shares';
@@ -879,6 +1025,14 @@ export default function OnboardingReport() {
             </div>
           )}
         </>
+      )}
+
+      {sheetOpen && (
+        <InvitesSheet
+          invites={invites}
+          usersById={usersById}
+          onClose={() => setSheetOpen(false)}
+        />
       )}
     </div>
   );

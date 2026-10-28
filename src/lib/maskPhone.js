@@ -23,11 +23,30 @@ export function maskPhone(value) {
 /**
  * Dígitos sem máscara, com o código do país, para links de WhatsApp.
  * null quando não há número utilizável.
+ *
+ * O onboarding grava o número como o usuário digitou (DDD + 8/9 dígitos, sem
+ * o 55), mas a coluna também aceita o formato com DDI. `startsWith('55')` não
+ * serve para decidir: DDD 55 (55123456789) começa com "55" e é número
+ * nacional. O que separa os dois casos é o TAMANHO.
  */
 export function phoneToWhatsApp(value) {
   const digits = onlyDigits(value);
   if (!digits) return null;
-  return digits.startsWith('55') ? digits : `55${digits}`;
+  // 12 ou 13 dígitos: já vem com DDI (55 + DDD + 8/9).
+  if (digits.length >= 12) return digits;
+  // 10 ou 11 dígitos: número nacional — falta o código do país.
+  return `55${digits}`;
+}
+
+/**
+ * Só o número nacional (sem o 55), para exibir mascarado.
+ * Vazio quando não há número.
+ */
+export function phoneToNational(value) {
+  const digits = onlyDigits(value);
+  if (!digits) return '';
+  if (digits.length >= 12 && digits.startsWith('55')) return digits.slice(2);
+  return digits;
 }
 
 /**

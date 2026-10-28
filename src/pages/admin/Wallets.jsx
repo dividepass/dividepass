@@ -6,12 +6,15 @@ import {
   FileText
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { processarSaque } from '../../lib/walletApi';
 import './Wallets.css';
 
 const TABS = [
   { key: 'pending', label: 'Pendentes', icon: Clock },
   { key: 'completed', label: 'Realizados', icon: CheckCircle },
   { key: 'rejected', label: 'Recusados', icon: XSquare },
+  { key: 'payout', label: 'Repasse por grupo', icon: ArrowDownRight },
+  { key: 'wallets', label: 'Carteiras', icon: Wallet },
   { key: 'finance', label: 'Financeiro', icon: BarChart3 },
 ];
 
@@ -32,6 +35,8 @@ function Wallets() {
   const [rejectReason, setRejectReason] = useState('');
   const [rejectTarget, setRejectTarget] = useState(null);
   const [financeFilter, setFinanceFilter] = useState(null);
+  const [fees, setFees] = useState({ gateway: 4.98, platform: 3.95 });
+  const [groupList, setGroupList] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,13 +46,14 @@ function Wallets() {
       setError('');
 
       try {
-        const [walletsRes, transactionsRes, withdrawalsRes, usersRes, groupsRes, paymentsRes] = await Promise.all([
+        const [walletsRes, transactionsRes, withdrawalsRes, usersRes, groupsRes, paymentsRes, settingsRes] = await Promise.all([
           supabase.from('user_wallets').select('*').order('updated_at', { ascending: false }),
           supabase.from('wallet_transactions').select('*').order('created_at', { ascending: false }),
           supabase.from('wallet_withdrawals').select('*').order('requested_at', { ascending: false }),
-          supabase.from('users').select('id, name, email'),
-          supabase.from('groups').select('id, name'),
+          supabase.from('users').select('id, name, email, role'),
+          supabase.from('groups').select('id, name, owner_id, is_official'),
           supabase.from('payments').select('*').order('created_at', { ascending: false }),
+          supabase.from('app_settings').select('key, value').in('key', ['gateway_fee_percent', 'platform_fee_percent']),
         ]);
 
         if (walletsRes.error) throw walletsRes.error;
@@ -68,6 +74,14 @@ function Wallets() {
           const groupsMap = {};
           (groupsRes.data || []).forEach(g => { groupsMap[g.id] = g.name; });
           setGroups(groupsMap);
+          setGroupList(groupsRes.data || []);
+
+          const settingsMap = {};
+          (settingsRes.data || []).forEach(s => { settingsMap[s.key] = s.value; });
+          setFees({
+            gateway: Number(settingsMap.gateway_fee_percent ?? 4.98) || 4.98,
+            platform: Number(settingsMap.platform_fee_percent ?? 3.95) || 3.95,
+          });
         }
       } catch (err) {
         if (!cancelled) setError(err.message);
@@ -94,7 +108,84 @@ function Wallets() {
   const totalPaidOut = completedWithdrawals.reduce((sum, w) => sum + Number(w.amount || 0), 0);
   const totalPending = pendingWithdrawals.reduce((sum, w) => sum + Number(w.amount || 0), 0);
   const totalBalance = wallets.reduce((sum, w) => sum + Number(w.balance || 0), 0);
-  const netRevenue = totalReceived - totalPaidOut;
+
+  // ---------------------------------------------------------------------------
+  // Repasse por grupo: quanto cada grupo de terceiro gerou e quanto disso
+  // realmente entrou na carteira de quem criou o grupo.
+  // ---------------------------------------------------------------------------
+  const taxaTotal = fees.gateway + fees.platform;
+  const gruposDeTerceiros = groupList.filter(g => g.owner_id && !g.is_official);
+
+  const repassePorGrupo = gruposDeTerceiros.map(g => {
+    const pagamentosDoGrupo = paidPayments.filter(p => p.group_id === g.id);
+    const bruto = pagamentosDoGrupo.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const taxas = bruto * (taxaTotal / 100);
+    const liquidoEsperado = bruto - taxas;
+
+    const creditos = transactions.filter(t =>
+      t.group_id === g.id && t.type === 'credit' && t.status === 'completed'
+    );
+    const creditado = creditos.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+
+    const saquesDoDono = withdrawals.filter(w => w.user_id === g.owner_id);
+    const saquesPendentes = saquesDoDono.filter(w => w.status === 'pending')
+      .reduce((sum, w) => sum + Number(w.amount || 0), 0);
+    const saquesPagos = saquesDoDono.filter(w => w.status === 'completed')
+      .reduce((sum, w) => sum + Number(w.amount || 0), 0);
+
+    const saldoCarteira = Number(wallets.find(w => w.user_id === g.owner_id)?.balance || 0);
+    const aRepassar = Math.max(creditado - saquesPagos, 0);
+    const naoCreditado = liquidoEsperado - creditado;
+
+    // Grupo da plataforma: oficial ou de propriedade da conta admin. O dinheiro
+    // desses grupos e receita da propria plataforma - nao tem repasse.
+    const ehDaPlataforma = Boolean(g.is_official) || users[g.owner_id]?.role === 'admin';
+
+    let situacao = 'ok';
+    if (ehDaPlataforma) situacao = 'plataforma';
+    else if (bruto > 0 && Math.abs(naoCreditado) > 0.01) situacao = 'pendente';
+    if (!ehDaPlataforma && saquesPendentes > 0) situacao = 'em-analise';
+
+    return {
+      groupId: g.id,
+      nome: g.name || '—',
+      ownerId: g.owner_id,
+      dono: users[g.owner_id]?.name || users[g.owner_id]?.email || 'Dono sem cadastro',
+      donoEmail: users[g.owner_id]?.email || '',
+      pagamentos: pagamentosDoGrupo.length,
+      bruto,
+      taxas,
+      liquidoEsperado,
+      creditado,
+      naoCreditado,
+      saquesPendentes,
+      saquesPagos,
+      saldoCarteira,
+      aRepassar,
+      situacao,
+      ehDaPlataforma,
+    };
+  }).filter(r => r.bruto > 0 || r.creditado > 0 || r.saquesPagos > 0 || r.aRepassar > 0);
+
+  // Totais do repasse: so o que e de grupo de terceiro.
+  const gruposDeTerceiroComMovimento = repassePorGrupo.filter(r => !r.ehDaPlataforma);
+  const totalBrutoTerceiros = gruposDeTerceiroComMovimento.reduce((s, r) => s + r.bruto, 0);
+  const totalCreditadoTerceiros = gruposDeTerceiroComMovimento.reduce((s, r) => s + r.creditado, 0);
+  const totalNaoCreditado = gruposDeTerceiroComMovimento.reduce((s, r) => s + Math.max(r.naoCreditado, 0), 0);
+  const totalArepassar = gruposDeTerceiroComMovimento.reduce((s, r) => s + r.aRepassar, 0);
+  const totalRecebidoPlataforma = repassePorGrupo.filter(r => r.ehDaPlataforma).reduce((s, r) => s + r.bruto, 0)
+    + paidPayments.filter(p => {
+      const g = groupList.find(x => x.id === p.group_id);
+      return g?.is_official;
+    }).reduce((s, p) => s + Number(p.amount || 0), 0);
+
+  // O que a plataforma recebeu nao e lucro: parte disso e o repasse dos
+  // criadores de grupo. O lucro da plataforma e o que sobra depois da taxa do
+  // gateway e do que foi creditado aos donos de grupo.
+  const totalTaxasGateway = totalReceived * (fees.gateway / 100);
+  const receitaLiquidaPlataforma = totalReceived - totalTaxasGateway - totalCreditadoTerceiros;
+  const caixaEmMaos = totalReceived - totalPaidOut;
+  const netRevenue = receitaLiquidaPlataforma;
 
   const filteredWallets = wallets.filter(w => {
     const user = users[w.user_id];
@@ -110,30 +201,23 @@ function Wallets() {
 
     setProcessing(withdrawal.id);
     try {
-      const { error: updateError } = await supabase
-        .from('wallet_withdrawals')
-        .update({ status: 'completed', processed_at: new Date().toISOString() })
-        .eq('id', withdrawal.id);
+      // O saldo fica reservado quando o pedido usa a RPC request_withdrawal.
+      // Sem reserva (pedido antigo ou banco sem a migration) o debito e feito
+      // aqui, no ato do pagamento.
+      const reservado = transactions.some(t =>
+        t.reference_type === 'withdrawal' && t.reference_id === withdrawal.id
+      );
 
-      if (updateError) throw updateError;
-
-      await supabase.from('wallet_transactions').insert({
-        user_id: withdrawal.user_id,
-        type: 'withdrawal',
+      const result = await processarSaque({
+        withdrawalId: withdrawal.id,
+        action: 'paid',
+        notes: null,
+        reservado,
         amount: withdrawal.amount,
-        description: `Saque processado`,
-        reference_type: 'withdrawal',
-        reference_id: withdrawal.id,
-        status: 'completed',
+        userId: withdrawal.user_id,
       });
 
-      await supabase.rpc('credit_wallet', {
-        p_user_id: withdrawal.user_id,
-        p_amount: -Number(withdrawal.amount),
-        p_description: 'Saque processado',
-        p_reference_type: 'withdrawal',
-        p_reference_id: withdrawal.id,
-      });
+      if (!result.ok) throw new Error(result.error);
 
       setWithdrawals(prev =>
         prev.map(w => w.id === withdrawal.id
@@ -169,16 +253,22 @@ function Wallets() {
     if (!rejectTarget) return;
     setProcessing(rejectTarget.id);
     try {
-      const { error: updateError } = await supabase
-        .from('wallet_withdrawals')
-        .update({
-          status: 'rejected',
-          processed_at: new Date().toISOString(),
-          notes: rejectReason || null,
-        })
-        .eq('id', rejectTarget.id);
+      // Se o pedido foi feito pela RPC, o saldo estava reservado: a recusa
+      // devolve o valor para a carteira do usuario.
+      const reservado = transactions.some(t =>
+        t.reference_type === 'withdrawal' && t.reference_id === rejectTarget.id
+      );
 
-      if (updateError) throw updateError;
+      const result = await processarSaque({
+        withdrawalId: rejectTarget.id,
+        action: 'rejected',
+        notes: rejectReason || null,
+        reservado,
+        amount: rejectTarget.amount,
+        userId: rejectTarget.user_id,
+      });
+
+      if (!result.ok) throw new Error(result.error);
 
       setWithdrawals(prev =>
         prev.map(w => w.id === rejectTarget.id
@@ -208,6 +298,24 @@ function Wallets() {
   };
 
   const getGroupName = (tx) => tx.group_id ? (groups[tx.group_id] || '—') : '—';
+
+  // Dados para o admin pagar: a chave PIX ou os dados bancarios do pedido.
+  // Em producao chegam em payment_details; depois da migration, tambem nas
+  // colunas proprias.
+  const dadosDoSaque = (wd) => {
+    let extra = {};
+    try { extra = JSON.parse(wd.payment_details || '{}'); } catch { extra = {}; }
+    if (wd.payment_method !== 'bank') {
+      const pix = wd.pix_key || extra.pix_key || '';
+      return { rotulo: pix || 'Sem chave PIX', detalhe: wd.pix_type || extra.pix_type || '' };
+    }
+    const conta = wd.bank_account || extra.bank_account || '';
+    return {
+      rotulo: wd.bank_name || extra.bank_name || 'Banco não informado',
+      detalhe: [extra.bank_agency || wd.bank_agency, conta, extra.bank_holder || wd.bank_holder]
+        .filter(Boolean).join(' · '),
+    };
+  };
 
   if (selectedTransaction) {
     const tx = selectedTransaction;
@@ -431,6 +539,13 @@ function Wallets() {
                 <small>Saldo Total Usuários</small>
               </div>
             </div>
+            <div className="stat-card">
+              <ArrowDownRight size={22} style={{ color: 'var(--warning, #F59E0B)' }} />
+              <div>
+                <span>{formatCurrency(totalArepassar)}</span>
+                <small>A Repassar</small>
+              </div>
+            </div>
           </div>
 
           {/* Tabs */}
@@ -440,6 +555,8 @@ function Wallets() {
               const count = tab.key === 'pending' ? pendingWithdrawals.length
                 : tab.key === 'completed' ? completedWithdrawals.length
                 : tab.key === 'rejected' ? rejectedWithdrawals.length
+                : tab.key === 'payout' ? repassePorGrupo.filter(r => !r.ehDaPlataforma && r.situacao !== 'ok').length
+                : tab.key === 'wallets' ? wallets.length
                 : null;
               return (
                 <button
@@ -455,8 +572,8 @@ function Wallets() {
             })}
           </div>
 
-          {/* Search Bar (for withdrawal tabs) */}
-          {activeTab !== 'finance' && (
+          {/* Search Bar (for withdrawal tabs and the wallet list) */}
+          {['pending', 'completed', 'rejected', 'wallets'].includes(activeTab) && (
             <div className="wallets-toolbar">
               <div className="search-box">
                 <Search size={18} />
@@ -482,6 +599,7 @@ function Wallets() {
                       <th>Usuário</th>
                       <th>Valor</th>
                       <th>Método</th>
+                      <th>Pagar em</th>
                       <th>Solicitado em</th>
                       <th>Notas</th>
                       <th>Ações</th>
@@ -506,6 +624,12 @@ function Wallets() {
                         </td>
                         <td><strong className="text-success">{formatCurrency(wd.amount)}</strong></td>
                         <td>{wd.payment_method || 'PIX'}</td>
+                        <td>
+                          <strong>{dadosDoSaque(wd).rotulo || '—'}</strong>
+                          {dadosDoSaque(wd).detalhe && (
+                            <small style={{ display: 'block', color: 'var(--text-muted)' }}>{dadosDoSaque(wd).detalhe}</small>
+                          )}
+                        </td>
                         <td><span className="date-cell">{formatDateTime(wd.requested_at)}</span></td>
                         <td className="date-cell">{wd.notes || '—'}</td>
                         <td>
@@ -626,6 +750,158 @@ function Wallets() {
             </div>
           )}
 
+          {/* Repasse por grupo: o dinheiro dos grupos criados por terceiros */}
+          {activeTab === 'payout' && (
+            <>
+              <div className="finance-grid">
+                <div className="finance-card finance-card-green">
+                  <TrendingUp size={20} />
+                  <div>
+                    <span>Recebido de grupos</span>
+                    <strong>{formatCurrency(totalBrutoTerceiros)}</strong>
+                    <small>{repassePorGrupo.length} grupos com movimento</small>
+                  </div>
+                </div>
+                <div className="finance-card finance-card-blue">
+                  <DollarSign size={20} />
+                  <div>
+                    <span>Creditado nas carteiras</span>
+                    <strong>{formatCurrency(totalCreditadoTerceiros)}</strong>
+                    <small>dinheiro que o dono do grupo já recebeu</small>
+                  </div>
+                </div>
+                <div className="finance-card finance-card-yellow">
+                  <Clock size={20} />
+                  <div>
+                    <span>A repassar</span>
+                    <strong>{formatCurrency(totalArepassar)}</strong>
+                    <small>saldo dos criadores de grupo</small>
+                  </div>
+                </div>
+                <div className="finance-card finance-card-red">
+                  <AlertTriangle size={20} />
+                  <div>
+                    <span>Não creditado</span>
+                    <strong>{formatCurrency(totalNaoCreditado)}</strong>
+                    <small>recebido e ainda fora da carteira</small>
+                  </div>
+                </div>
+                <div className="finance-card finance-card-purple">
+                  <TrendingUp size={20} />
+                  <div>
+                    <span>Recebido pela plataforma</span>
+                    <strong>{formatCurrency(totalRecebidoPlataforma)}</strong>
+                    <small>grupos próprios: é receita da plataforma</small>
+                  </div>
+                </div>
+              </div>
+
+              <h2 className="section-title">
+                <ArrowDownRight size={18} />
+                Repasse por grupo
+              </h2>
+              <div className="admin-card table-responsive">
+                {repassePorGrupo.length === 0 ? (
+                  <div className="empty-table">
+                    <p>Nenhum grupo de terceiro com movimento até agora.</p>
+                    <p style={{ marginTop: '0.5rem', color: 'var(--text-muted)' }}>
+                      {formatCurrency(totalRecebidoPlataforma)} já foram recebidos, mas tudo veio de grupos da própria plataforma.
+                    </p>
+                  </div>
+                ) : (
+                  <table className="wallets-table">
+                    <thead>
+                      <tr>
+                        <th>Grupo</th>
+                        <th>Dono</th>
+                        <th>Pagamentos</th>
+                        <th>Recebido</th>
+                        <th>Taxas</th>
+                        <th>Líquido</th>
+                        <th>Creditado</th>
+                        <th>Saldo</th>
+                        <th>Situação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {repassePorGrupo.map(r => (
+                        <tr key={r.groupId}>
+                          <td><strong>{r.nome}</strong></td>
+                          <td>
+                            {r.dono}
+                            {r.donoEmail && <small style={{ display: 'block', color: 'var(--text-muted)' }}>{r.donoEmail}</small>}
+                          </td>
+                          <td>{r.pagamentos}</td>
+                          <td>{formatCurrency(r.bruto)}</td>
+                          <td className="text-muted">-{formatCurrency(r.taxas)}</td>
+                          <td>{formatCurrency(r.liquidoEsperado)}</td>
+                          <td>
+                            <strong className={r.creditado > 0 ? 'text-success' : ''}>
+                              {formatCurrency(r.creditado)}
+                            </strong>
+                          </td>
+                          <td>{formatCurrency(r.saldoCarteira)}</td>
+                          <td>
+                            {r.situacao === 'ok' && <span className="type-badge credit">ok</span>}
+                            {r.situacao === 'pendente' && <span className="type-badge withdrawal">não creditado</span>}
+                            {r.situacao === 'em-analise' && <span className="type-badge debit">saque pendente</span>}
+                            {r.situacao === 'plataforma' && <span className="type-badge refund">plataforma</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Carteiras: saldo de cada usuario */}
+          {activeTab === 'wallets' && (
+            <div className="admin-card table-responsive">
+              {filteredWallets.length === 0 ? (
+                <div className="empty-table">
+                  <p>Nenhuma carteira com saldo.</p>
+                </div>
+              ) : (
+                <table className="wallets-table">
+                  <thead>
+                    <tr>
+                      <th>Usuário</th>
+                      <th>Saldo</th>
+                      <th>Total recebido</th>
+                      <th>Saques pendentes</th>
+                      <th>Grupos</th>
+                      <th>Atualizado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredWallets.map(w => {
+                      const u = users[w.user_id] || {};
+                      const pendentes = withdrawals
+                        .filter(wd => wd.user_id === w.user_id && wd.status === 'pending')
+                        .reduce((s, wd) => s + Number(wd.amount || 0), 0);
+                      const gruposDoDono = groupList.filter(g => g.owner_id === w.user_id).length;
+                      return (
+                        <tr key={w.user_id}>
+                          <td>
+                            <strong>{u.name || 'Sem cadastro'}</strong>
+                            {u.email && <small style={{ display: 'block', color: 'var(--text-muted)' }}>{u.email}</small>}
+                          </td>
+                          <td><strong>{formatCurrency(w.balance)}</strong></td>
+                          <td>{formatCurrency(w.total_earned)}</td>
+                          <td>{pendentes > 0 ? formatCurrency(pendentes) : '—'}</td>
+                          <td>{gruposDoDono || '—'}</td>
+                          <td>{formatDateTime(w.updated_at)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
           {/* Financeiro Tab */}
           {activeTab === 'finance' && (
             <>
@@ -673,9 +949,17 @@ function Wallets() {
                 <div className="finance-card finance-card-teal">
                   <BarChart3 size={20} />
                   <div>
-                    <span>Lucro Líquido</span>
+                    <span>Lucro da Plataforma</span>
                     <strong>{formatCurrency(netRevenue)}</strong>
-                    <small>Recebido - Saques Pagos</small>
+                    <small>Recebido - taxa do gateway - repasse a grupos</small>
+                  </div>
+                </div>
+                <div className="finance-card finance-card-yellow">
+                  <ArrowDownRight size={20} />
+                  <div>
+                    <span>A Repassar</span>
+                    <strong>{formatCurrency(totalArepassar)}</strong>
+                    <small>{gruposDeTerceiroComMovimento.length} grupos de terceiros</small>
                   </div>
                 </div>
               </div>

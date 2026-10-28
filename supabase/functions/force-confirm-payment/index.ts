@@ -156,6 +156,8 @@ async function confirmIOPayment(
             gateway_status: "authorized",
             gateway_subscription_id: gateway_payment_id,
             next_charge_at: nextChargeAt.toISOString(),
+            // Pagamento confirmado: vencimento do ciclo = data + ciclo.
+            renewal_due_at: nextChargeAt.toISOString(),
             billing_status: "active",
             retry_count: 0,
             last_charge_at: now,
@@ -169,6 +171,7 @@ async function confirmIOPayment(
           billing_cycle: cycle, amount,
           status: "active", gateway: "iopay", gateway_subscription_id: gateway_payment_id,
           next_charge_at: nextChargeAt.toISOString(),
+          renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active", retry_count: 0, last_charge_at: now,
           started_at: now, custom_cycle_days: days, custom_cycle_months: months,
         });
@@ -193,6 +196,9 @@ async function confirmIOPayment(
             status: "active",
             payment_status: "active",
             joined_at: now,
+            // O cancelamento por carência grava `left_at` no vínculo; ao pagar
+            // de novo o vínculo é refeito e a data de saída é zerada.
+            left_at: null,
           })
           .eq("group_id", group_id).eq("user_id", user_id);
         if (error) return { success: false, error: "group_members update failed: " + error.message };
@@ -204,6 +210,7 @@ async function confirmIOPayment(
             status: "active",
             payment_status: "active",
             joined_at: now,
+            left_at: null,
           }, { onConflict: "group_id, user_id" });
         if (upsertErr) return { success: false, error: "group_members upsert failed: " + upsertErr.message };
       }

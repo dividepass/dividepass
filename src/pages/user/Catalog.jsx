@@ -4,6 +4,8 @@ import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Shar
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
+import GroupTags from '../../components/GroupTags';
+import logoImg from '../../assets/logo.png';
 import './Catalog.css';
 
 const CYCLE_LABELS = {
@@ -64,7 +66,6 @@ function Catalog() {
   const [interestSent, setInterestSent] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [extraGroups, setExtraGroups] = useState([]);
-  const [adminUser, setAdminUser] = useState(null);
 
   const siteUrl = (import.meta.env.VITE_SITE_URL || 'https://dividepass.com').replace(/\/$/, '');
 
@@ -106,21 +107,6 @@ function Catalog() {
     fetchGroups();
     return () => { cancelled = true; };
   }, [selectedService, serviceId, availableServices]);
-
-  useEffect(() => {
-    const allGroups = [...(selectedService?.groups || []), ...extraGroups];
-    const hasNoOwner = allGroups.some(g => !g.owner);
-    if (!hasNoOwner || adminUser) return;
-    const fetchAdmin = async () => {
-      const { data } = await supabase
-        .from('users')
-        .select('id, name, avatar_url, role')
-        .limit(1)
-        .maybeSingle();
-      if (data) setAdminUser(data);
-    };
-    fetchAdmin();
-  }, [extraGroups, selectedService, adminUser]);
 
   const getActiveMembers = (group) =>
     group.members?.filter(m => m.status === 'active' || m.status === 'pending').length || 0;
@@ -353,7 +339,7 @@ function Catalog() {
             return (
               <div
                 key={group.id}
-                className={`group-card ${full ? 'group-card-full' : ''}`}
+                className={`group-card ${full ? 'group-card-full' : ''} ${group.verified ? 'is-verified' : ''}`}
                 style={{ cursor: 'pointer' }}
                 onClick={() => navigate(`/dashboard/groups/${group.slug || group.id}`)}
               >
@@ -375,11 +361,6 @@ function Catalog() {
                   <div className="gc-info">
                     <div className="gc-name-row">
                       <h3>{group.name}</h3>
-                      {group.verified && (
-                        <span className="gc-verified" title="Verificado">
-                          <BadgeCheck size={18} />
-                        </span>
-                      )}
                       {group.approval_status === 'pending' && (
                         <span className="gc-awaiting" title="Aguardando aprovação da equipe DividePass">
                           <Clock size={13} /> Aguardando aprovação
@@ -392,6 +373,7 @@ function Catalog() {
                       </span>
                       <span className="gc-ref">#{group.slug || group.id.slice(0, 6).toUpperCase()}</span>
                     </div>
+                    <GroupTags group={group} size="sm" className="gc-tags" />
                   </div>
                 </div>
 
@@ -435,11 +417,7 @@ function Catalog() {
                   <div className="gc-creator">
                     {group.is_official || !group.owner_id ? (
                       <>
-                        {adminUser?.avatar_url ? (
-                          <img src={adminUser.avatar_url} alt="" className="gc-creator-avatar" />
-                        ) : (
-                          <div className="gc-creator-avatar gc-avatar-dp">DP</div>
-                        )}
+                        <img src={logoImg} alt="DividePass" className="gc-creator-avatar gc-creator-logo" />
                         <span>Criado por: <strong>DividePass</strong></span>
                         <span className="gc-official-badge">
                           <BadgeCheck size={12} /> Oficial

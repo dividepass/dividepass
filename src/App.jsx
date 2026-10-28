@@ -69,9 +69,12 @@ import Surveys from './pages/admin/Surveys';
 import SurveyResults from './pages/admin/SurveyResults';
 import OnboardingReport from './pages/admin/OnboardingReport';
 import TestimonialsAdmin from './pages/admin/TestimonialsAdmin';
+import FeedbackAdmin from './pages/admin/FeedbackAdmin';
 import SavingsStats from './pages/admin/SavingsStats';
 import ServicePlans from './pages/admin/ServicePlans';
 import Expenses from './pages/admin/Expenses';
+import Evolution from './pages/admin/Evolution';
+import EmailManagement from './pages/admin/EmailManagement';
 
 // Pesquisa (public)
 import Pesquisa from './pages/user/Pesquisa';
@@ -166,9 +169,12 @@ function App() {
             <Route path="surveys/:id/edit" element={<Surveys />} />
             <Route path="surveys/:id/results" element={<SurveyResults />} />
             <Route path="testimonials" element={<TestimonialsAdmin />} />
+            <Route path="feedback" element={<FeedbackAdmin />} />
             <Route path="savings" element={<SavingsStats />} />
             <Route path="service-plans" element={<ServicePlans />} />
             <Route path="expenses" element={<Expenses />} />
+            <Route path="evolution" element={<Evolution />} />
+            <Route path="emails" element={<EmailManagement />} />
             </Route>
 
             {/* Platform SEO pages - any single-segment path matches here */}

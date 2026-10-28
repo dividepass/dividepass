@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/set-version.mjs",
     "build": "vite build",
+    "version:show": "node scripts/set-version.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "node server.js",

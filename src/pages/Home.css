@@ -261,6 +261,53 @@
   border-radius: 1rem;
 }
 
+/* CTA principal do hero: a única coisa que a página precisa que a pessoa
+   clique. Por isso é o botão mais forte da tela (cor, tamanho e pulso). */
+.btn.btn-hero {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1.15rem 2.4rem;
+  font-size: 1.08rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  border-radius: 1.15rem;
+  border: none;
+  background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 55%, #A855F7 100%);
+  color: #fff;
+  overflow: hidden;
+  box-shadow: 0 18px 40px -18px rgba(79, 70, 229, 0.9);
+  animation: heroCtaPulse 2.8s ease-in-out infinite;
+}
+
+.btn.btn-hero:hover {
+  transform: translateY(-2px) scale(1.02);
+  color: #fff;
+  box-shadow: 0 26px 50px -18px rgba(79, 70, 229, 0.95);
+}
+
+.btn.btn-hero:active {
+  transform: translateY(0) scale(1);
+}
+
+.btn.btn-hero svg {
+  transition: transform 0.25s ease;
+}
+
+.btn.btn-hero:hover svg {
+  transform: translateX(4px);
+}
+
+@keyframes heroCtaPulse {
+  0%, 100% {
+    box-shadow: 0 18px 40px -18px rgba(79, 70, 229, 0.9), 0 0 0 0 rgba(79, 70, 229, 0.32);
+  }
+  50% {
+    box-shadow: 0 18px 40px -18px rgba(79, 70, 229, 0.9), 0 0 0 12px rgba(79, 70, 229, 0);
+  }
+}
+
 /* Hero */
 .hero {
   position: relative;
@@ -307,6 +354,252 @@
   margin-bottom: 1.5rem;
   animation: fadeInUp 0.6s ease 0.3s both;
   flex-wrap: wrap;
+}
+
+/* Selo de prova social: mostra gente real que entrou neste mês */
+.hero-proof {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.35rem 1rem 0.35rem 0.4rem;
+  border-radius: 999px;
+  background: var(--home-surface);
+  border: 1px solid var(--home-border);
+  box-shadow: 0 14px 34px -28px rgba(0, 0, 0, 0.9);
+  margin-bottom: 1.35rem;
+  animation: fadeInUp 0.6s ease 0.05s both;
+  max-width: 100%;
+}
+
+.hero-proof .hero-trust-avatars {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.hero-proof .hero-trust-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid var(--home-bg);
+  background: #4F46E5;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  margin-left: -0.55rem;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.hero-proof .hero-trust-avatar:first-child {
+  margin-left: 0;
+}
+
+.hero-proof .hero-trust-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-proof .hero-trust-avatar span {
+  color: #fff;
+  line-height: 1;
+}
+
+.hero-proof-text {
+  font-size: 0.82rem;
+  color: var(--home-text-muted);
+  line-height: 1.2;
+  min-width: 0;
+}
+
+.hero-proof-text strong {
+  color: var(--home-text);
+  font-weight: 700;
+}
+
+/* ── SplitDemo: a assinatura visual da conta dividida ─────────────── */
+.split-demo {
+  width: min(720px, 100%);
+  margin: 0 auto 1.75rem;
+  padding: 1.25rem 1.4rem 1.35rem;
+  background: var(--home-surface);
+  border: 1px solid var(--home-border);
+  border-radius: 1.25rem;
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  animation: fadeInUp 0.6s ease 0.35s both;
+  box-shadow: 0 30px 70px -50px rgba(79, 70, 229, 0.9);
+}
+
+.split-demo::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 15% 0%, rgba(79, 70, 229, 0.14), transparent 60%);
+  pointer-events: none;
+}
+
+.split-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  position: relative;
+}
+
+.split-service {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--home-text);
+  min-width: 0;
+}
+
+.split-service img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.split-service-fallback {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.split-price-full {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.split-price-full small {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--home-text-muted);
+  font-weight: 600;
+}
+
+.split-price-full strong {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--home-text);
+}
+
+.split-bar {
+  display: flex;
+  gap: 4px;
+  margin: 1.05rem 0 0.7rem;
+  height: 14px;
+  position: relative;
+}
+
+.split-slice {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(129, 140, 248, 0.45), rgba(99, 102, 241, 0.25));
+  animation: splitSliceIn 0.55s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.split-slice.is-yours {
+  background: linear-gradient(180deg, #4F46E5, #7C3AED);
+  box-shadow: 0 0 20px rgba(79, 70, 229, 0.6);
+}
+
+@keyframes splitSliceIn {
+  from {
+    transform: scaleX(0);
+    transform-origin: left center;
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    transform-origin: left center;
+    opacity: 1;
+  }
+}
+
+.split-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  position: relative;
+}
+
+.split-part {
+  flex: 1 1 0;
+  min-width: 112px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.7rem;
+  background: var(--home-bg);
+  border: 1px solid var(--home-border);
+  animation: fadeInUp 0.5s ease both;
+}
+
+.split-part small {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--home-text-muted);
+  font-weight: 600;
+}
+
+.split-part strong {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--home-text);
+}
+
+.split-part.is-yours {
+  border-color: rgba(79, 70, 229, 0.55);
+  background: rgba(79, 70, 229, 0.12);
+}
+
+.split-part.is-yours strong {
+  color: var(--home-primary);
+}
+
+.split-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0;
+  font-size: 0.82rem;
+  color: var(--home-text-muted);
+  line-height: 1.5;
+  position: relative;
+}
+
+.split-note svg {
+  color: #FBBF24;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.split-note strong {
+  color: var(--home-text);
 }
 
 .hero-trust {
@@ -898,10 +1191,10 @@
   padding: 3rem 1.5rem;
 }
 
-/* Desktop: 5-col grid — sempre visível */
+/* Desktop: 4-col grid — sempre visível */
 .steps-flow {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1.25rem;
   position: relative;
 }
@@ -1047,6 +1340,35 @@
   font-size: 0.82rem;
   line-height: 1.55;
   margin: 0 0 1rem;
+}
+
+.step-highlight-copy {
+  min-width: 0;
+}
+
+/* Desktop: o card vira uma faixa horizontal (ícone | texto | ação) */
+@media (min-width: 769px) {
+  .step-highlight-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1.25rem;
+    padding: 1.15rem 1.5rem;
+    margin-top: 1.25rem;
+  }
+
+  .step-highlight-icon {
+    margin-bottom: 0;
+  }
+
+  .step-highlight-card h3 {
+    margin-bottom: 0.15rem;
+    padding-right: 0;
+  }
+
+  .step-highlight-card p {
+    margin: 0;
+  }
 }
 
 .step-highlight-cta {
@@ -1379,36 +1701,42 @@
 }
 
 /* FAQ */
-.faq-section {
+.home-container .faq-section {
   max-width: 800px;
   margin: 0 auto;
   padding: 3rem 1.5rem;
 }
 
-.faq-list {
+.home-container .faq-list {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-.faq-item {
+.home-container .faq-item {
   background: var(--home-surface);
   border: 1px solid var(--home-border);
   border-radius: var(--home-radius);
   overflow: hidden;
-  transition: all 0.3s ease;
+  transition: border-color 0.25s ease, background 0.25s ease, transform 0.25s ease;
 }
 
-.faq-item-open {
+.home-container .faq-item:hover {
   border-color: var(--home-border-strong);
 }
 
-.faq-question {
+.home-container .faq-item-open {
+  border-color: var(--home-primary);
+  background: var(--home-surface-hover);
+}
+
+.home-container .faq-question {
   width: 100%;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 1rem;
-  padding: 1.25rem 1.5rem;
+  padding: 1.1rem 1.35rem;
   background: none;
   border: none;
   color: var(--home-text);
@@ -1417,43 +1745,96 @@
   font-weight: 600;
   text-align: left;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: color 0.2s ease;
 }
 
-.faq-question svg:first-child {
+.home-container .faq-question:hover {
   color: var(--home-primary);
-  flex-shrink: 0;
 }
 
-.faq-question span {
-  flex: 1;
+.home-container .faq-question-text {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-width: 0;
 }
 
-.faq-chevron {
+.home-container .faq-question-index {
+  font-family: var(--font-title), 'Poppins', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
   color: var(--home-text-muted);
-  transition: transform 0.3s ease;
+  opacity: 0.55;
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.25s ease, opacity 0.25s ease;
 }
 
-.faq-item-open .faq-chevron {
+.home-container .faq-item-open .faq-question-index {
+  color: var(--home-primary);
+  opacity: 1;
+}
+
+.home-container .faq-question-label {
+  min-width: 0;
+}
+
+.home-container .faq-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--home-bg);
+  border: 1px solid var(--home-border);
+  color: var(--home-text-muted);
+  flex-shrink: 0;
+  transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+}
+
+.home-container .faq-question:hover .faq-toggle {
+  border-color: var(--home-primary);
+  color: var(--home-primary);
+}
+
+.home-container .faq-item-open .faq-toggle {
+  background: var(--home-primary);
+  border-color: var(--home-primary);
+  color: #fff;
   transform: rotate(90deg);
 }
 
-.faq-answer {
-  max-height: 0;
+.home-container .faq-chevron {
+  transition: transform 0.3s ease;
+}
+
+/* Resposta: animação em grid (0fr -> 1fr). Sem max-height magico, sem
+   vazar texto por trás do item fechado, e a altura sempre acompanha o texto. */
+.home-container .faq-answer {
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition: grid-template-rows 0.32s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.32s;
+}
+
+.home-container .faq-answer-inner {
   overflow: hidden;
-  transition: max-height 0.3s ease, padding 0.3s ease;
+  min-height: 0;
 }
 
-.faq-item-open .faq-answer {
-  max-height: 300px;
-  padding: 0 1.5rem 1.25rem;
+.home-container .faq-item-open .faq-answer {
+  grid-template-rows: 1fr;
+  visibility: visible;
 }
 
-.faq-answer p {
+.home-container .faq-answer p {
   color: var(--home-text-muted);
   line-height: 1.7;
-  padding-left: 2.25rem;
+  margin: 0;
+  padding: 0 1.35rem 1.25rem 3.05rem;
+  max-width: 62ch;
 }
 
 /* CTA Section */
@@ -2355,25 +2736,39 @@
   color: #475569;
 }
 
-[data-theme="light"] .faq-item {
+[data-theme="light"] .home-container .faq-item {
   background: #FFFFFF;
   border-color: rgba(0, 0, 0, 0.08);
 }
 
-[data-theme="light"] .faq-item-open {
+[data-theme="light"] .home-container .faq-item-open {
   border-color: rgba(79, 70, 229, 0.3);
   box-shadow: 0 2px 8px rgba(79, 70, 229, 0.08);
 }
 
-[data-theme="light"] .faq-question {
+[data-theme="light"] .home-container .faq-question {
   color: #0F172A;
 }
 
-[data-theme="light"] .faq-chevron {
-  color: #94A3B8;
+[data-theme="light"] .home-container .faq-toggle {
+  background: #F1F5F9;
+  border-color: rgba(0, 0, 0, 0.07);
+  color: #64748B;
 }
 
-[data-theme="light"] .faq-answer p {
+/* Item aberto: o chip continua sendo o destaque (vem DEPOIS do override
+   acima, senao o cinza do tema claro apagava o preenchimento e o chevron). */
+[data-theme="light"] .home-container .faq-item-open .faq-toggle {
+  background: var(--home-primary);
+  border-color: var(--home-primary);
+  color: #FFFFFF;
+}
+
+[data-theme="light"] .home-container .faq-question-index {
+  color: #64748B;
+}
+
+[data-theme="light"] .home-container .faq-answer p {
   color: #475569;
 }
 

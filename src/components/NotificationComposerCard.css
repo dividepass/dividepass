@@ -55,12 +55,39 @@
   margin-top: 1rem;
 }
 
-.notification-composer-channels > label {
+.notification-composer-channels-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.notification-composer-channels-head > label {
   display: block;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-muted);
-  margin-bottom: 0.75rem;
+}
+
+.notification-composer-channels-all {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.notification-composer-channels-all:hover {
+  text-decoration: underline;
+}
+
+.notification-composer-channels-hint {
+  margin: 0.6rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
 }
 
 .notification-composer-channel-toggle {
@@ -84,10 +111,38 @@
   gap: 0.4rem;
 }
 
+/* Ponto de estado: os canais são ESCOLHA MÚLTIPLA (a bolinha vazia é o
+   estado desligado), não opções exclusivas. */
+.channel-btn::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  opacity: 0.45;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.channel-btn:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
 .channel-btn.active {
   background: var(--primary);
   color: white;
   border-color: var(--primary);
+}
+
+.channel-btn.active::before {
+  background: currentColor;
+  opacity: 1;
+}
+
+.channel-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .notification-composer-error {

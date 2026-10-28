@@ -149,16 +149,23 @@
 .user-details {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .user-details strong {
   font-size: 0.95rem;
   color: var(--secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-details span {
   font-size: 0.8rem;
   color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .logout {
@@ -169,6 +176,106 @@
   background-color: rgba(239, 68, 68, 0.1);
   color: var(--error);
   transform: translateX(4px);
+}
+
+/* Botão de tema (rodapé da sidebar) */
+.sidebar-theme-row {
+  display: flex;
+  align-items: center;
+}
+
+.theme-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.2s ease, border-color 0.2s ease,
+    color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+.theme-toggle-btn:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px -14px rgba(79, 70, 229, 0.7);
+}
+
+.theme-toggle-btn:active {
+  transform: translateY(0);
+}
+
+.theme-toggle-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.theme-toggle-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--primary);
+  flex-shrink: 0;
+  animation: themeIconIn 0.35s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+.theme-toggle-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes themeIconIn {
+  from {
+    transform: rotate(-90deg) scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* Versão do app (rodapé da sidebar) */
+.sidebar-version {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.1rem 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-soft);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.sidebar-version::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+  opacity: 0.7;
+  flex-shrink: 0;
 }
 
 /* Nav group (collapsible) */
@@ -422,26 +529,14 @@
   }
 
   .theme-toggle-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.45rem 0.85rem;
-    border-radius: 0.6rem;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text);
+    padding: 0.35rem 0.45rem;
     font-size: 0.8rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    width: 100%;
-    justify-content: flex-start;
+    gap: 0.5rem;
   }
 
-  .theme-toggle-btn:hover {
-    background: rgba(0, 0, 0, 0.04);
-    border-color: var(--primary);
-    color: var(--primary);
+  .theme-toggle-icon {
+    width: 26px;
+    height: 26px;
   }
 
   /* Sidebar sub-nav icons */

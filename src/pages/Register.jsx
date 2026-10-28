@@ -16,6 +16,8 @@ const LEAD_SOURCES = [
   'WhatsApp',
   'LinkedIn',
   'ChatGPT e IAs',
+  'Totens',
+  'TVs Publicidades',
   'Outro',
 ];
 

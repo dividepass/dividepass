@@ -1,0 +1,276 @@
+/* ============================================================
+   Busca de código de acesso por e-mail
+   Usado pelo componente `EmailCodeSearch`:
+     - tela de credenciais do membro (ServiceCredentials)
+     - tela "Gerenciar Grupo" (ManageGroup)
+   ============================================================ */
+
+.verification-code-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+  border-left: 4px solid #0EA5E9;
+}
+
+.verification-code-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.verification-code-header svg {
+  color: #0EA5E9;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.verification-code-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--secondary);
+  margin: 0 0 0.25rem;
+}
+
+.verification-code-header p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.fetch-code-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.fetch-code-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.verification-code-result {
+  background: var(--background);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
+
+.sensitive-warning {
+  border-color: rgba(234, 88, 12, 0.4);
+  background: rgba(234, 88, 12, 0.05);
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.sensitive-icon {
+  color: #EA580C;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.sensitive-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sensitive-label {
+  font-weight: 600;
+  color: #EA580C;
+  font-size: 0.85rem;
+}
+
+.sensitive-message {
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.sensitive-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.code-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.code-value {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #0EA5E9;
+  letter-spacing: 0.15em;
+}
+
+.code-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.code-meta strong {
+  color: var(--secondary);
+}
+
+.code-timestamp {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.verification-code-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.2);
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.verification-code-empty svg {
+  color: #EAB308;
+  flex-shrink: 0;
+}
+
+.email-delay-warning {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 0.5rem 0 0;
+  line-height: 1.5;
+}
+
+.contact-admin-link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  transition: color 0.2s;
+}
+
+.contact-admin-link:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+/* Card de ação manual (Netflix / link que precisa ser clicado) */
+.manual-action-card {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  background: rgba(229, 9, 20, 0.05);
+  border: 1px solid rgba(229, 9, 20, 0.3);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  margin-top: 0.75rem;
+}
+
+.manual-action-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+/* Detalhes do pedido: quem pediu, em qual aparelho e quando */
+.manual-action-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  padding: 0.75rem 0.875rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+}
+
+.manual-action-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.manual-action-detail-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.manual-action-title {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--secondary);
+}
+
+.manual-action-desc {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.manual-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.9rem;
+  border-radius: 0.5rem;
+  text-decoration: none;
+  width: fit-content;
+}
+
+.manual-action-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ── Variante embutida ──────────────────────────────────────
+   Dentro de um `manage-card` o bloco não repete borda nem
+   padding: o card externo já cuida do enquadramento.
+   ─────────────────────────────────────────────────────────── */
+.verification-code-section.email-code-search--embedded {
+  background: transparent;
+  border: none;
+  border-left: none;
+  border-radius: 0;
+  padding: 0;
+  margin-top: 0;
+}
+
+@media (max-width: 768px) {
+  .verification-code-section {
+    padding: 1rem;
+  }
+
+  .code-value {
+    font-size: 1.3rem;
+  }
+}

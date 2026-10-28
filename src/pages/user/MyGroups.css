@@ -110,6 +110,11 @@
   margin: 0;
 }
 
+/* Selos do grupo (verificado / anúncios / tipo de conta) */
+.mg-tags {
+  margin: 0 0 0.4rem;
+}
+
 .mg-stats-row {
   display: flex;
   align-items: center;
@@ -145,6 +150,29 @@
   background: rgba(79, 70, 229, 0.1);
   color: var(--primary);
   font-family: monospace;
+}
+
+/* Rascunho: grupo criado pelo wizard mas ainda nao publicado */
+.mg-draft-badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--warning, #F59E0B);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.my-group-card.is-draft {
+  border-style: dashed;
+  border-color: rgba(245, 158, 11, 0.4);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.04), transparent);
+}
+
+.my-group-card.is-draft .mg-photo-placeholder {
+  opacity: 0.75;
 }
 
 .gc-price-value {

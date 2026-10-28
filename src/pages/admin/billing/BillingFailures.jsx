@@ -48,21 +48,35 @@ async function callEdgeFunction(functionName, body) {
   return data;
 }
 
+// `in()` com muitos ids gera uma URL gigante e o PostgREST pode recusar.
+// Busca em lotes de 100 e concatena os resultados.
+async function selectInChunks(table, column, values, columns) {
+  const unique = [...new Set(values.filter(Boolean))];
+  if (unique.length === 0) return { data: [], error: null };
+  const CHUNK_SIZE = 100;
+  const data = [];
+  for (let i = 0; i < unique.length; i += CHUNK_SIZE) {
+    const chunk = unique.slice(i, i + CHUNK_SIZE);
+    const { data: rows, error } = await supabase.from(table).select(columns).in(column, chunk);
+    if (error) return { data, error };
+    data.push(...(rows || []));
+  }
+  return { data, error: null };
+}
+
 // Nomes de usuário/grupo resolvidos por id (não depende do nome da FK).
 async function fetchDirectory(userIds, groupIds) {
-  const users = [...new Set(userIds.filter(Boolean))];
-  const groups = [...new Set(groupIds.filter(Boolean))];
   const [usersRes, groupsRes] = await Promise.all([
-    users.length
-      ? supabase.from('users').select('id, name, email').in('id', users)
-      : Promise.resolve({ data: [] }),
-    groups.length
-      ? supabase.from('groups').select('id, name').in('id', groups)
-      : Promise.resolve({ data: [] }),
+    selectInChunks('users', 'id', userIds, 'id, name, email'),
+    selectInChunks('groups', 'id', groupIds, 'id, name'),
   ]);
+  const errors = [];
+  if (usersRes.error) errors.push(`users: ${usersRes.error.message}`);
+  if (groupsRes.error) errors.push(`groups: ${groupsRes.error.message}`);
   return {
     users: new Map((usersRes.data || []).map(u => [u.id, u])),
     groups: new Map((groupsRes.data || []).map(g => [g.id, g])),
+    errors,
   };
 }
 
@@ -110,7 +124,7 @@ function BillingFailures() {
       setLoading(true);
       const errors = [];
 
-      const [cyclesRes, invoicesRes, retryingRes, subsRes] = await Promise.all([
+      const [cyclesRes, invoicesRes, retryingRes] = await Promise.all([
         // (a) ciclos de cobrança recusados pelo gateway
         supabase
           .from('billing_cycles')
@@ -123,9 +137,13 @@ function BillingFailures() {
           .order('created_at', { ascending: false })
           .limit(200),
         // (b) faturas com status de falha
+        // ATENÇÃO: a tabela `invoices` NÃO tem a coluna `service_id` (o serviço
+        // vem do grupo). Pedir uma coluna inexistente faz o PostgREST devolver
+        // 400 e derrubar a consulta inteira — era isso que produzia o aviso
+        // "invoices: column invoices.service_id does not exist".
         supabase
           .from('invoices')
-          .select('id, user_id, group_id, service_id, amount, due_date, status, gateway_transaction_id, paid_at')
+          .select('id, user_id, group_id, amount, due_date, status, gateway_transaction_id, paid_at')
           .eq('status', 'failed')
           .order('due_date', { ascending: false })
           .limit(200),
@@ -142,45 +160,76 @@ function BillingFailures() {
           .eq('billing_status', 'retrying')
           .order('next_charge_at', { ascending: true })
           .limit(200),
-        // mapa de assinatura por usuário/grupo/serviço (para vincular faturas)
-        supabase
-          .from('user_subscriptions')
-          .select('id, user_id, group_id, service_id, status')
-          .eq('status', 'active'),
       ]);
 
       if (cyclesRes.error) errors.push(`billing_cycles: ${cyclesRes.error.message}`);
       if (invoicesRes.error) errors.push(`invoices: ${invoicesRes.error.message}`);
       if (retryingRes.error) errors.push(`user_subscriptions (retrying): ${retryingRes.error.message}`);
-      if (subsRes.error) errors.push(`user_subscriptions (mapa): ${subsRes.error.message}`);
 
       const cycles = cyclesRes.data || [];
       const invoices = invoicesRes.data || [];
       const retrying = retryingRes.data || [];
+
+      // Assinaturas dos grupos com falha, SEM filtro de status: uma fatura
+      // vencida expira a assinatura (`process-overdue-invoices` marca
+      // 'expired') e é justamente essa assinatura que o admin precisa
+      // reprocessar e reabrir.
+      const subsRes = await selectInChunks(
+        'user_subscriptions',
+        'group_id',
+        [...cycles.map(c => c.group_id), ...invoices.map(i => i.group_id)],
+        'id, user_id, group_id, service_id, status, amount, created_at, service:service_id (id, name)'
+      );
+      if (subsRes.error) errors.push(`user_subscriptions: ${subsRes.error.message}`);
       const subs = subsRes.data || [];
 
-      const subByKey = new Map();
+      const subById = new Map(subs.map(s => [s.id, s]));
+      const subByUserGroup = new Map();
       subs.forEach(s => {
-        const key = `${s.user_id}|${s.group_id}|${s.service_id}`;
-        if (!subByKey.has(key)) subByKey.set(key, s);
+        const key = `${s.user_id}|${s.group_id}`;
+        if (!subByUserGroup.has(key)) subByUserGroup.set(key, []);
+        subByUserGroup.get(key).push(s);
       });
 
+      // `invoices` não tem `service_id`: a fatura é vinculada à assinatura pelo
+      // par usuário/grupo (mesma regra do `process-overdue-invoices`).
+      const matchSubscription = invoice => {
+        const list = subByUserGroup.get(`${invoice.user_id}|${invoice.group_id}`) || [];
+        if (list.length === 0) return null;
+        const sameAmount = list.find(
+          s => Math.abs(Number(s.amount || 0) - Number(invoice.amount || 0)) < 0.01
+        );
+        if (sameAmount) return sameAmount;
+        const sorted = [...list].sort((a, b) => {
+          if (a.status === 'active' && b.status !== 'active') return -1;
+          if (b.status === 'active' && a.status !== 'active') return 1;
+          return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+        });
+        return sorted[0];
+      };
+
       const dir = await fetchDirectory(
-        [...cycles.map(c => c.user_id), ...invoices.map(i => i.user_id)],
+        [
+          ...cycles.map(c => c.user_id),
+          ...invoices.map(i => i.user_id),
+          ...retrying.map(s => s.user_id),
+        ],
         [...cycles.map(c => c.group_id), ...invoices.map(i => i.group_id)],
       );
+      errors.push(...dir.errors);
 
       const merged = [];
 
       cycles.forEach(cycle => {
+        const sub = subById.get(cycle.subscription_id);
         merged.push({
           key: `ciclo-${cycle.id}`,
           origem: 'ciclo',
           subscriptionId: cycle.subscription_id || null,
-          userName: dir.users.get(cycle.user_id)?.name || '—',
+          userName: dir.users.get(cycle.user_id)?.name || sub?.user?.name || '—',
           userEmail: dir.users.get(cycle.user_id)?.email || '',
           groupName: dir.groups.get(cycle.group_id)?.name || '—',
-          serviceName: '—',
+          serviceName: sub?.service?.name || '—',
           amount: cycle.amount,
           reason: cycle.error_message || null,
           errorCode: cycle.error_code || null,
@@ -192,15 +241,15 @@ function BillingFailures() {
       });
 
       invoices.forEach(invoice => {
-        const match = subByKey.get(`${invoice.user_id}|${invoice.group_id}|${invoice.service_id}`);
+        const match = matchSubscription(invoice);
         merged.push({
           key: `fatura-${invoice.id}`,
           origem: 'fatura',
-          subscriptionId: match ? match.id : null,
+          subscriptionId: match?.id || null,
           userName: dir.users.get(invoice.user_id)?.name || '—',
           userEmail: dir.users.get(invoice.user_id)?.email || '',
           groupName: dir.groups.get(invoice.group_id)?.name || '—',
-          serviceName: '—',
+          serviceName: match?.service?.name || '—',
           amount: invoice.amount,
           reason: invoice.gateway_transaction_id
             ? `Transação do gateway: ${invoice.gateway_transaction_id}`

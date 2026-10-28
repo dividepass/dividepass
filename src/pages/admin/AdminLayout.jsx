@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
+  ChartLine,
   ChevronRight,
   ClipboardList,
   CreditCard,
@@ -11,8 +12,10 @@ import {
   LifeBuoy,
   ListChecks,
   LogOut,
+  Mail,
   Megaphone,
   Menu,
+  MessageSquare,
   PiggyBank,
   Receipt,
   Settings,
@@ -25,12 +28,12 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import { supabase } from '../../lib/supabase';
+import { APP_VERSION } from '../../lib/version';
 import ThemeToggle from '../../components/ThemeToggle';
 import AdminNotifications from './AdminNotifications';
 import logoImg from '../../assets/logo.png';
 import './AdminLayout.css';
-
-const APP_VERSION = '1.0.0.2';
 
 /**
  * Navegação do admin agrupada por INTENÇÃO DE USO, não por tabela do banco.
@@ -44,6 +47,7 @@ const NAV_SECTIONS = [
       { to: '/admin', label: 'Painel', icon: LayoutDashboard, end: true },
       { to: '/admin/support', label: 'Suporte', icon: LifeBuoy },
       { to: '/admin/announcements', label: 'Avisos', icon: Megaphone },
+      { to: '/admin/emails', label: 'E-mails', icon: Mail },
       { to: '/admin/events', label: 'Eventos', icon: Activity },
     ],
   },
@@ -55,6 +59,7 @@ const NAV_SECTIONS = [
       { to: '/admin/interest', label: 'Lista de espera', icon: ListChecks },
       { to: '/admin/surveys', label: 'Pesquisas', icon: ClipboardList },
       { to: '/admin/testimonials', label: 'Depoimentos', icon: Star },
+      { to: '/admin/feedback', label: 'Feedbacks', icon: MessageSquare, badge: 'feedback' },
     ],
   },
   {
@@ -64,6 +69,7 @@ const NAV_SECTIONS = [
       { to: '/admin/service-plans', label: 'Planos', icon: FileText },
       { to: '/admin/coupons', label: 'Cupons', icon: Ticket },
       { to: '/admin/subscriptions', label: 'Assinaturas', icon: CreditCard },
+      { to: '/admin/evolution', label: 'Evolução', icon: ChartLine },
     ],
   },
   {
@@ -118,6 +124,34 @@ function AdminLayout() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [newFeedbackCount, setNewFeedbackCount] = useState(0);
+
+  // Badge de feedbacks novos: deixa o item do menu discoverível mesmo sem
+  // o admin abrir a página. Falha silenciosa — é cosmético.
+  useEffect(() => {
+    let alive = true;
+
+    const loadCount = async () => {
+      try {
+        const { count, error } = await supabase
+          .from('user_feedback')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'new');
+
+        if (!error && alive) setNewFeedbackCount(count || 0);
+      } catch {
+        /* badge é cosmético: nunca deve derrubar o painel */
+      }
+    };
+
+    loadCount();
+    const timer = setInterval(loadCount, 60000);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   const closeMenu = () => setMenuOpen(false);
 
@@ -176,6 +210,14 @@ function AdminLayout() {
                   >
                     <Icon size={16} className="nav-item-icon" aria-hidden />
                     <span>{item.label}</span>
+                    {item.badge === 'feedback' && newFeedbackCount > 0 && (
+                      <span
+                        className="nav-item-badge"
+                        title={`${newFeedbackCount} feedback(s) novo(s) sem revisão`}
+                      >
+                        {newFeedbackCount}
+                      </span>
+                    )}
                   </Link>
                 );
               })}

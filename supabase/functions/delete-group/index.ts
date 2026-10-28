@@ -63,6 +63,22 @@ Deno.serve(async (req) => {
 
     const memberIds = (members || []).map(m => m.user_id);
 
+    // 1b. Quanto entrou no grupo. Se alguém pagou, a exclusão precisa do
+    // acerto da equipe DividePass (estorno/transferência) — o grupo não pode
+    // sumir com o dinheiro dentro sem que ninguém tome conta.
+    const { data: paidPayments } = await supabaseAdmin
+      .from("payments")
+      .select("id, amount, user_id, paid_at")
+      .eq("group_id", group_id)
+      .eq("status", "paid");
+
+    const paidCount = (paidPayments || []).length;
+    const paidTotal = (paidPayments || []).reduce(
+      (sum, p) => sum + (parseFloat(String(p.amount)) || 0),
+      0,
+    );
+    const hasPaidMembers = paidCount > 0;
+
     // 2. Cancel all subscriptions for this group
     const { data: subs } = await supabaseAdmin
       .from("user_subscriptions")
@@ -88,7 +104,9 @@ Deno.serve(async (req) => {
       const notifications = memberIds.map(uid => ({
         user_id: uid,
         title: "Grupo encerrado",
-        message: `O grupo "${group.name}" foi removido. Sua assinatura foi cancelada automaticamente.`,
+        message: hasPaidMembers
+          ? `O grupo "${group.name}" foi removido e sua assinatura foi cancelada. Como você pagou neste grupo, a equipe DividePass vai entrar em contato para acertar o valor.`
+          : `O grupo "${group.name}" foi removido. Sua assinatura foi cancelada automaticamente.`,
         event_type: "group_deleted",
         metadata: JSON.stringify({ group_id, group_name: group.name }),
       }));
@@ -105,6 +123,26 @@ Deno.serve(async (req) => {
       created_by: user.id,
     });
 
+    // 5b. Havia dinheiro dentro? Então a equipe DividePass precisa remover os
+    // membros e acertar os valores de quem pagou. Este é o pedido.
+    if (hasPaidMembers) {
+      await supabaseAdmin.from("platform_events").insert({
+        event_type: "group_deletion_requested",
+        title: "Exclusão de grupo com pagamentos — remover membros",
+        message: `O grupo "${group.name}" foi removido pelo dono com ${paidCount} pagamento(s) recebido(s), total de R$ ${paidTotal.toFixed(2)}. Necessário remover os membros do grupo e acertar os valores de quem pagou (estorno ou transferência).`,
+        metadata: JSON.stringify({
+          group_id,
+          group_name: group.name,
+          paid_count: paidCount,
+          paid_total: paidTotal,
+          payer_ids: (paidPayments || []).map(p => p.user_id),
+          member_ids: memberIds,
+          requested_by: user.id,
+        }),
+        created_by: user.id,
+      });
+    }
+
     // 6. Delete the group
     const { error: deleteError } = await supabaseAdmin
       .from("groups")
@@ -117,6 +155,8 @@ Deno.serve(async (req) => {
       success: true,
       subscriptions_cancelled: subs?.length || 0,
       members_notified: memberIds.length,
+      paid_count: paidCount,
+      paid_total: paidTotal,
     }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {

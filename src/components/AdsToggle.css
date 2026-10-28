@@ -1,0 +1,93 @@
+/* Seletor "tem anúncios?" — controle binário, visual de segmentado.
+   Verde = sem anúncios (o benefício), âmbar = com anúncios (a informação). */
+
+.ads-toggle-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.ads-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.ads-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.7rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease,
+    color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+.ads-option:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.ads-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.ads-option:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ads-option svg {
+  flex-shrink: 0;
+}
+
+.ads-option-with.active {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #B45309;
+  box-shadow: 0 6px 16px -10px rgba(245, 158, 11, 0.9);
+}
+
+.ads-option-without.active {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #047857;
+  box-shadow: 0 6px 16px -10px rgba(16, 185, 129, 0.9);
+}
+
+[data-theme="light"] .ads-option-with.active {
+  color: #92400E;
+}
+
+[data-theme="light"] .ads-option-without.active {
+  color: #065F46;
+}
+
+/* "Não mostrar" — opção neutra: o grupo fica sem selo no card */
+.ads-option-hidden.active {
+  background: var(--surface-soft);
+  border-color: var(--border-strong);
+  color: var(--text-muted);
+}
+
+[data-theme="light"] .ads-option-hidden.active {
+  color: #475569;
+}
+
+.ads-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}

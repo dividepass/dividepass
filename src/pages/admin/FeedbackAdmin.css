@@ -1,0 +1,489 @@
+/* ============================================================
+   Painel admin — listagem de feedbacks do usuário
+   ============================================================ */
+
+.feedback-admin-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.feedback-admin-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+
+.feedback-admin-header h1 {
+  color: var(--text-main);
+  font-family: var(--font-title);
+  font-size: clamp(1.55rem, 2vw, 2.15rem);
+  letter-spacing: -0.02em;
+  margin: 0 0 0.25rem;
+}
+
+.feedback-admin-header .page-subtitle {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.94rem;
+}
+
+/* ── Avisos ─────────────────────────────────────────────── */
+
+.feedback-admin-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: var(--error);
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  margin-bottom: 0;
+}
+
+.feedback-admin-banner span {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.feedback-admin-banner-close {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.1rem;
+  display: flex;
+  align-items: center;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.feedback-admin-banner-close:hover {
+  opacity: 1;
+}
+
+/* ── Toolbar: filtros + busca ────────────────────────────── */
+
+.feedback-admin-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.feedback-admin-tabs {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.feedback-admin-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.45rem 0.9rem;
+  border-radius: 9999px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.feedback-admin-tab:hover {
+  border-color: var(--primary);
+  color: var(--text-main);
+}
+
+.feedback-admin-tab.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.feedback-admin-tab-count {
+  background: rgba(255, 255, 255, 0.16);
+  padding: 0.05rem 0.42rem;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  min-width: 1.3rem;
+  text-align: center;
+}
+
+.feedback-admin-tab:not(.active) .feedback-admin-tab-count {
+  background: var(--surface-soft);
+  color: var(--text-soft);
+}
+
+.feedback-admin-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.75rem;
+  color: var(--text-soft);
+  min-width: 260px;
+  flex: 1 1 260px;
+  max-width: 380px;
+  transition: border-color 0.2s;
+}
+
+.feedback-admin-search:focus-within {
+  border-color: var(--primary);
+}
+
+.feedback-admin-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-size: 0.88rem;
+  font-family: inherit;
+}
+
+.feedback-admin-search input::placeholder {
+  color: var(--text-soft);
+}
+
+.feedback-admin-search button {
+  background: none;
+  border: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  display: flex;
+  padding: 0.1rem;
+  transition: color 0.2s;
+}
+
+.feedback-admin-search button:hover {
+  color: var(--text-main);
+}
+
+/* ── Estados ─────────────────────────────────────────────── */
+
+.feedback-admin-loading,
+.feedback-admin-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 3.5rem 1.5rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.feedback-admin-empty {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+.feedback-admin-empty h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--text-main);
+  font-family: var(--font-title);
+}
+
+.feedback-admin-empty p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.feedback-admin-empty svg {
+  opacity: 0.4;
+}
+
+.feedback-admin-empty-hint {
+  margin-top: 0.35rem !important;
+  font-size: 0.8rem !important;
+  color: var(--text-soft) !important;
+  max-width: 46ch;
+  line-height: 1.55;
+}
+
+.feedback-admin-empty-hint code {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.08rem 0.35rem;
+  font-size: 0.76rem;
+}
+
+/* ── Lista ───────────────────────────────────────────────── */
+
+.feedback-admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.feedback-admin-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xs);
+  padding: 1.15rem 1.25rem;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.feedback-admin-card:hover {
+  border-color: var(--border-strong);
+  border-left-color: var(--primary);
+}
+
+.feedback-admin-card.new {
+  border-left-color: var(--warning);
+}
+
+.feedback-admin-card.reviewed {
+  border-left-color: var(--info);
+}
+
+.feedback-admin-card.done {
+  border-left-color: var(--success);
+  opacity: 0.82;
+}
+
+.feedback-admin-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.feedback-admin-user {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.feedback-admin-avatar {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary), var(--primary-light));
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.feedback-admin-user-info {
+  min-width: 0;
+}
+
+.feedback-admin-user-info strong {
+  display: block;
+  color: var(--text-main);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.feedback-admin-email {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.feedback-admin-email:hover {
+  color: var(--primary-light);
+  text-decoration: underline;
+}
+
+.feedback-admin-head-right {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.feedback-admin-status {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.22rem 0.6rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.feedback-admin-status.new {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.feedback-admin-status.reviewed {
+  background: rgba(14, 165, 233, 0.15);
+  color: var(--info);
+}
+
+.feedback-admin-status.done {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success);
+}
+
+.feedback-admin-date {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.3;
+}
+
+.feedback-admin-date time {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.feedback-admin-date span {
+  color: var(--text-soft);
+  font-size: 0.72rem;
+}
+
+.feedback-admin-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.7rem;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  padding: 0.15rem 0.55rem;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+}
+
+.feedback-admin-message {
+  color: var(--text-main);
+  font-size: 0.92rem;
+  line-height: 1.65;
+  margin: 0.75rem 0 1rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Ações ───────────────────────────────────────────────── */
+
+.feedback-admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 0.85rem;
+}
+
+.feedback-admin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-xs);
+  font-size: 0.79rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+
+.feedback-admin-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.feedback-admin-btn.done:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: var(--success);
+}
+
+.feedback-admin-btn.reply:hover {
+  border-color: var(--primary);
+  color: var(--primary-light);
+}
+
+.feedback-admin-btn.delete {
+  margin-left: auto;
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.2);
+  color: var(--error);
+  padding: 0.35rem 0.5rem;
+}
+
+.feedback-admin-btn.delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  color: var(--error);
+}
+
+.feedback-admin-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Paginação ───────────────────────────────────────────── */
+
+.feedback-admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.5rem 0 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+/* ── Responsivo ──────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .feedback-admin-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .feedback-admin-search {
+    max-width: none;
+    min-width: 0;
+    /* O container virou coluna: sem isso o flex-basis vira ALTURA
+       e a caixa de busca estica verticalmente. */
+    flex: 0 0 auto;
+  }
+
+  .feedback-admin-head-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .feedback-admin-btn.delete {
+    margin-left: 0;
+  }
+}

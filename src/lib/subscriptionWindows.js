@@ -9,10 +9,11 @@
  *
  * SEMÂNTICA
  * ----------
- * Todas as janelas olham `next_charge_at` de assinaturas ATIVAS e contam
- * apenas cobranças FUTURAS. O que já passou não é renovação: é assinatura
- * vencida, e vive no card "Precisam de atenção" (regra oficial:
- * `isSubscriptionOverdue`).
+ * Todas as janelas olham a DATA DE VENCIMENTO do ciclo — `renewal_due_at`
+ * (coluna que o pagamento aprovado grava), com queda para `next_charge_at` e
+ * `expires_at` nas assinaturas antigas. É a mesma data que decide o status
+ * (ativa/atrasada/cancelada): o `next_charge_at` anda a cada retry de cartão,
+ * então usá-lo aqui mostraria um vencimento que não é o fim do acesso.
  *
  *   next7     (hoje,      hoje+7d]   -> "Vencem em até 7 dias"
  *   next30    (hoje+7d,   hoje+30d]  -> "Vencem entre 8 e 30 dias"
@@ -25,6 +26,8 @@
  * corrente) e pode sobrepor as janelas de dias — por isso o rótulo é
  * explícito e ela não entra na tira de contagem.
  */
+
+import { subscriptionRenewalDate } from './subscriptionAccess';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -84,9 +87,13 @@ export function renewalWindowRange(key, now = new Date()) {
 export function matchesRenewalWindow(sub, key, now = new Date()) {
   const window = getRenewalWindows(now)[key];
   if (!window) return false;
-  if (!sub?.next_charge_at) return false;
 
-  const time = new Date(sub.next_charge_at).getTime();
+  // A data do vencimento vem do módulo de domínio (mesma do card de renovação
+  // e da regra de status): `renewal_due_at` → `next_charge_at` → `expires_at`.
+  const raw = subscriptionRenewalDate(sub);
+  if (!raw) return false;
+
+  const time = new Date(raw).getTime();
   if (Number.isNaN(time)) return false;
 
   return time > window.start.getTime() && time <= window.end.getTime();

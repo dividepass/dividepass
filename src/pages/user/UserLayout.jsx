@@ -8,12 +8,11 @@ import {
   History, Headphones, Gift, Star, Shield, Sun, Moon, LogOut
 } from 'lucide-react';
 import { getStoredTheme, getSystemTheme, applyTheme } from '../../lib/themeUtils';
+import { APP_VERSION } from '../../lib/version';
 import logoImg from '../../assets/logo.png';
 import PwaInstallGate from '../../components/PwaInstallGate';
 import PushNotificationGate from '../../components/PushNotificationGate';
 import './UserLayout.css';
-
-const APP_VERSION = '1.0.0.2';
 
 function UserLayout() {
   const location = useLocation();
@@ -200,9 +199,12 @@ function UserLayout() {
               className="theme-toggle-btn"
               onClick={toggleTheme}
               title={theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
+              aria-label={theme === 'dark' ? 'Mudar para o tema claro' : 'Mudar para o tema escuro'}
             >
-              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-              <span>{theme === 'dark' ? 'Tema claro' : 'Tema escuro'}</span>
+              <span className="theme-toggle-icon" key={theme}>
+                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              </span>
+              <span className="theme-toggle-label">{theme === 'dark' ? 'Tema claro' : 'Tema escuro'}</span>
             </button>
           </div>
 

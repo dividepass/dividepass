@@ -187,6 +187,11 @@
   color: var(--secondary);
 }
 
+/* Conteúdo do card (abaixo do título) */
+.manage-card-body {
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+
 .manage-empty-text {
   padding: 1.5rem;
   text-align: center;
@@ -898,6 +903,674 @@
   border-color: var(--warning, #F59E0B);
 }
 
+/* ==========================================================
+   GESTÃO DO GRUPO — botão de salvar, chips, simulação e modal
+   ========================================================== */
+
+/* O botão "Salvar" dos cards da lateral não tinha estilo NENHUM: o texto
+   saía colado no card, sem forma de botão e sem estado de carregamento. */
+.manage-save-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: calc(100% - 3rem);
+  margin: 0 1.5rem 1.5rem;
+  padding: 0.6rem 1rem;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.15s, opacity 0.15s;
+}
+
+.manage-save-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.manage-save-btn:disabled {
+  opacity: 1;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Dentro do card-mãe o respiro já vem do .manage-card-body. */
+.manage-block .manage-save-btn {
+  width: 100%;
+  margin: 0;
+}
+
+/* Os grids de escolha encostavam na borda do card. O escopo fica na lateral
+   da tela do usuário para não mexer no painel admin, que usa as mesmas
+   classes com um container de padding diferente. */
+.manage-group-sidebar .plan-type-grid,
+.manage-group-sidebar .cycles-grid {
+  padding: 0 1.5rem;
+}
+
+/* Sem esta margem os chips de ciclo encostavam no botão "Salvar". */
+.manage-group-sidebar .cycles-grid {
+  margin-bottom: 1rem;
+}
+
+.manage-group-sidebar .plan-type-custom-input,
+.manage-group-sidebar .custom-cycle-fields {
+  margin-left: 1.5rem;
+  margin-right: 1.5rem;
+}
+
+.manage-group-sidebar .plan-type-custom-input {
+  width: calc(100% - 3rem);
+}
+
+/* ── Card-mãe ─────────────────────────────────────────────────── */
+.manage-master-card .manage-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.manage-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.manage-block + .manage-block {
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.manage-block-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+
+.manage-block-head > svg {
+  color: var(--primary);
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.manage-block-head h4 {
+  font-size: 0.92rem;
+  color: var(--secondary);
+  margin-bottom: 0.2rem;
+}
+
+.manage-block-head p {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.manage-block-danger .manage-block-head > svg {
+  color: #EF4444;
+}
+
+.manage-block-danger .manage-block-head h4 {
+  color: #EF4444;
+}
+
+/* Valores que o dono não edita aqui (vêm da criação do grupo). */
+.manage-readonly-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.manage-readonly-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-soft, rgba(0, 0, 0, 0.02));
+}
+
+.manage-readonly-item span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.manage-readonly-item strong {
+  font-size: 1rem;
+  color: var(--secondary);
+}
+
+.manage-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: var(--radius-sm, 0.5rem);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--warning, #F59E0B);
+}
+
+.manage-warn svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.manage-warn code {
+  background: rgba(0, 0, 0, 0.15);
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.74rem;
+}
+
+/* Chips do tipo de chave PIX (mesma linguagem do wizard de criação). */
+.pix-type-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.pix-type-btn {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--background);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pix-type-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.pix-type-btn.active {
+  border-color: var(--primary);
+  background: var(--primary-soft, rgba(79, 70, 229, 0.1));
+  color: var(--primary);
+}
+
+/* ── Simulação de recebimento (o talão) ──────────────────────── */
+.sim-receipt {
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface-soft, rgba(0, 0, 0, 0.02));
+}
+
+.sim-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0;
+}
+
+.sim-row span {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.sim-row strong {
+  font-size: 0.95rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sim-charged { color: var(--primary); }
+.sim-fee { color: #EF4444; }
+.sim-net { color: var(--success, #10B981); }
+
+.sim-divider {
+  height: 1px;
+  margin: 0.6rem 0;
+  background-image: linear-gradient(to right, var(--border) 50%, transparent 50%);
+  background-size: 8px 1px;
+  background-repeat: repeat-x;
+}
+
+.sim-row-total span {
+  font-weight: 600;
+  color: var(--secondary);
+}
+
+.sim-row-total strong {
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.sim-footnote {
+  margin: 0.6rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ── Saque: chave PIX vem do grupo, em dropdown ──────────────── */
+.finance-pix-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex: 1.4;
+  min-width: 0;
+}
+
+.finance-pix-field label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.finance-pix-select {
+  width: 100%;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  padding-right: 2rem;
+}
+
+.finance-pix-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.finance-pix-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.finance-pix-hint strong {
+  color: var(--primary);
+}
+
+/* ── Banner de erro (antes o erro era engolido) ──────────────── */
+.manage-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  padding: 0.8rem 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 0.6rem;
+  color: #EF4444;
+  font-size: 0.85rem;
+}
+
+.manage-error-banner span {
+  flex: 1;
+}
+
+.manage-error-banner button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  padding: 0.2rem;
+  opacity: 0.7;
+}
+
+.manage-error-banner button:hover {
+  opacity: 1;
+}
+
+/* ── Modais (exclusão e pedido de preço) ─────────────────────── */
+/* Base neutra: o mesmo modal serve para a exclusão (variante
+   `.modal--danger`, em vermelho) e para o pedido de novo preço. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(15, 23, 42, 0.68);
+  animation: modalFade 0.15s ease-out;
+}
+
+@keyframes modalFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+  animation: modalPop 0.18s ease-out;
+}
+
+.modal--danger {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+@keyframes modalPop {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.modal-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 0.65rem;
+  background: rgba(79, 70, 229, 0.12);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.modal--danger .modal-icon {
+  background: rgba(239, 68, 68, 0.12);
+  color: #EF4444;
+}
+
+.modal-headings {
+  flex: 1;
+  min-width: 0;
+}
+
+.modal-head h3 {
+  font-size: 1.05rem;
+  color: var(--secondary);
+  margin-bottom: 0.2rem;
+  word-break: break-word;
+}
+
+.modal-head p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.modal--danger .modal-head p {
+  color: #EF4444;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  padding: 0.25rem;
+  border-radius: 0.4rem;
+}
+
+.modal-close:hover:not(:disabled) {
+  color: var(--secondary);
+  background: var(--surface-soft, rgba(0, 0, 0, 0.04));
+}
+
+.modal-body {
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  /* Só o corpo rola: cabeçalho e botões ficam sempre à vista. */
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.modal-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 0.65rem;
+}
+
+.modal-alert > svg {
+  color: #EF4444;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.modal-alert div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.modal-alert strong {
+  font-size: 0.88rem;
+  color: var(--secondary);
+}
+
+.modal-alert span {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.modal-alert-soft {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.modal-alert-soft > svg {
+  color: var(--warning, #F59E0B);
+}
+
+/* Variante informativa (indigo) — usada no pedido de novo preço. */
+.modal-alert-info {
+  background: rgba(79, 70, 229, 0.07);
+  border-color: rgba(79, 70, 229, 0.25);
+}
+
+.modal-alert-info > svg {
+  color: var(--primary);
+}
+
+.modal-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.modal-confirm-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.modal-confirm-label strong {
+  color: var(--secondary);
+}
+
+.modal-input {
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--text-main);
+  font-size: 0.9rem;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.modal-input:focus {
+  border-color: var(--primary);
+}
+
+.modal--danger .modal-input:focus {
+  border-color: #EF4444;
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 1rem 1.5rem 1.25rem;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.modal-foot .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* ── Pedido de novo preço por vaga ───────────────────────────── */
+.price-request-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.price-request-field label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--secondary);
+}
+
+.price-request-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+}
+
+.price-request-input:focus-within {
+  border-color: var(--primary);
+}
+
+.price-request-input span {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.price-request-input input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 1rem;
+  padding: 0.7rem 0;
+}
+
+.price-request-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.price-request-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.88rem;
+  outline: none;
+  resize: vertical;
+}
+
+.price-request-field textarea:focus {
+  border-color: var(--primary);
+}
+
+.sim-receipt-compact {
+  padding: 0.8rem 1rem;
+}
+
+/* Link "Solicitar novo valor" dentro do card de valor. */
+.manage-inline-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-start;
+  margin-top: 0.35rem;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.manage-inline-link:hover {
+  opacity: 0.75;
+}
+
+/* Selo de anúncios no card "Tipo de Conta / Plano". */
+.manage-ads-block {
+  padding: 0 1.5rem 1rem;
+}
+
+.manage-ads-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
 @media (max-width: 900px) {
   .manage-group-layout {
     grid-template-columns: 1fr;
@@ -918,6 +1591,28 @@
   .finance-table-header,
   .finance-table-row {
     grid-template-columns: 1.5fr 0.7fr 0.7fr 0.7fr;
+  }
+
+  .manage-readonly-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .finance-withdrawal-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .finance-pix-field {
+    flex: 1 1 auto;
+  }
+
+  .modal-foot {
+    flex-direction: column-reverse;
+  }
+
+  .modal-foot .btn {
+    width: 100%;
+    justify-content: center;
   }
 
   .finance-table-header span:last-child,

@@ -69,7 +69,7 @@ function SavingsServiceRow({ item, unavailable, expandedId, onToggle }) {
           </div>
           <div className="savings-service-unavailable-badge">
             <AlertCircle size={12} />
-            Preço de referência indisponível
+            <span>Preço de referência indisponível</span>
           </div>
         </div>
       </div>
@@ -213,6 +213,16 @@ function UserDashboard() {
   const summary = useMemo(() => getSavingsSummary(savingsData), [savingsData]);
   const adminAlerts = useMemo(() => getAdminAlerts(savingsData), [savingsData]);
   const hasAnyData = summary.hasValidData || savingsData.unavailable.length > 0;
+
+  // Nome curto para a saudação: nickname > primeiro nome > parte do e-mail.
+  // Sem isso, quem cadastrou com o e-mail como nome saw o e-mail inteiro
+  // estourando a linha no celular.
+  const primeiroNome = useMemo(() => {
+    const bruto = profile?.nickname || currentUser?.name || '';
+    const nome = bruto.trim().split('@')[0].split(/[\s._-]+/)[0] || '';
+    if (!nome) return 'Usuário';
+    return nome.charAt(0).toUpperCase() + nome.slice(1);
+  }, [profile?.nickname, currentUser?.name]);
 
   // monthSaved depende de hasRealPayments, realSavingsByService, summary
   const monthSaved = useMemo(() => {
@@ -512,7 +522,7 @@ function UserDashboard() {
       )}
 
       <div className="page-header">
-        <h1>Olá, {currentUser?.name?.split(' ')[0] || 'Usuário'}! 👋</h1>
+        <h1>Olá, {primeiroNome}! 👋</h1>
         <p>{hasActiveServices ? 'Aqui está o resumo das suas assinaturas ativas.' : 'Escolha um serviço no catálogo para começar.'}</p>
       </div>
 

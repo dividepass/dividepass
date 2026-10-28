@@ -1,6 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { isSubscriptionOverdue } from '../lib/subscriptionAccess';
+import {
+  ACCESS_OVERDUE,
+  isSubscriptionVisible,
+  needsRenewalReminder,
+  subscriptionAccessLabel,
+  subscriptionAccessState,
+} from '../lib/subscriptionAccess';
+import { useAppDataContext } from '../contexts/AppDataContext';
+import SubscriptionRenewalModal from './SubscriptionRenewalModal';
+import RenewalReminderCard from './RenewalReminderCard';
 import './SubscriptionsCarousel.css';
 
 const PAGE_SIZE = 4;
@@ -14,8 +23,15 @@ export default function SubscriptionsCarousel({ items }) {
   const touchEnd = useRef(null);
   const autoplayRef = useRef(null);
   const navigate = useNavigate();
+  const { refresh } = useAppDataContext();
 
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  // Assinatura cancelada não entra no carrossel: o caminho dela é o histórico.
+  const visibleItems = (items || []).filter((item) => isSubscriptionVisible(item));
+
+  // Renovação em aberto (o modal de pagamento já existe e é reaproveitado).
+  const [renewTarget, setRenewTarget] = useState(null);
+
+  const totalPages = Math.max(1, Math.ceil(visibleItems.length / PAGE_SIZE));
 
   // Se a lista encolher, a página atual pode passar do limite: clamp em vez de
   // resetar com setState dentro de efeito.
@@ -64,13 +80,14 @@ export default function SubscriptionsCarousel({ items }) {
     );
   };
 
-  if (!items || items.length === 0) return null;
+  if (visibleItems.length === 0) return null;
 
   const openCredentials = (service, group) => {
     navigate(`/dashboard/credentials/${service.slug || service.id}?group=${group.id}`);
   };
 
   return (
+    <>
     <div
       className="sac-container"
       onMouseEnter={() => {
@@ -86,20 +103,30 @@ export default function SubscriptionsCarousel({ items }) {
         <div className="sac-track" style={{ transform: `translateX(-${safePage * 100}%)` }}>
           {Array.from({ length: totalPages }).map((_, pageIndex) => (
             <div key={pageIndex} className="sac-page">
-              {items
+              {visibleItems
                 .slice(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE)
                 .map((item) => {
                   const { service, group } = item;
-                  // A assinatura continua ativa no banco, mas a renovação
-                  // vencida significa que o acesso já foi pago só até a data.
-                  const overdue = isSubscriptionOverdue(item);
+                  // O estado vem do módulo compartilhado: a assinatura pode
+                  // estar ativa no banco e ainda assim estar atrasada.
+                  const state = subscriptionAccessState(item);
+                  const label = subscriptionAccessLabel(item);
+                  const overdue = state === ACCESS_OVERDUE;
+                  const showReminder = needsRenewalReminder(item);
 
                   return (
-                    <button
+                    <div
                       key={group.id}
-                      type="button"
-                      className={`sac-card ${overdue ? 'is-overdue' : ''}`}
+                      className={`sac-card ${overdue ? 'is-overdue' : ''} ${showReminder ? 'has-reminder' : ''}`}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openCredentials(service, group)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openCredentials(service, group);
+                        }
+                      }}
                       style={{ '--service-color': service.color }}
                     >
                       <div className="sac-card-logo" style={{ backgroundColor: service.color }}>
@@ -112,9 +139,20 @@ export default function SubscriptionsCarousel({ items }) {
                       <span className="sac-card-name">{service.fullName || service.name}</span>
                       <span className={`sac-card-status ${overdue ? 'is-overdue' : ''}`}>
                         <span className="sac-card-dot" />
-                        {overdue ? 'Vencida' : 'Ativo'}
+                        {label}
                       </span>
-                    </button>
+                      {showReminder && (
+                        <RenewalReminderCard
+                          subscription={item}
+                          group={group}
+                          onRenew={() => setRenewTarget({
+                            subscription: item,
+                            group,
+                            amount: Number(item.amount || 0),
+                          })}
+                        />
+                      )}
+                    </div>
                   );
                 })}
             </div>
@@ -138,5 +176,23 @@ export default function SubscriptionsCarousel({ items }) {
         </div>
       )}
     </div>
+
+    {/* Renovação: o mesmo modal das outras telas (PIX/cartão). Fica fora do
+        container do carrossel para não herdar o swipe de navegação. */}
+    {renewTarget && (
+      <SubscriptionRenewalModal
+        key="renewal-modal"
+        open
+        subscription={renewTarget.subscription}
+        group={renewTarget.group}
+        amount={renewTarget.amount}
+        onClose={() => setRenewTarget(null)}
+        onPaid={() => {
+          setRenewTarget(null);
+          refresh?.();
+        }}
+      />
+    )}
+    </>
   );
 }

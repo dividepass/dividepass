@@ -25,28 +25,6 @@
   color: #e2e8f0;
 }
 
-.push-gate-close {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(100, 116, 139, 0.1);
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s;
-}
-
-.push-gate-close:hover {
-  background: rgba(100, 116, 139, 0.2);
-  color: var(--text);
-}
-
 .push-gate-badge {
   display: inline-flex;
   align-items: center;
@@ -58,6 +36,25 @@
   font-size: 0.8rem;
   font-weight: 700;
   margin-bottom: 0.9rem;
+}
+
+/* Passo a passo para desbloquear no navegador (quando o bloqueio vem de lá). */
+.push-gate-steps {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem 0.85rem 2rem;
+  border-radius: 0.8rem;
+  background: rgba(100, 116, 139, 0.08);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.push-gate-steps li + li {
+  margin-top: 0.35rem;
+}
+
+.push-gate-steps strong {
+  color: var(--text);
 }
 
 .push-gate-modal h2 {
@@ -107,9 +104,17 @@
 }
 
 .push-gate-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
   margin: 0.75rem 0 0;
   color: #ef4444;
   font-size: 0.9rem;
+}
+
+.push-gate-error svg {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
 }
 
 .push-gate-hint {

@@ -102,6 +102,18 @@
   color: #EF4444;
 }
 
+/* Estado da ASSINATURA (derivado do módulo de acesso): vale diferente do
+   status da fatura, que continua em .pago/.pendente/.vencido. */
+.status-badge.ativa {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+}
+
+.status-badge.atrasada {
+  background: rgba(239, 68, 68, 0.1);
+  color: #EF4444;
+}
+
 /* Assinaturas ativas */
 .billing-subscriptions h2 {
   font-size: 1.25rem;

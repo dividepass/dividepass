@@ -1,6 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './useAuth';
+import { isSubscriptionVisible } from '../lib/subscriptionAccess';
+
+/**
+ * Status que a listagem do usuário busca.
+ *
+ * 'active' é o normal. 'expired' é o legado que o job de faturas gravava para
+ * "atrasada": se a query só pedisse 'active', a assinatura atrasada ficaria
+ * invisível até o job das 03h normalizá-la — e o card de renovação (que é o
+ * que convence o usuário a pagar) sumiria junto. O estado exibido é sempre o
+ * derivado pelo módulo de domínio, nunca o status cru.
+ */
+const USER_SUBSCRIPTION_STATUSES = ['active', 'expired'];
 
 const getActiveMembers = (group) =>
   group.members?.filter(m => m.status === 'active' || m.status === 'pending').length || 0;
@@ -61,7 +73,7 @@ export function useAppData() {
           group:group_id (*, members:group_members(*)),
           service:service_id (*),
           plan:plan_id (*)
-        `).eq('user_id', user.id).eq('status', 'active'),
+        `).eq('user_id', user.id).in('status', USER_SUBSCRIPTION_STATUSES),
         supabase.from('service_plans').select('*').eq('is_active', true).order('service_id').order('official_price')
       ]);
 
@@ -110,7 +122,7 @@ export function useAppData() {
             group:group_id (*, credential:group_credentials (*), profiles:group_profiles(*), owner:owner_id (id, name, avatar_url, role), members:group_members(*)),
             service:service_id (*),
             plan:plan_id (*)
-          `).eq('user_id', user.id).eq('status', 'active'),
+          `).eq('user_id', user.id).in('status', USER_SUBSCRIPTION_STATUSES),
           supabase.from('announcements').select('*').eq('is_active', true).or(`target_user_id.is.null,target_user_id.eq.${user.id}`).order('created_at', { ascending: false }),
           supabase.from('service_plans').select('*').eq('is_active', true).order('service_id').order('official_price')
         ]);
@@ -157,8 +169,23 @@ export function useAppData() {
     return streamingServices.find(s => s.id === id);
   }, [streamingServices]);
 
+  /**
+   * Assinaturas que o usuário ainda vê.
+   *
+   * A query busca as linhas `active` e o legado `expired` (a "atrasada" antiga
+   * — sem ele a atrasada ficaria invisível até o job das 03h normalizá-la). O
+   * que muda aqui é a DERIVAÇÃO: assinatura cancelada (carência de 7 dias
+   * vencida ou cancelada no banco) não aparece mais em "Meus Grupos" /
+   * "Assinaturas Ativas" — ela só existe no histórico. Atrasada continua
+   * visível: o grupo some do alcance da pessoa, mas ela ainda tem como renovar.
+   */
+  const visibleSubscriptions = useMemo(
+    () => activeSubscriptions.filter(sub => isSubscriptionVisible(sub)),
+    [activeSubscriptions]
+  );
+
   const getActiveServices = useCallback(() => {
-    return activeSubscriptions.filter(sub => {
+    return visibleSubscriptions.filter(sub => {
       if (!sub.group) return false;
       if (cancelledIds.has(sub.id)) return false;
       return true;
@@ -172,7 +199,7 @@ export function useAppData() {
         owner: sub.group?.owner || null
       }
     }));
-  }, [activeSubscriptions, cancelledIds, user?.id]);
+  }, [visibleSubscriptions, cancelledIds, user?.id]);
 
   const getAvailableServices = useCallback(() => {
     return streamingServices.map(service => {
@@ -223,13 +250,13 @@ export function useAppData() {
 
   const isSubscribedToService = useCallback((serviceIdOrSlug) => {
     const service = streamingServices.find(s => s.id === serviceIdOrSlug || s.slug === serviceIdOrSlug);
-    return activeSubscriptions.some(sub => sub.service_id === service?.id && !cancelledIds.has(sub.id));
-  }, [activeSubscriptions, cancelledIds, streamingServices]);
+    return visibleSubscriptions.some(sub => sub.service_id === service?.id && !cancelledIds.has(sub.id));
+  }, [visibleSubscriptions, cancelledIds, streamingServices]);
 
   const getUserSubscriptionForService = useCallback((serviceIdOrSlug) => {
     const service = streamingServices.find(s => s.id === serviceIdOrSlug || s.slug === serviceIdOrSlug);
-    return activeSubscriptions.find(sub => sub.service_id === service?.id);
-  }, [activeSubscriptions, streamingServices]);
+    return visibleSubscriptions.find(sub => sub.service_id === service?.id);
+  }, [visibleSubscriptions, streamingServices]);
 
   const joinGroup = useCallback(async (groupId) => {
     if (!user) return { error: 'Usuário não autenticado' };
@@ -256,7 +283,7 @@ export function useAppData() {
         throw new Error('Grupo está cheio');
       }
 
-      const alreadySubscribed = activeSubscriptions.some(
+      const alreadySubscribed = visibleSubscriptions.some(
         sub => sub.service_id === groupData.service_id
       );
 
@@ -280,7 +307,7 @@ export function useAppData() {
       console.error('Error joining group:', err);
       return { error: err.message };
     }
-  }, [user, activeSubscriptions, fetchData]);
+  }, [user, visibleSubscriptions, fetchData]);
 
   const getUnviewedAnnouncements = useCallback(() => {
     if (!user) return [];
@@ -308,7 +335,8 @@ export function useAppData() {
   return {
     streamingServices,
     groups,
-    activeSubscriptions,
+    // Lista já derivada: canceladas ficam de fora (só no histórico).
+    activeSubscriptions: visibleSubscriptions,
     servicePlans,
     announcements,
     currentUser,

@@ -2,9 +2,19 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { useAppDataContext } from '../../contexts/AppDataContext';
-import { isSubscriptionOverdue } from '../../lib/subscriptionAccess';
+import {
+  ACCESS_OVERDUE,
+  ACCESS_PENDING,
+  isSubscriptionOverdue,
+  isSubscriptionVisible,
+  needsRenewalReminder,
+  subscriptionAccessLabel,
+  subscriptionAccessState,
+  subscriptionRenewalDate,
+} from '../../lib/subscriptionAccess';
 import { formatDateBR } from '../../lib/dateFormat';
 import SubscriptionRenewalModal from '../../components/SubscriptionRenewalModal';
+import RenewalReminderCard from '../../components/RenewalReminderCard';
 import { X, Calendar, CreditCard, CheckCircle, Clock, AlertCircle, Receipt, QrCode, Copy, Loader2, Eye, EyeOff, Shield, Wallet } from 'lucide-react';
 import './Billing.css';
 
@@ -336,6 +346,13 @@ function Billing() {
   const pendingInvoices = payments.filter(i => i.status === 'pending' || i.status === 'overdue');
   const isLoading = appLoading || loading;
 
+  // Canceladas saem de "Assinaturas Ativas": o caminho delas é o histórico.
+  // Atrasada continua aqui — o grupo fica visível e a renovação em aberto.
+  const visibleSubscriptions = useMemo(
+    () => activeSubscriptions.filter(sub => isSubscriptionVisible(sub)),
+    [activeSubscriptions]
+  );
+
   return (
     <div className="fade-in billing-page">
       <div className="page-header">
@@ -346,19 +363,21 @@ function Billing() {
       <div className="billing-content">
         <div className="billing-subscriptions">
           <h2>Assinaturas Ativas</h2>
-          {activeSubscriptions.length === 0 ? (
+          {visibleSubscriptions.length === 0 ? (
             <div className="billing-empty"><p>Você não tem assinaturas ativas.</p></div>
           ) : (
             <div className="billing-subscriptions-grid">
-              {activeSubscriptions.map((sub) => {
+              {visibleSubscriptions.map((sub) => {
                 const billing = billingByGroup[sub.group_id] || null;
-                const nextCharge = sub.next_charge_at ? new Date(sub.next_charge_at) : null;
-                const cycleDue = !!nextCharge && nextCharge <= new Date();
+                // O ciclo já venceu? A pergunta é do módulo de domínio — a
+                // interface não recalcula data nenhuma.
+                const cycleDue = isSubscriptionOverdue(sub);
 
-                // A assinatura vencida é o que manda no acesso: por mais que
-                // exista uma fatura antiga já paga, quem não renovou continua
-                // sem acesso — e precisa de um caminho para voltar a pagar.
-                const subOverdue = isSubscriptionOverdue(sub);
+                // O estado da assinatura (ativa/atrasada/pendente) vem do
+                // módulo compartilhado — a mesma regra que o backend aplica.
+                const accessState = subscriptionAccessState(sub);
+                const accessLabel = subscriptionAccessLabel(sub);
+                const subOverdue = accessState === ACCESS_OVERDUE;
                 const isOverdue = subOverdue || billing?.status === 'overdue';
                 const isPending = isOverdue || (billing ? billing.status === 'pending' : cycleDue);
 
@@ -371,11 +390,19 @@ function Billing() {
                   ? overdueInvoices.reduce((sum, i) => sum + Number(i.amount || 0), 0)
                   : Number(sub.amount || 0);
 
-                const dueDate = billing?.dueDate || sub.next_charge_at || sub.expires_at;
+                // Vencimento exibido: a fatura do grupo quando existe, senão a
+                // data de renovação do ciclo (mesma do módulo de domínio).
+                const dueDate = billing?.dueDate || subscriptionRenewalDate(sub);
                 const total = isOverdue
                   ? renewalTotal
                   : (billing ? billing.total : Number(sub.amount || 0));
                 const canPay = !!billing?.invoices?.length;
+
+                const accessBadgeClass = accessState === ACCESS_OVERDUE
+                  ? 'atrasada'
+                  : accessState === ACCESS_PENDING
+                    ? 'pendente'
+                    : 'ativa';
 
                 return (
                   <div
@@ -399,8 +426,8 @@ function Billing() {
                         <Calendar size={13} />
                         Vencimento <strong>{formatDate(dueDate)}</strong>
                       </span>
-                      <span className={`status-badge ${isPending ? (isOverdue ? 'vencido' : 'pendente') : 'pago'}`}>
-                        {isPending ? (isOverdue ? 'Vencida' : 'Pendente') : 'Paga'}
+                      <span className={`status-badge ${accessBadgeClass}`}>
+                        {accessLabel}
                       </span>
                     </div>
 
@@ -434,6 +461,15 @@ function Billing() {
                           </span>
                         )}
                       </div>
+                    )}
+
+                    {/* Aviso de renovação: vence em breve ou já em atraso. */}
+                    {needsRenewalReminder(sub) && (
+                      <RenewalReminderCard
+                        subscription={sub}
+                        group={sub.group}
+                        onRenew={() => openRenewal(sub, renewalTotal)}
+                      />
                     )}
                   </div>
                 );

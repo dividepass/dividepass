@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { applySubscriptionLifecycle } from "../_shared/subscriptionLifecycle.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -56,11 +57,16 @@ Deno.serve(async (req) => {
     );
 
     const now = new Date();
-    const threeMonthsAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     let totalUpdated = 0;
 
-    // 1. first_attempt → overdue: 7 days passed with no successful payment
+    // -------------------------------------------------------------------------
+    // 1) FLUXO DE ENTRADA (taxa de adesao)
+    //
+    // first_attempt: a pessoa entrou mas nunca pagou a taxa. Apos 7 dias sem
+    // nenhum pagamento ela vira 'overdue' (o prazo de 12h do
+    // `subscription_deadline` ja foi conferido no passo 2).
+    // -------------------------------------------------------------------------
     const { data: firstAttempts, error: e1 } = await supabaseAdmin
       .from("group_members")
       .select("user_id, group_id")
@@ -89,7 +95,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 2. awaiting_subscription → overdue: deadline passed
+    // 2) awaiting_subscription → overdue: o prazo de 12h para fechar a
+    //    assinatura depois do pagamento da taxa de entrada passou.
     const { count: c2 } = await supabaseAdmin
       .from("group_members")
       .update({ payment_status: "overdue", updated_at: now.toISOString() })
@@ -98,82 +105,118 @@ Deno.serve(async (req) => {
       .lt("subscription_deadline", now.toISOString());
     totalUpdated += c2 || 0;
 
-    // 3. active → overdue: subscription expired
-    const { count: c3 } = await supabaseAdmin
-      .from("group_members")
-      .update({ payment_status: "overdue", updated_at: now.toISOString() })
-      .eq("payment_status", "active")
-      .not("subscription_deadline", "is", null)
-      .lt("subscription_deadline", now.toISOString());
-    totalUpdated += c3 || 0;
-
-    // 4. overdue → cancelled: more than 3 months overdue
-    const { count: c4 } = await supabaseAdmin
-      .from("group_members")
-      .update({
-        payment_status: "cancelled",
-        status: "cancelled",
-        left_at: now.toISOString(),
-        updated_at: now.toISOString(),
-      })
-      .eq("payment_status", "overdue")
-      .lt("updated_at", threeMonthsAgo.toISOString());
-    totalUpdated += c4 || 0;
-
-    // 5. Sync user_subscriptions status
+    // -------------------------------------------------------------------------
+    // 3) CICLO DE VIDA DA ASSINATURA (a regra oficial)
     //
-    // `exec_sql` nao existe em producao (404) e o `rpc()` do supabase-js v2
-    // devolve um builder que tem `.then()` mas NAO tem `.catch()` — usar
-    // `.catch()` aqui quebrava a function inteira com
-    // "supabaseAdmin.rpc(...).catch is not a function". O try/catch abaixo
-    // deixa a RPC falhar silenciosamente e o fallback direto faz o trabalho.
-    try {
-      await supabaseAdmin.rpc("exec_sql", {
-        query: `
-        UPDATE user_subscriptions us
-        SET status = CASE
-          WHEN gm.payment_status = 'active' THEN 'active'::subscription_status
-          WHEN gm.payment_status = 'overdue' THEN 'expired'::subscription_status
-          WHEN gm.payment_status = 'cancelled' THEN 'cancelled'::subscription_status
-          ELSE us.status
-        END,
-        updated_at = NOW()
-        FROM group_members gm
-        WHERE us.user_id = gm.user_id
-          AND us.group_id = gm.group_id
-          AND gm.payment_status IN ('overdue', 'cancelled', 'active')
-          AND us.status != CASE
-            WHEN gm.payment_status = 'active' THEN 'active'::subscription_status
-            WHEN gm.payment_status = 'overdue' THEN 'expired'::subscription_status
-            WHEN gm.payment_status = 'cancelled' THEN 'cancelled'::subscription_status
-            ELSE us.status
-          END
-      `
-      });
-    } catch {
-      // rpc might not exist, fallback to direct queries
-    }
+    //    ATRASADA: a renovacao passou, mas ainda ha carencia de 7 dias — o
+    //              grupo continua visivel e o usuario pode renovar.
+    //    CANCELADA: passou da carencia — assinatura cancelada, usuario
+    //              desvinculado do grupo e crons de cobranca canceladas.
+    //
+    //    A regra mora em `../_shared/subscriptionLifecycle.ts` (a mesma
+    //   semantica do `src/lib/subscriptionAccess.js` do front).
+    // -------------------------------------------------------------------------
+    const lifecycle = await applySubscriptionLifecycle(supabaseAdmin, now);
 
-    // Fallback: direct update for user_subscriptions
-    const { count: c5a } = await supabaseAdmin
-      .from("user_subscriptions")
-      .update({ status: "expired", updated_at: now.toISOString() })
-      .eq("status", "active")
-      .in("group_id",
-        (await supabaseAdmin.from("group_members").select("group_id").eq("payment_status", "overdue")).data?.map((m: any) => m.group_id) || []
-      );
-    const { count: c5b } = await supabaseAdmin
-      .from("user_subscriptions")
-      .update({ status: "cancelled", updated_at: now.toISOString() })
-      .eq("status", "active")
-      .in("group_id",
-        (await supabaseAdmin.from("group_members").select("group_id").eq("payment_status", "cancelled")).data?.map((m: any) => m.group_id) || []
-      );
+    // -------------------------------------------------------------------------
+    // 4) Sincroniza assinatura cancelada quando o MEMBRO foi cancelado
+    //
+    // O `rpc("exec_sql")` nao roda em producao (a RPC nao existe, 404) e o
+    // `rpc()` do supabase-js v2 devolve um builder que tem `.then()` mas NAO
+    // tem `.catch()`. A sincronizacao e feita direto, sem RPC.
+    //
+    // BUG CORRIGIDO (2026-10-25): o codigo antigo filtrava por GROUP_ID e
+    // mudava o status de TODAS as assinaturas do grupo. O par correto e
+    // (user_id, group_id): so a assinatura daquele membro muda.
+    // -------------------------------------------------------------------------
+    const syncTargets = await supabaseAdmin
+      .from("group_members")
+      .select("user_id, group_id, payment_status")
+      .in("payment_status", ["overdue", "cancelled"]);
+
+    if (syncTargets.error) throw syncTargets.error;
+
+    /**
+     * Aplica um patch nas assinaturas de um conjunto de PARES
+     * (user_id, group_id). O PostgREST nao filtra por coluna composta, mas
+     * aceita `or=(and(...),and(...))` — e ainda aceita `and` com `in` fora
+     * dele. O lote evita uma requisicao por membro.
+     */
+    const applyPairUpdates = async (
+      pairs: { user_id: string; group_id: string }[],
+      patch: Record<string, string>,
+      fromStatus: string[],
+    ) => {
+      if (!pairs.length) return 0;
+
+      const BATCH = 40;
+      let updated = 0;
+
+      for (let i = 0; i < pairs.length; i += BATCH) {
+        const batch = pairs.slice(i, i + BATCH);
+        const filter = batch
+          .map((p) => `and(user_id.eq.${p.user_id},group_id.eq.${p.group_id})`)
+          .join(',');
+
+        const { count, error } = await supabaseAdmin
+          .from("user_subscriptions")
+          .update(patch)
+          .in("status", fromStatus)
+          .or(filter);
+
+        if (error) throw error;
+        updated += count || 0;
+      }
+
+      return updated;
+    };
+
+    const members = syncTargets.data || [];
+    const patchAt = { updated_at: now.toISOString() };
+
+    // Membro cancelado → assinatura cancelada.
+    //
+    // O ATRASADO NÃO entra aqui de propósito: durante a carência de 7 dias a
+    // assinatura continua 'active' (e, portanto, continua listada em "Minhas
+    // Assinaturas" e "Assinaturas Ativas" como ATRASADA). Marcar como
+    // 'expired' aqui esconderia a assinatura justamente no período em que o
+    // usuário ainda pode renovar.
+    const synced = await applyPairUpdates(
+      members.filter((m) => m.payment_status === "cancelled"),
+      { ...patchAt, status: "cancelled", billing_status: "cancelled" },
+      ["active", "expired"],
+    );
+
+    // -------------------------------------------------------------------------
+    // 5) Reativa a assinatura cujo membro voltou a ficar ativo.
+    //
+    // So 'expired' volta: 'cancelled' e um acao explicita (o usuario saiu ou
+    // passou da carencia de 7 dias) e nao se desfaz sozinho — a reativacao
+    // acontece pelo pagamento, que regrava a data de renovacao.
+    // -------------------------------------------------------------------------
+    const restoredTargets = await supabaseAdmin
+      .from("group_members")
+      .select("user_id, group_id")
+      .eq("payment_status", "active")
+      .eq("status", "active");
+
+    if (restoredTargets.error) throw restoredTargets.error;
+
+    const restored = await applyPairUpdates(
+      restoredTargets.data || [],
+      { ...patchAt, status: "active" },
+      ["expired"],
+    );
 
     return new Response(
       JSON.stringify({
         success: true,
-        totalUpdated: totalUpdated + (c5a || 0) + (c5b || 0),
+        totalUpdated: totalUpdated + synced,
+        overdue: lifecycle.overdue,
+        cancelled: lifecycle.cancelled,
+        cancelledIds: lifecycle.cancelledIds,
+        synced,
+        restored,
         timestamp: now.toISOString(),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

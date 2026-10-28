@@ -676,25 +676,9 @@ export default {
         });
       }
 
-      // Checagem de vinculo com o grupo — sempre, para todo chamador.
-      {
-        const { data: member } = await supabaseAdmin
-          .from("group_members").select("id")
-          .eq("group_id", group_id).eq("user_id", callerId).eq("status", "active").maybeSingle();
-        const { data: subscription } = await supabaseAdmin
-          .from("user_subscriptions").select("id")
-          .eq("group_id", group_id).eq("user_id", callerId).eq("status", "active").maybeSingle();
-        if (!member && !subscription) {
-          return new Response(JSON.stringify({ error: "Você não é membro deste grupo" }), {
-            status: 403,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-      }
-
       const { data: group, error: groupError } = await supabaseAdmin
         .from("groups")
-        .select(`email_code_enabled, service_id`)
+        .select(`email_code_enabled, service_id, owner_id`)
         .eq("id", group_id)
         .single();
 
@@ -703,6 +687,39 @@ export default {
           status: 404,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+
+      // Checagem de vinculo com o grupo — sempre, para todo chamador.
+      //
+      // Alem do membro ativo e do assinante, o DONO do grupo (o gestor que
+      // administra o grupo na tela "Gerenciar Grupo") tambem pode buscar:
+      // e ele quem configura a caixa IMAP em `group_mailboxes` e quem
+      // precisa do codigo para conferir a entrega do acesso. O admin da
+      // plataforma tambem pode — ele ja le a senha IMAP do grupo.
+      {
+        const isOwner = !!group.owner_id && group.owner_id === callerId;
+
+        let isPlatformAdmin = false;
+        if (!isOwner) {
+          const { data: callerProfile } = await supabaseAdmin
+            .from("users").select("role").eq("id", callerId).maybeSingle();
+          isPlatformAdmin = callerProfile?.role === "admin";
+        }
+
+        if (!isOwner && !isPlatformAdmin) {
+          const { data: member } = await supabaseAdmin
+            .from("group_members").select("id")
+            .eq("group_id", group_id).eq("user_id", callerId).eq("status", "active").maybeSingle();
+          const { data: subscription } = await supabaseAdmin
+            .from("user_subscriptions").select("id")
+            .eq("group_id", group_id).eq("user_id", callerId).eq("status", "active").maybeSingle();
+          if (!member && !subscription) {
+            return new Response(JSON.stringify({ error: "Você não é membro deste grupo" }), {
+              status: 403,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
       }
 
       if (!group.email_code_enabled) {

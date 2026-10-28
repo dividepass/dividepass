@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Loader2, Save, Lock, Mail, Phone, User, Shield,
   CreditCard, FileText, Clock, Calendar, AlertTriangle, CheckCircle,
-  RefreshCw, Plus, XCircle, Timer, Zap, Edit2, ClipboardList
+  RefreshCw, Plus, XCircle, Timer, Zap, Edit2, ClipboardList, Activity
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { maskPhone, onlyDigits } from '../../lib/maskPhone';
+import { maskPhone, onlyDigits, phoneToNational, phoneToWhatsApp } from '../../lib/maskPhone';
 import { ONBOARDING_STEPS, labelForValue } from '../../lib/onboardingQuestions';
+import EventLog from './EventLog';
 import './UserDetail.css';
 
 const ROLE_OPTIONS = [
@@ -22,17 +23,41 @@ const STATUS_OPTIONS = [
   { value: 'suspended', label: 'Suspenso' },
 ];
 
+/* As abas da ficha. O `id` de cada uma vira o parâmetro `?tab=` da URL —
+   assim o operador sempre sabe onde está e pode mandar o link já na aba
+   certa (inclusive para o log de eventos). */
+const USER_TABS = [
+  { id: 'details', label: 'Detalhes e Edição', icon: User },
+  { id: 'subscriptions', label: 'Assinaturas', icon: Shield },
+  { id: 'invoices', label: 'Faturas', icon: FileText },
+  { id: 'payments', label: 'Pagamentos', icon: CreditCard },
+  { id: 'crons', label: 'Crons', icon: Clock },
+  { id: 'onboarding', label: 'Qualificação', icon: ClipboardList },
+  { id: 'events', label: 'Logs de Eventos', icon: Activity },
+];
+
 function UserDetail() {
   const { userId } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('details');
   const [form, setForm] = useState({});
   const [newPassword, setNewPassword] = useState('');
+
+  /* A aba vive na URL (`?tab=events`), não em estado escondido — quem abre
+     o link chega direto na aba pedida. */
+  const tabParam = searchParams.get('tab');
+  const activeTab = USER_TABS.some(t => t.id === tabParam) ? tabParam : 'details';
+  const setActiveTab = (id) => {
+    const next = new URLSearchParams(searchParams);
+    if (id === 'details') next.delete('tab');
+    else next.set('tab', id);
+    setSearchParams(next, { replace: true });
+  };
 
   const [subscriptions, setSubscriptions] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -419,14 +444,7 @@ function UserDetail() {
       </div>
 
       <div className="user-tabs">
-        {[
-          { id: 'details', label: 'Detalhes e Edição', icon: User },
-          { id: 'subscriptions', label: 'Assinaturas', icon: Shield },
-          { id: 'invoices', label: 'Faturas', icon: FileText },
-          { id: 'payments', label: 'Pagamentos', icon: CreditCard },
-          { id: 'crons', label: 'Crons', icon: Clock },
-          { id: 'onboarding', label: 'Qualificação', icon: ClipboardList },
-        ].map(tab => (
+        {USER_TABS.map(tab => (
           <button
             key={tab.id}
             className={`user-tab ${activeTab === tab.id ? 'active' : ''}`}
@@ -607,6 +625,12 @@ function UserDetail() {
 
       {activeTab === 'onboarding' && (
         <OnboardingAnswers userId={userId} completedAt={user?.onboarding_completed_at} />
+      )}
+
+      {activeTab === 'events' && (
+        <div className="admin-card user-events-tab">
+          <EventLog userId={userId} />
+        </div>
       )}
 
       {activeTab === 'crons' && (
@@ -933,7 +957,7 @@ function UserDetail() {
                           required
                         >
                           <option value="">Selecione uma assinatura</option>
-                          {userCrons.subscriptions?.filter(s => s.status === 'active' || s.status === 'overdue' || s.status === 'first_attempt').map((sub) => (
+                          {userCrons.subscriptions?.filter(s => s.status === 'active' || s.status === 'expired' || s.status === 'pending').map((sub) => (
                             <option key={sub.id} value={sub.id}>
                               {sub.group_name} / {sub.service_name} — R$ {Number(sub.amount || 0).toFixed(2)} [{sub.status}] {sub.card_last4 ? `(•••• ${sub.card_last4})` : '(sem cartão)'}
                             </option>
@@ -1108,23 +1132,32 @@ function OnboardingAnswers({ userId, completedAt }) {
           <div className="empty-table"><p>Ninguém informado.</p></div>
         ) : (
           <div className="ob-invite-list">
-            {invites.map((iv) => (
-              <div className="ob-invite-row" key={iv.id}>
-                <div className="ob-invite-avatar">{iv.name.charAt(0).toUpperCase()}</div>
-                <div className="ob-invite-info">
-                  <strong>{iv.name}</strong>
-                  <span>{iv.phone}</span>
+            {invites.map((iv) => {
+              /* O número é gravado sem o código do país — o link do WhatsApp
+                 precisa dele, senão o wa.me abre a conversa errada. */
+              const waNumber = phoneToWhatsApp(iv.phone);
+              const national = phoneToNational(iv.phone);
+              return (
+                <div className="ob-invite-row" key={iv.id}>
+                  <div className="ob-invite-avatar">{iv.name.charAt(0).toUpperCase()}</div>
+                  <div className="ob-invite-info">
+                    <strong>{iv.name}</strong>
+                    <span>{maskPhone(national) || 'sem telefone'}</span>
+                  </div>
+                  {waNumber && (
+                    <a
+                      className="ob-invite-wa"
+                      href={`https://wa.me/${waNumber}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Falar com ${iv.name} no WhatsApp`}
+                    >
+                      <Phone size={13} /> Falar
+                    </a>
+                  )}
                 </div>
-                <a
-                  className="ob-invite-wa"
-                  href={`https://wa.me/${iv.phone}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <Phone size={13} /> Falar
-                </a>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

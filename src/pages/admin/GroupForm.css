@@ -119,6 +119,13 @@
   gap: 0.35rem;
 }
 
+/* Seletor "tem anúncios?" — logo abaixo do tipo de conta */
+.form-group.ads-field {
+  margin-top: 0.5rem;
+  padding-top: 1.1rem;
+  border-top: 1px dashed var(--border);
+}
+
 .form-group label {
   font-size: 0.8rem;
   font-weight: 600;
@@ -301,6 +308,65 @@
 
 .cred-fields {
   grid-template-columns: 1fr 1fr 1fr;
+}
+
+/* Atribuicao da credencial (group_credentials.assigned_to).
+   Vinculada = so aquele membro enxerga o acesso. Compartilhada = todo
+   membro ativo enxerga. */
+.cred-assignment {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.cred-assignment > svg {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.cred-assignment-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+}
+
+.cred-assignment-text strong {
+  color: var(--text-primary);
+}
+
+.cred-assignment-text span {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.cred-assignment.is-locked {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.cred-assignment.is-locked > svg {
+  color: var(--warning);
+}
+
+.cred-assignment.is-shared {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.cred-assignment.is-shared > svg {
+  color: var(--success);
+}
+
+.cred-assignment button {
+  flex-shrink: 0;
+  align-self: center;
 }
 
 /* Toggle Section */
@@ -555,6 +621,133 @@
   margin-top: 0.15rem;
 }
 
+/* ═══ Seletor do dono do grupo ═══════════════════════════════════════ */
+
+.owner-current {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.owner-current-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.owner-current-info strong {
+  font-size: 0.85rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owner-current-info small {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.owner-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.owner-search {
+  position: relative;
+}
+
+.owner-search input {
+  width: 100%;
+  padding-right: 2.2rem;
+}
+
+.owner-search-spinner {
+  position: absolute;
+  right: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+}
+
+.owner-empty {
+  margin: 0;
+  padding: 0.4rem 0.2rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.owner-results {
+  display: flex;
+  flex-direction: column;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.owner-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.owner-result:last-child {
+  border-bottom: none;
+}
+
+.owner-result:hover {
+  background: var(--primary-soft);
+}
+
+.owner-result strong {
+  font-weight: 600;
+}
+
+.owner-result span {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.owner-cancel {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.owner-cancel:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
 .cycles-grid {
   display: flex;
   gap: 0.5rem;
@@ -640,6 +833,58 @@
 
 .sim-row.total strong {
   color: var(--success);
+}
+
+/* Simulação nova: 3 linhas, sem porcentagem (regra de faixas da plataforma) */
+.sim-row-charged {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  font-size: 0.95rem;
+  color: #3B82F6;
+}
+
+.sim-row-charged span:last-child {
+  font-size: 1.3rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sim-row-platform {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  font-size: 0.9rem;
+  color: #EF4444;
+}
+
+.sim-row-platform strong {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #EF4444;
+  white-space: nowrap;
+}
+
+.sim-row-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.7rem;
+  margin-top: 0.15rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.sim-row-total strong {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #10B981;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
 }
 
 /* Group Photo Upload */

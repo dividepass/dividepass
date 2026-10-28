@@ -23,7 +23,7 @@
 
 .install-app-card {
   display: grid;
-  grid-template-columns: 1.4fr auto;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, auto);
   gap: 1.25rem;
   align-items: center;
   margin-bottom: 1.5rem;
@@ -40,6 +40,10 @@
 .install-app-card-bottom {
   margin-top: 1rem;
   margin-bottom: 0;
+}
+
+.install-app-card-copy {
+  min-width: 0;
 }
 
 .install-app-card-copy h2 {
@@ -123,9 +127,11 @@
   accent-color: var(--primary);
 }
 
-@media (max-width: 780px) {
+/* Abaixo de 960px o card empilha: a coluna de ações (min-width 250px) não
+   cabe mais ao lado do texto sem espremer o conteúdo. */
+@media (max-width: 960px) {
   .install-app-card {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .install-app-card-actions {
@@ -207,16 +213,26 @@
 
 .page-header {
   margin-bottom: 2rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .page-header h1 {
   font-size: 1.75rem;
   margin-bottom: 0.5rem;
   color: var(--secondary);
+  /* A saudação pode trazer um e-mail longo (sem espaços): sem isso o texto
+     estoura a largura e é cortado pelo overflow-x hidden do .main-content. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .page-header p {
   color: var(--text-muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .dashboard-metrics {
@@ -263,7 +279,7 @@
 
 .dashboard-empty-hero {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
   gap: 1rem;
   margin-bottom: 2rem;
   padding: 1.25rem;
@@ -274,18 +290,26 @@
     radial-gradient(circle at bottom left, rgba(14, 165, 233, 0.12), transparent 28%),
     var(--surface);
   box-shadow: 0 18px 40px -26px rgba(15, 23, 42, 0.28);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .dashboard-empty-hero h2 {
   margin: 0.65rem 0 0.5rem;
   font-size: 1.45rem;
   color: var(--secondary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .dashboard-empty-hero p {
   margin: 0;
   color: var(--text-muted);
   line-height: 1.55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .empty-hero-actions {
@@ -293,11 +317,13 @@
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 1rem;
+  min-width: 0;
 }
 
 .dashboard-empty-hero-aside {
   display: grid;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .empty-hero-card {
@@ -308,6 +334,7 @@
   border-radius: 1rem;
   background: rgba(15, 23, 42, 0.04);
   border: 1px solid rgba(148, 163, 184, 0.18);
+  min-width: 0;
 }
 
 .empty-hero-card strong {
@@ -320,6 +347,9 @@
   font-size: 1.2rem;
   font-weight: 700;
   color: var(--secondary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .metric-card {
@@ -1280,7 +1310,9 @@
 }
 
 .dashboard-search-wrap input {
-  flex: 1;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   border: none;
   background: transparent;
   font-size: 0.9rem;
@@ -1311,10 +1343,22 @@
   position: relative;
   display: flex;
   align-items: center;
+  min-width: 0;
+  /* Reserva as faixas das setas dentro do próprio wrapper: assim elas nunca
+     ficam fora da área visível (antes usavam left/right negativos e eram
+     cortadas pelo overflow-x hidden do layout). */
+  padding-inline: 2.25rem;
+}
+
+/* Sem setas na tela (não há overflow) não precisa reservar espaço. */
+.dashboard-category-wrapper:not(:has(.dashboard-category-arrow)) {
+  padding-inline: 0;
 }
 
 .dashboard-category-bar {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   gap: 0.45rem;
   overflow-x: auto;
   scrollbar-width: none;
@@ -1350,14 +1394,15 @@
 .dashboard-category-arrow:hover {
   border-color: var(--primary);
   color: var(--primary);
+  background: var(--primary-soft);
 }
 
 .dashboard-category-arrow.left {
-  left: -8px;
+  left: 0;
 }
 
 .dashboard-category-arrow.right {
-  right: -8px;
+  right: 0;
 }
 
 .dashboard-category-pill {
@@ -1703,6 +1748,19 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+
+  /* Os tokens --home-* só são trocados dentro de .home-container, então no
+     dashboard eles ficavam presos no valor do tema escuro. Aqui reapontamos
+     para os tokens do app e os cards respeitam claro/escuro. */
+  --home-surface: var(--surface);
+  --home-surface-hover: var(--surface-soft);
+  --home-border: var(--border);
+  --home-border-strong: var(--border-strong);
+  --home-bg: var(--surface-soft);
+  --home-text: var(--text-main);
+  --home-text-muted: var(--text-muted);
+  --home-text-secondary: var(--text-muted);
+  --home-radius: 1rem;
 }
 
 /* Header */
@@ -1808,18 +1866,22 @@
 
 /* ── Resumo principal — 3 perguntas ───────────────────────── */
 .savings-summary-card {
-  background: var(--home-surface);
-  border: 1px solid var(--home-border);
+  /* Card âncora da seção: único bloco com gradiente/shadow marcante. */
+  background:
+    radial-gradient(circle at 100% 0%, var(--primary-soft), transparent 42%),
+    linear-gradient(135deg, var(--surface), var(--surface-soft));
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+  box-shadow: var(--shadow-sm);
 }
 
 .savings-summary-row {
   display: grid;
-  grid-template-columns: 1fr auto 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 0.5rem;
 }
@@ -1829,6 +1891,7 @@
   flex-direction: column;
   align-items: center;
   gap: 0.2rem;
+  min-width: 0;
 }
 
 .savings-summary-q {
@@ -1886,10 +1949,11 @@
 }
 
 .savings-col-highlight {
-  background: rgba(16, 185, 129, 0.06);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0.04));
   border: 1px solid rgba(16, 185, 129, 0.22);
   border-radius: 12px;
   padding: 0.5rem 0.75rem;
+  min-width: 0;
 }
 
 .savings-summary-savings {
@@ -2074,6 +2138,7 @@
   border: none;
   cursor: pointer;
   width: 100%;
+  min-width: 0;
   text-align: left;
   color: inherit;
 }
@@ -2125,21 +2190,29 @@
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  flex-shrink: 0;
+  /* Pode encolher: os preços quebram em vez de empurrar a linha para fora. */
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 /* Linha inline de preços no card (mobile/desktop) */
 .savings-price-inline {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.4rem;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .savings-price-direct {
   font-size: 0.72rem;
   color: var(--home-text-secondary, #64748b);
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .savings-price-divide {
@@ -2211,9 +2284,67 @@
   font-size: 0.68rem;
   color: #f59e0b;
   background: rgba(245, 158, 11, 0.1);
-  padding: 0.2rem 0.5rem;
+  padding: 0.25rem 0.55rem;
   border-radius: 6px;
-  white-space: nowrap;
+  /* Quebra em duas linhas quando o espaço aperta (antes era nowrap fixo). */
+  white-space: normal;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.savings-service-unavailable-badge svg {
+  flex-shrink: 0;
+}
+
+/* Chevron de expandir/recolher do comparativo */
+.savings-chevron {
+  color: var(--home-text-secondary, #64748b);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.savings-chevron.rotated {
+  transform: rotate(180deg);
+}
+
+/* Expanded detail — classes efetivamente usadas pelo JSX do dashboard */
+.savings-detail {
+  border-top: 1px solid var(--home-border);
+  padding: 0.85rem 1rem;
+  background: var(--home-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  animation: savingsDetailIn 0.25s ease-out;
+}
+
+.savings-detail-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+.savings-detail-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.savings-staleness-warning {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.68rem;
+  color: var(--warning);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+}
+
+.savings-staleness-warning svg {
+  flex-shrink: 0;
 }
 
 /* Expanded detail */
@@ -2249,6 +2380,7 @@
   font-size: 0.88rem;
   font-weight: 700;
   color: var(--home-text);
+  overflow-wrap: break-word;
 }
 
 .savings-detail-value.muted {
@@ -2956,5 +3088,280 @@
   .avatar-prompt-action {
     width: 100%;
     justify-content: space-between;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   /dashboard — chips de logo, responsividade e movimento
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Chips de logo de plataforma ────────────────────────────────
+   Mesmo tratamento em todos os cards: logo contida (object-fit)
+   sobre um chip neutro com borda — assim um PNG transparente não
+   fica "solto" dentro do tile colorido da marca. */
+.savings-service-icon img,
+.available-service-logo-lg,
+.active-services-section .sac-card-logo img,
+.available-groups-section .sc-card-icon img {
+  object-fit: contain;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  transition: transform 0.25s ease;
+}
+
+/* Linha do comparativo: tile de 40px com chip de 32px (logo de 24px). */
+.savings-service-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.savings-service-icon img {
+  width: 32px;
+  height: 32px;
+  margin: 4px;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+/* Carrosséis: mesma base nos dois grids (48px / 36px no mobile). */
+.active-services-section .sac-card-logo,
+.available-groups-section .sc-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+}
+
+.active-services-section .sac-card-logo img,
+.available-groups-section .sc-card-icon img {
+  width: 40px;
+  height: 40px;
+  margin: 4px;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+/* Catálogo: mesmo chip, dentro do bloco colorido do serviço. */
+.available-service-logo-lg {
+  width: 64px;
+  height: 64px;
+  padding: 6px;
+  border-radius: 14px;
+}
+
+.available-service-icon-lg {
+  width: 52px;
+  height: 52px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-main);
+  text-shadow: none;
+  transition: transform 0.25s ease;
+}
+
+@media (max-width: 768px) {
+  .available-service-logo-lg {
+    width: 42px;
+    height: 42px;
+    padding: 4px;
+    border-radius: 10px;
+  }
+
+  .available-service-icon-lg {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .active-services-section .sac-card-logo,
+  .available-groups-section .sc-card-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+  }
+
+  .active-services-section .sac-card-logo img,
+  .available-groups-section .sc-card-icon img {
+    width: 30px;
+    height: 30px;
+    margin: 3px;
+    padding: 2px;
+    border-radius: 6px;
+  }
+}
+
+@media (min-width: 901px) {
+  .active-services-section .sac-card-logo,
+  .available-groups-section .sc-card-icon {
+    width: 52px;
+    height: 52px;
+  }
+
+  .active-services-section .sac-card-logo img,
+  .available-groups-section .sc-card-icon img {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ── Resumo de economia: colapsa sem estourar ───────────────── */
+@media (max-width: 900px) {
+  .savings-summary-row {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .savings-summary-divider {
+    display: none;
+  }
+
+  .savings-col-highlight {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 600px) {
+  .savings-summary-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  .savings-summary-vs {
+    display: none;
+  }
+
+  .savings-summary-original,
+  .savings-summary-dp {
+    font-size: 1rem;
+  }
+}
+
+/* Linha do comparativo: os preços descem para uma segunda linha. */
+@media (max-width: 560px) {
+  .savings-service-main {
+    flex-wrap: wrap;
+    row-gap: 0.55rem;
+  }
+
+  .savings-service-prices,
+  .savings-price-inline {
+    flex: 1 0 100%;
+    justify-content: space-between;
+  }
+
+  .savings-service-unavailable-badge {
+    flex: 1 0 100%;
+  }
+}
+
+/* Detalhe expandido: 4 → 2 → 1 colunas. */
+@media (max-width: 700px) {
+  .savings-detail-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .savings-detail-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Movimento ──────────────────────────────────────────────────
+   Entradas discretas (150–400ms) e hover leve. O bloco final
+   desliga tudo para quem prefere menos movimento. */
+.available-services-grid > .available-service-card-wrapper {
+  animation: cardPop 0.4s ease-out both;
+}
+
+.available-services-grid > .available-service-card-wrapper:nth-child(1) { animation-delay: 0ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(2) { animation-delay: 40ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(3) { animation-delay: 80ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(4) { animation-delay: 120ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(5) { animation-delay: 160ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(6) { animation-delay: 200ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(7) { animation-delay: 240ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(8) { animation-delay: 280ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(9) { animation-delay: 320ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(10) { animation-delay: 360ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(11) { animation-delay: 400ms; }
+.available-services-grid > .available-service-card-wrapper:nth-child(n + 12) { animation-delay: 440ms; }
+
+.savings-comp-list > .savings-service-row {
+  animation: savingsRowIn 0.3s ease-out backwards;
+}
+
+.savings-comp-list > .savings-service-row:nth-child(1) { animation-delay: 0ms; }
+.savings-comp-list > .savings-service-row:nth-child(2) { animation-delay: 60ms; }
+.savings-comp-list > .savings-service-row:nth-child(3) { animation-delay: 120ms; }
+.savings-comp-list > .savings-service-row:nth-child(n + 4) { animation-delay: 180ms; }
+
+@keyframes savingsRowIn {
+  from { transform: translateY(8px); }
+  to { transform: translateY(0); }
+}
+
+@keyframes savingsDetailIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Hover: micro-elevação e logos que respiram. */
+.available-service-card-wrapper:hover .available-service-logo-lg,
+.available-service-card-wrapper:hover .available-service-icon-lg,
+.active-services-section .sac-card:hover .sac-card-logo img,
+.available-groups-section .sc-card:hover .sc-card-icon img,
+.savings-service-row:hover .savings-service-icon img {
+  transform: scale(1.06);
+}
+
+.install-app-btn {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.install-app-btn:hover {
+  transform: translateY(-1px);
+}
+
+.savings-collapsed-card:hover {
+  transform: translateY(-2px);
+}
+
+.dashboard-category-pill:hover {
+  transform: translateY(-1px);
+}
+
+/* ── Menos movimento (preferência do sistema) ──────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .fade-in,
+  .announcement-banner,
+  .savings-detail {
+    animation: none !important;
+  }
+
+  .available-service-card-wrapper {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .savings-service-row {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .available-service-card-wrapper:hover,
+  .available-service-logo-lg,
+  .available-service-icon-lg,
+  .savings-service-icon img,
+  .active-services-section .sac-card-logo img,
+  .available-groups-section .sc-card-icon img,
+  .savings-collapsed-card:hover,
+  .dashboard-category-pill:hover,
+  .install-app-btn:hover {
+    transform: none !important;
+    transition: none !important;
   }
 }

@@ -1,0 +1,74 @@
+/* ===========================================================================
+   Card de renovação da assinatura
+   ---------------------------------------------------------------------------
+   Mesmo tom do aviso do modal de renovação (`.ren-warning`), mas em um bloco
+   que fica dentro de cards e listagens. As cores vêm das variáveis do tema
+   (escuro/claro) para não repetir a paleta em cada tela.
+   ========================================================================= */
+
+.rrc-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.8rem 0.9rem;
+  border-radius: 0.7rem;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  background: rgba(245, 158, 11, 0.1);
+  text-align: left;
+}
+
+.rrc-card.is-danger {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.rrc-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--warning, #F59E0B);
+}
+
+.rrc-card.is-danger .rrc-icon {
+  color: var(--error, #EF4444);
+}
+
+.rrc-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.rrc-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.rrc-text {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.rrc-btn {
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 640px) {
+  .rrc-card {
+    padding: 0.65rem 0.7rem;
+  }
+
+  .rrc-text {
+    font-size: 0.74rem;
+  }
+}

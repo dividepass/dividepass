@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Search, Filter, Edit2, XCircle, Loader2, Calendar, DollarSign, RefreshCw,
-  Shield, Eye, X, CreditCard, Hash, Clock, Tag, TrendingUp, AlertCircle,
+  Search, Edit2, XCircle, Loader2, Calendar, DollarSign, RefreshCw,
+  Eye, X, CreditCard, Hash, Clock, Tag, AlertCircle,
   ChevronLeft, ChevronRight, AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { isSubscriptionOverdue } from '../../lib/subscriptionAccess';
+import { isSubscriptionOverdue, renewalDeadline } from '../../lib/subscriptionAccess';
 import { formatDateBR } from '../../lib/dateFormat';
 import {
   RENEWAL_WINDOW_LABELS,
@@ -15,10 +15,32 @@ import {
   matchesRenewalWindow,
   renewalWindowRange,
 } from '../../lib/subscriptionWindows';
+import {
+  CANCELLED_STATUSES,
+  LISTED_STATUSES,
+  STATUS_FILTERS,
+  applyDueOrdering,
+  applyRenewalFilter,
+  applyStatusFilter,
+  attentionServerFilter,
+  overdueServerFilter,
+} from '../../lib/subscriptionFilters';
 import { cycleFullLabel, cycleLabel, cycleMonths, monthlyEquivalent } from '../../lib/subscriptionCycles';
 import './Subscriptions.css';
 
-const STATUS_OPTIONS = ['active', 'inactive', 'cancelled', 'expired', 'pending'];
+/**
+ * Filtros de status da listagem.
+ *
+ * `all` NÃO significa "todos os registros": as assinaturas canceladas ficam
+ * fora da listagem inicial e só aparecem quando o filtro "Canceladas" é
+ * escolhido. `attention` é um filtro derivado (vencidas + em retry), não um
+ * status do banco.
+ *
+ * A definição vive em `src/lib/subscriptionFilters.js` — junto com a
+ * ordenação por vencimento — para que a query, os pills e os testes leiam
+ * a mesma regra.
+ */
+
 const CYCLE_OPTIONS = ['monthly', 'quarterly', 'semiannual', 'annual', 'days'];
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
@@ -35,14 +57,6 @@ const TABLE_SELECT = `
   service:service_id (id, name, full_name),
   coupon:coupon_id (id, code, discount_type, discount_value)
 `;
-
-// Filtro de renovação da tabela -> chave da janela compartilhada.
-const RENEWAL_FILTER_WINDOWS = {
-  this_month: 'thisMonth',
-  next_7: 'next7',
-  next_30: 'next30',
-  next_60: 'next60',
-};
 
 const statusLabel = (status) => ({
   active: 'Ativa',
@@ -66,23 +80,6 @@ const paymentStatusClass = (s) => {
   if (['failed', 'cancelled', 'refunded', 'disputed', 'error'].includes(s)) return 'cancelled';
   return 'inactive';
 };
-
-/**
- * "Vencida" no servidor, espelhando `isSubscriptionOverdue`:
- * assinatura não cancelada com `next_charge_at` (ou `expires_at`, quando não
- * há próxima cobrança) no passado.
- */
-function overdueServerFilter(nowIso) {
-  return [
-    `and(next_charge_at.not.is.null,next_charge_at.lt.${nowIso})`,
-    `and(next_charge_at.is.null,expires_at.lt.${nowIso})`,
-  ].join(',');
-}
-
-/** "Vencida" ou "em retry" — o que está quebrado e precisa de atenção. */
-function attentionServerFilter(nowIso) {
-  return `${overdueServerFilter(nowIso)},billing_status.eq.retrying`;
-}
 
 /** Limpa o termo de busca: vírgula/ponto quebram a sintaxe do filtro .or(). */
 function sanitizeSearch(value) {
@@ -152,7 +149,10 @@ function Subscriptions() {
     receivedAmount: 0,
     mrr: 0,
     attentionCount: 0,
+    overdueCount: 0,
+    retryingCount: 0,
     cancelledCount: 0,
+    pendingCount: 0,
     windowCounts: { next7: 0, next30: 0, next60: 0 },
     receivedTruncated: false,
     mrrTruncated: false,
@@ -194,37 +194,57 @@ function Subscriptions() {
       setLoading(true);
       setError('');
       try {
+        const now = new Date();
+        const nowIso = now.toISOString();
+
         let query = supabase
           .from('user_subscriptions')
-          .select(TABLE_SELECT, { count: 'exact' })
-          .order('created_at', { ascending: false });
+          .select(TABLE_SELECT, { count: 'exact' });
 
-        if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+        // ── Status ────────────────────────────────────────────────
+        //
+        // A listagem inicial NÃO traz as canceladas: elas só aparecem quando
+        // o filtro "Canceladas" é escolhido. "Atenção" é derivado (vencidas +
+        // em retry) e também deixa as canceladas de fora.
+        const orBranches = [];
+
+        query = applyStatusFilter(query, statusFilter, nowIso, orBranches);
+
         if (cycleFilter !== 'all') query = query.eq('billing_cycle', cycleFilter);
 
-        const now = new Date();
-        if (renewalFilter === 'overdue') {
-          query = query
-            .neq('status', 'cancelled')
-            .or(overdueServerFilter(now.toISOString()));
-        } else if (renewalFilter !== 'all') {
-          const range = renewalWindowRange(RENEWAL_FILTER_WINDOWS[renewalFilter], now);
-          if (range) {
-            query = query.gt('next_charge_at', range.startIso).lte('next_charge_at', range.endIso);
+        // ── Renovação ─────────────────────────────────────────────
+        query = applyRenewalFilter(query, renewalFilter, now, orBranches);
+
+        // ── Ordenação ─────────────────────────────────────────────
+        //
+        // Por vencimento: a mais vencida primeiro (as vencidas ficam no topo)
+        // e, dentro de cada grupo, a renovação mais antiga vem antes da mais
+        // futura. Sem data de cobrança vai para o fim.
+        query = applyDueOrdering(query, statusFilter);
+
+        // A busca entra NO MESMO `.or()`.
+        //
+        // O PostgREST aceita UM `or` de topo: um segundo sobrescreve o primeiro
+        // na URL. Com o filtro de status/renovação e a busca em `.or()`
+        // separados, a busca apagava o filtro de "Atenção"/"Vencidas" (ou o
+        // contrário) sem avisar. As duas condições viajam juntas agora.
+        const ids = await resolveSearchIds(search);
+        if (ids) {
+          const searchBranches = [];
+          if (ids.userIds.length) searchBranches.push(`user_id.in.(${ids.userIds.join(',')})`);
+          if (ids.serviceIds.length) searchBranches.push(`service_id.in.(${ids.serviceIds.join(',')})`);
+          if (ids.groupIds.length) searchBranches.push(`group_id.in.(${ids.groupIds.join(',')})`);
+
+          if (!searchBranches.length) {
+            // Busca sem nenhum resultado: nada pode aparecer.
+            query = query.eq('id', EMPTY_UUID);
+          } else {
+            orBranches.push(...searchBranches);
           }
         }
 
-        const ids = await resolveSearchIds(search);
-        if (ids) {
-          const branches = [];
-          if (ids.userIds.length) branches.push(`user_id.in.(${ids.userIds.join(',')})`);
-          if (ids.serviceIds.length) branches.push(`service_id.in.(${ids.serviceIds.join(',')})`);
-          if (ids.groupIds.length) branches.push(`group_id.in.(${ids.groupIds.join(',')})`);
-
-          query = branches.length
-            ? query.or(branches.join(','))
-            : query.eq('id', EMPTY_UUID);
-        }
+        // Um único `.or()` no fim, com tudo deduplicado.
+        if (orBranches.length) query = query.or([...new Set(orBranches)].join(','));
 
         const from = currentPage * pageSize;
         const { data, count, error: queryError } = await query.range(from, from + pageSize - 1);
@@ -268,22 +288,31 @@ function Subscriptions() {
 
       const windowCount = (key) => {
         const window = windows[key];
+        // Mesma janela e mesma data de vencimento do filtro da tabela
+        // (`applyRenewalFilter`), senão o contador e a lista discordam.
         return countOf((q) => q
-          .eq('status', 'active')
-          .gt('next_charge_at', window.start.toISOString())
-          .lte('next_charge_at', window.end.toISOString()));
+          .in('status', LISTED_STATUSES)
+          .gt('renewal_due_at', window.start.toISOString())
+          .lte('renewal_due_at', window.end.toISOString()));
       };
 
       try {
         const [
-          totalRes, activeRes, cancelledRes, attentionRes,
+          totalRes, activeRes, cancelledRes, pendingRes,
+          attentionRes, overdueRes, retryingRes,
           receivedRes, mrrRes,
           w7Res, w30Res, w60Res,
         ] = await Promise.all([
           countOf((q) => q),
           countOf((q) => q.eq('status', 'active')),
-          countOf((q) => q.in('status', ['cancelled', 'expired'])),
-          countOf((q) => q.neq('status', 'cancelled').or(attentionServerFilter(nowIso))),
+          // Canceladas = status final de qualquer jeito: 'cancelled' e o legado
+          // 'inactive'. O 'expired' legado NÃO entra aqui: ele significa
+          // "atrasada" enquanto a carência de 7 dias não vence.
+          countOf((q) => q.in('status', CANCELLED_STATUSES)),
+          countOf((q) => q.eq('status', 'pending')),
+          countOf((q) => q.in('status', LISTED_STATUSES).or(attentionServerFilter(nowIso))),
+          countOf((q) => q.in('status', LISTED_STATUSES).or(overdueServerFilter(nowIso))),
+          countOf((q) => q.in('status', LISTED_STATUSES).eq('billing_status', 'retrying')),
           // Agregados: uma coluna só e janela do mês — não baixa a tabela.
           supabase.from('payments').select('amount', { count: 'exact' })
             .eq('status', 'paid').eq('payment_type', 'subscription')
@@ -296,7 +325,10 @@ function Subscriptions() {
           windowCount('next60'),
         ]);
 
-        const statsError = firstError(totalRes, activeRes, cancelledRes, attentionRes, receivedRes, mrrRes, w7Res, w30Res, w60Res);
+        const statsError = firstError(
+          totalRes, activeRes, cancelledRes, pendingRes,
+          attentionRes, overdueRes, retryingRes, receivedRes, mrrRes, w7Res, w30Res, w60Res,
+        );
         if (statsError) throw statsError;
         if (cancelled) return;
 
@@ -311,7 +343,10 @@ function Subscriptions() {
           receivedAmount,
           mrr,
           attentionCount: attentionRes.count || 0,
+          overdueCount: overdueRes.count || 0,
+          retryingCount: retryingRes.count || 0,
           cancelledCount: cancelledRes.count || 0,
+          pendingCount: pendingRes.count || 0,
           windowCounts: {
             next7: w7Res.count || 0,
             next30: w30Res.count || 0,
@@ -336,6 +371,18 @@ function Subscriptions() {
     setPage(0);
   };
 
+  /** Quantos registros cada filtro de status mostra. */
+  const statusFilterCount = (key) => {
+    switch (key) {
+      case 'all': return stats.totalCount - stats.cancelledCount;
+      case 'active': return stats.activeCount;
+      case 'attention': return stats.attentionCount;
+      case 'pending': return stats.pendingCount;
+      case 'cancelled': return stats.cancelledCount;
+      default: return 0;
+    }
+  };
+
   const handleCancel = async (sub) => {
     if (!window.confirm(`Cancelar assinatura de ${sub.user?.name} no grupo ${sub.group?.name}?`)) return;
 
@@ -344,16 +391,30 @@ function Subscriptions() {
 
       const { error: subError } = await supabase
         .from('user_subscriptions')
-        .update({ status: 'cancelled', updated_at: now })
+        .update({ status: 'cancelled', billing_status: 'cancelled', updated_at: now })
         .eq('id', sub.id);
       if (subError) throw subError;
 
+      // Mesmo desvinculo do cancelamento por carência (o `subscriptionLifecycle`
+      // do backend): o membro sai do grupo com o status que a tela de
+      // credenciais reconhece como encerrado.
       const { error: memberError } = await supabase
         .from('group_members')
-        .update({ status: 'inactive', left_at: now })
+        .update({ status: 'cancelled', payment_status: 'cancelled', left_at: now })
         .eq('group_id', sub.group_id)
         .eq('user_id', sub.user_id);
       if (memberError) throw memberError;
+
+      // Cancela as cobranças agendadas: a regra é "cancelar todas as crons".
+      // O enum de `billing_cycles.status` é ('pending','processing',
+      // 'approved','failed','cancelled') — 'retrying' pertence ao enum da
+      // assinatura e faria a query falhar com 22P02.
+      const { error: cyclesError } = await supabase
+        .from('billing_cycles')
+        .update({ status: 'cancelled' })
+        .eq('subscription_id', sub.id)
+        .in('status', ['pending', 'processing', 'failed']);
+      if (cyclesError) throw cyclesError;
 
       setRows((prev) => prev.map((s) => (s.id === sub.id ? { ...s, status: 'cancelled', updated_at: now } : s)));
       setRefreshKey((key) => key + 1);
@@ -483,17 +544,17 @@ function Subscriptions() {
     } else if (type === 'mrr') {
       query = query.eq('status', 'active').order('amount', { ascending: false });
     } else if (type === 'cancelled') {
-      query = query.in('status', ['cancelled', 'expired']).order('updated_at', { ascending: false });
+      query = query.in('status', CANCELLED_STATUSES).order('updated_at', { ascending: false });
     } else if (type === 'attention') {
-      query = query.neq('status', 'cancelled')
+      query = query.in('status', LISTED_STATUSES)
         .or(attentionServerFilter(nowIso))
-        .order('next_charge_at', { ascending: true });
+        .order('renewal_due_at', { ascending: true });
     } else {
       // Janela de renovação: mesmos limites da definição compartilhada.
       const range = renewalWindowRange(type, now);
-      query = query.eq('status', 'active')
-        .gt('next_charge_at', range.startIso)
-        .lte('next_charge_at', range.endIso)
+      query = query.in('status', LISTED_STATUSES)
+        .gt('renewal_due_at', range.startIso)
+        .lte('renewal_due_at', range.endIso)
         .order('next_charge_at', { ascending: true });
     }
 
@@ -530,7 +591,7 @@ function Subscriptions() {
     received: 'Receita recebida no mês',
     mrr: 'Receita mensal equivalente (MRR)',
     attention: 'Precisam de atenção (vencidas + em retry)',
-    cancelled: 'Canceladas / expiradas',
+    cancelled: 'Canceladas',
     next7: RENEWAL_WINDOW_LABELS.next7,
     next30: RENEWAL_WINDOW_LABELS.next30,
     next60: RENEWAL_WINDOW_LABELS.next60,
@@ -546,12 +607,40 @@ function Subscriptions() {
 
   const statDetailTotalLabel = () => (statDetailModal === 'mrr' ? 'Total mensal' : 'Total dos ciclos');
 
+  /**
+   * Vence em breve (7 dias)? Usa a data de vencimento do módulo de domínio
+   * (`renewal_due_at` → `next_charge_at` → `expires_at`) — a mesma que o card
+   * de renovação e o backend usam. Se o admin calculasse a data por fora, o
+   * painel mostraria um vencimento diferente do que o usuário vê na tela.
+   */
   const isRenewalSoon = (sub) => {
-    if (!sub.next_charge_at || sub.status !== 'active') return false;
-    const now = new Date();
-    const nextCharge = new Date(sub.next_charge_at);
-    const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    return nextCharge > now && nextCharge <= sevenDays;
+    if (!sub || sub.status !== 'active') return false;
+    const deadline = renewalDeadline(sub);
+    if (deadline === null) return false;
+    const now = new Date().getTime();
+    return deadline > now && deadline <= now + 7 * 24 * 60 * 60 * 1000;
+  };
+
+  /**
+   * Data que define o vencimento. Vem do domínio (`renewalDeadline`), que
+   * também trata o `expires_at` que é DATE valendo até o fim do dia.
+   */
+  const dueDate = (sub) => {
+    const deadline = renewalDeadline(sub);
+    return deadline === null ? null : new Date(deadline);
+  };
+
+  /** "vence em 3 dias" / "venceu há 12 dias" — o que o admin olha primeiro. */
+  const dueLabel = (sub) => {
+    const date = dueDate(sub);
+    if (!date) return null;
+
+    const days = Math.round((date.getTime() - new Date().getTime()) / 86400000);
+    if (days === 0) return 'vence hoje';
+    if (days === 1) return 'vence amanhã';
+    if (days > 0) return `vence em ${days} dias`;
+    if (days === -1) return 'venceu ontem';
+    return `venceu há ${Math.abs(days)} dias`;
   };
 
   const rowClass = (sub) => {
@@ -560,81 +649,81 @@ function Subscriptions() {
     return '';
   };
 
-  const renewalBadge = (sub) => {
-    if (isSubscriptionOverdue(sub)) return { label: 'Vencida', className: 'overdue' };
-    if (sub.billing_status === 'retrying') return { label: 'Em retry', className: 'retrying' };
-    return null;
+  /**
+   * Etiquetas de alerta da linha. Uma assinatura pode ser vencida E estar em
+   * retry ao mesmo tempo — as duas informações aparecem juntas.
+   */
+  const renewalBadges = (sub) => {
+    const badges = [];
+    if (isSubscriptionOverdue(sub)) badges.push({ label: 'Vencida', className: 'overdue' });
+    if (sub.billing_status === 'retrying') badges.push({ label: 'Em retry', className: 'retrying' });
+    return badges;
   };
 
   return (
     <div className="fade-in subscriptions-page">
-      <div className="admin-header">
+      <div className="admin-header subs-header">
         <div>
-          <h1>Assinaturas dos Usuários</h1>
+          <h1>Assinaturas</h1>
           <p className="page-subtitle">
-            {statsLoading ? 'Carregando...' : `${stats.totalCount} assinaturas cadastradas`}
+            {statsLoading
+              ? 'Carregando...'
+              : `${stats.activeCount} ativas · ${stats.attentionCount} precisam de atenção · ${stats.totalCount} no total`}
           </p>
         </div>
       </div>
 
-      {/* Indicadores: cada card abre a lista filtrada correspondente. */}
-      <div className="subscriptions-stats">
-        <div className="stat-card clickable" onClick={() => openStatDetail('active')}>
-          <Shield size={22} />
-          <div>
-            <span>{stats.activeCount}</span>
-            <small>Assinaturas ativas</small>
-            <span className="stat-detail-hint">Ver detalhes ›</span>
-          </div>
-        </div>
+      {/* Números em uma linha só, sem caixinha. Os que abrem lista são botões. */}
+      <div className="subs-metrics">
+        <button type="button" className="subs-metric" onClick={() => openStatDetail('active')}>
+          <span className="subs-metric-value">{stats.activeCount}</span>
+          <span className="subs-metric-label">Ativas</span>
+        </button>
 
-        <div className="stat-card highlight clickable" onClick={() => openStatDetail('received')}>
-          <DollarSign size={22} />
-          <div>
-            <span>R$ {stats.receivedAmount.toFixed(2)}</span>
-            <small>Receita recebida no mês</small>
-            {stats.receivedTruncated && <span className="stat-detail-hint stat-detail-warn">Valor parcial (limite de leitura)</span>}
-            <span className="stat-detail-hint">Ver detalhes ›</span>
-          </div>
-        </div>
+        <button
+          type="button"
+          className={`subs-metric subs-metric-attention ${stats.attentionCount > 0 ? 'is-alert' : ''}`}
+          onClick={() => openStatDetail('attention')}
+        >
+          <span className="subs-metric-value">
+            <AlertTriangle size={15} />
+            {stats.attentionCount}
+          </span>
+          <span className="subs-metric-label">Precisam de atenção</span>
+          <span className="subs-metric-note">
+            {stats.overdueCount} vencidas · {stats.retryingCount} em retry
+          </span>
+        </button>
 
-        <div className="stat-card clickable" onClick={() => openStatDetail('mrr')}>
-          <TrendingUp size={22} />
-          <div>
-            <span>R$ {stats.mrr.toFixed(2)}</span>
-            <small>Receita mensal equivalente (MRR)</small>
-            {stats.mrrTruncated && <span className="stat-detail-hint stat-detail-warn">Valor parcial (limite de leitura)</span>}
-            <span className="stat-detail-hint">Ver detalhes ›</span>
-          </div>
-        </div>
+        <button type="button" className="subs-metric" onClick={() => openStatDetail('cancelled')}>
+          <span className="subs-metric-value">{stats.cancelledCount}</span>
+          <span className="subs-metric-label">Canceladas</span>
+          <span className="subs-metric-note">
+            Canceladas, expiradas e inativas somados
+          </span>
+        </button>
 
-        <div className={`stat-card attention clickable ${stats.attentionCount > 0 ? 'has-issue' : ''}`} onClick={() => openStatDetail('attention')}>
-          <AlertTriangle size={22} />
-          <div>
-            <span>{stats.attentionCount}</span>
-            <small>Precisam de atenção</small>
-            <span className="stat-detail-hint">Vencidas + em retry ›</span>
-          </div>
-        </div>
+        <button type="button" className="subs-metric" onClick={() => openStatDetail('mrr')}>
+          <span className="subs-metric-value">R$ {stats.mrr.toFixed(2)}</span>
+          <span className="subs-metric-label">MRR</span>
+          {stats.mrrTruncated && <span className="subs-metric-note">Valor parcial</span>}
+        </button>
 
-        <div className="stat-card clickable" onClick={() => openStatDetail('cancelled')}>
-          <XCircle size={22} />
-          <div>
-            <span>{stats.cancelledCount}</span>
-            <small>Canceladas / expiradas</small>
-            <span className="stat-detail-hint">Ver detalhes ›</span>
-          </div>
-        </div>
+        <button type="button" className="subs-metric" onClick={() => openStatDetail('received')}>
+          <span className="subs-metric-value">R$ {stats.receivedAmount.toFixed(2)}</span>
+          <span className="subs-metric-label">Recebido no mês</span>
+          {stats.receivedTruncated && <span className="subs-metric-note">Valor parcial</span>}
+        </button>
       </div>
 
-      {/* Próximas renovações: só contagem (o dinheiro já está nos cards). */}
-      <div className="renewal-strip">
-        <span className="renewal-strip-title"><Clock size={14} /> Próximas renovações</span>
+      {/* Renovações: só contagem — cada janela abre a lista dela. */}
+      <div className="subs-renewals">
+        <span className="subs-renewals-label">Renovam em</span>
         {['next7', 'next30', 'next60'].map((key) => (
           <button
             key={key}
             type="button"
-            className="renewal-chip"
+            className="subs-renewal-chip"
             onClick={() => openStatDetail(key)}
             title={RENEWAL_WINDOW_LABELS[key]}
           >
@@ -642,57 +731,77 @@ function Subscriptions() {
             <span>{RENEWAL_WINDOW_SHORT_LABELS[key]}</span>
           </button>
         ))}
+        <span className="subs-renewals-hint">
+          Listagem em ordem de vencimento — as vencidas ficam no topo
+        </span>
       </div>
 
-      <div className="subscriptions-toolbar">
-        <div className="search-box">
-          <Search size={18} />
+      {/* Busca + filtros secundários. */}
+      <div className="subs-toolbar">
+        <div className="subs-search">
+          <Search size={16} />
           <input
             type="text"
             placeholder="Buscar por usuário, serviço ou grupo..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
+          {searchInput && (
+            <button
+              type="button"
+              className="subs-search-clear"
+              onClick={() => setSearchInput('')}
+              aria-label="Limpar busca"
+              title="Limpar busca"
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
 
-        <div className="filter-group">
-          <div className="filter-box">
-            <Filter size={16} />
-            <select value={statusFilter} onChange={(e) => handleFilter(setStatusFilter, e.target.value)}>
-              <option value="all">Todos os status</option>
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>{statusLabel(s)}</option>
-              ))}
-            </select>
-          </div>
+        <label className="subs-field">
+          <span>Ciclo</span>
+          <select value={cycleFilter} onChange={(e) => handleFilter(setCycleFilter, e.target.value)}>
+            <option value="all">Todos</option>
+            {CYCLE_OPTIONS.map((c) => (
+              <option key={c} value={c}>{cycleLabel(c)}</option>
+            ))}
+          </select>
+        </label>
 
-          <div className="filter-box">
-            <Clock size={16} />
-            <select value={cycleFilter} onChange={(e) => handleFilter(setCycleFilter, e.target.value)}>
-              <option value="all">Todas periodicidades</option>
-              {CYCLE_OPTIONS.map((c) => (
-                <option key={c} value={c}>{cycleLabel(c)}</option>
-              ))}
-            </select>
-          </div>
+        <label className="subs-field">
+          <span>Renovação</span>
+          <select value={renewalFilter} onChange={(e) => handleFilter(setRenewalFilter, e.target.value)}>
+            <option value="all">Todas</option>
+            <option value="this_month">{RENEWAL_WINDOW_LABELS.thisMonth}</option>
+            <option value="next_7">{RENEWAL_WINDOW_LABELS.next7}</option>
+            <option value="next_30">{RENEWAL_WINDOW_LABELS.next30}</option>
+            <option value="next_60">{RENEWAL_WINDOW_LABELS.next60}</option>
+            <option value="overdue">Vencidas (atrasadas)</option>
+          </select>
+        </label>
 
-          <div className="filter-box">
-            <Calendar size={16} />
-            <select value={renewalFilter} onChange={(e) => handleFilter(setRenewalFilter, e.target.value)}>
-              <option value="all">Todas renovações</option>
-              <option value="this_month">{RENEWAL_WINDOW_LABELS.thisMonth}</option>
-              <option value="next_7">{RENEWAL_WINDOW_LABELS.next7}</option>
-              <option value="next_30">{RENEWAL_WINDOW_LABELS.next30}</option>
-              <option value="next_60">{RENEWAL_WINDOW_LABELS.next60}</option>
-              <option value="overdue">Vencidas (atrasadas)</option>
-            </select>
-          </div>
-        </div>
-
-        <button className="btn btn-primary" onClick={() => setRefreshKey((key) => key + 1)}>
-          <RefreshCw size={16} />
+        <button type="button" className="subs-refresh" onClick={() => setRefreshKey((key) => key + 1)}>
+          <RefreshCw size={15} />
           Atualizar
         </button>
+      </div>
+
+      {/* Status: pílulas com a contagem de cada grupo. */}
+      <div className="subs-pills" role="tablist" aria-label="Filtrar por status">
+        {STATUS_FILTERS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            role="tab"
+            aria-selected={statusFilter === f.key}
+            className={`subs-pill ${statusFilter === f.key ? 'is-active' : ''}`}
+            onClick={() => handleFilter(setStatusFilter, f.key)}
+          >
+            {f.label}
+            <b>{statusFilterCount(f.key)}</b>
+          </button>
+        ))}
       </div>
 
       {error && <div className="error-banner">Erro: {error}</div>}
@@ -720,7 +829,7 @@ function Subscriptions() {
               </thead>
               <tbody>
                 {rows.map((sub) => {
-                  const badge = renewalBadge(sub);
+                  const badges = renewalBadges(sub);
                   const monthly = monthlyEquivalent(sub);
                   const showsMonthly = cycleMonths(sub.billing_cycle, sub.custom_cycle_months) > 1;
 
@@ -780,6 +889,11 @@ function Subscriptions() {
                           <span className={isSubscriptionOverdue(sub) ? 'renewal-overdue-text' : isRenewalSoon(sub) ? 'renewal-month' : ''}>
                             {sub.next_charge_at ? formatDateBR(sub.next_charge_at) : '—'}
                           </span>
+                          {dueLabel(sub) && (
+                            <span className={`subs-due ${isSubscriptionOverdue(sub) ? 'is-overdue' : ''}`}>
+                              {dueLabel(sub)}
+                            </span>
+                          )}
                         </div>
                       </td>
 
@@ -788,11 +902,11 @@ function Subscriptions() {
                           <span className={`status-badge ${sub.status}`}>
                             {statusLabel(sub.status)}
                           </span>
-                          {badge && (
-                            <span className={`status-badge ${badge.className}`}>
+                          {badges.map((badge) => (
+                            <span key={badge.className} className={`status-badge ${badge.className}`}>
                               {badge.label}
                             </span>
-                          )}
+                          ))}
                         </div>
                       </td>
 
@@ -1088,6 +1202,11 @@ function Subscriptions() {
                     <span className="stat-detail-total">
                       {statDetailData.length} registro{statDetailData.length !== 1 ? 's' : ''}
                     </span>
+                    {statDetailModal === 'cancelled' && (
+                      <span className="stat-detail-sum">
+                        {stats.cancelledCount} canceladas
+                      </span>
+                    )}
                     <span className="stat-detail-sum">
                       {statDetailTotalLabel()}: <strong>R$ {statDetailTotal().toFixed(2)}</strong>
                     </span>
@@ -1139,7 +1258,11 @@ function Subscriptions() {
                         {(item.overdue || item.retrying) && (
                           <div className="stat-detail-next stat-detail-flag">
                             <AlertCircle size={12} />
-                            <span>{item.overdue ? 'Vencida' : 'Em retry'}</span>
+                            <span>
+                              {[item.overdue ? 'Vencida' : null, item.retrying ? 'Em retry' : null]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </span>
                           </div>
                         )}
                         {item.subId && (

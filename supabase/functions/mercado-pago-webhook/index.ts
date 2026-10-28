@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { simulateAmount } from "../_shared/platformFee.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -204,14 +205,10 @@ export default {
             const totalFees = gatewayRate + platformRate;
             const ownerAmount = amount * (1 - totalFees);
 
-            await supabaseAdmin.rpc("credit_wallet", {
-              p_user_id: group.owner_id,
-              p_amount: ownerAmount,
-              p_description: `Taxa de adesão no grupo ${group.name}`,
-              p_reference_type: "entrance",
-              p_reference_id: null,
-              p_group_id: group_id,
-            });
+            // Repasse feito pelo trigger do banco (trg_credit_wallet_on_payment),
+            // assim que a linha em `payments` entra como 'paid'. Creditar aqui
+            // duplicaria o valor.
+            console.log(`Repasse da taxa de adesao do grupo ${group_id} sera feito pelo trigger do banco`);
           } catch (walletErr) {
             console.error("Wallet credit error:", walletErr);
           }
@@ -403,6 +400,9 @@ export default {
             external_reference: externalReference,
             started_at: new Date().toISOString(),
             expires_at: expiresAt.toISOString(),
+            // Vencimento do ciclo (data + ciclo): fonte da verdade da regra de
+            // status (atrasada no vencimento, cancelada depois de 7 dias).
+            renewal_due_at: expiresAt.toISOString(),
           }, { onConflict: "user_id, group_id" });
 
         // ACESSO LIBERADO
@@ -460,18 +460,12 @@ export default {
 
             const memberName = memberUser?.name || "Membro";
 
-            const { data: settingsData } = await supabaseAdmin
-              .from("app_settings")
-              .select("key, value")
-              .in("key", ["gateway_fee_percent", "platform_fee_percent"]);
-
-            const settings: Record<string, string> = {};
-            settingsData?.forEach(s => { settings[s.key] = s.value; });
-
-            const gatewayRate = parseFloat(settings.gateway_fee_percent || "4.98") / 100;
-            const platformRate = parseFloat(settings.platform_fee_percent || "3.95") / 100;
-            const totalFees = gatewayRate + platformRate;
-            const ownerAmount = subscriptionAmount * (1 - totalFees);
+            // Margem pela faixa da plataforma. A FAIXA e escolhida pelo preco
+            // MENSAL do grupo; a margem e aplicada sobre o valor cobrado no
+            // ciclo. O credito real vem do trigger do banco
+            // (trg_credit_wallet_on_payment) — aqui e so o log.
+            const sim = simulateAmount(subscriptionAmount, group.price_per_slot);
+            const ownerAmount = sim.net;
 
             const { data: subData } = await supabaseAdmin
               .from("user_subscriptions")
@@ -480,14 +474,12 @@ export default {
               .eq("group_id", group_id)
               .maybeSingle();
 
-            await supabaseAdmin.rpc("credit_wallet", {
-              p_user_id: group.owner_id,
-              p_amount: ownerAmount,
-              p_description: `Assinatura de ${memberName} no grupo ${group.name}`,
-              p_reference_type: "subscription",
-              p_reference_id: subData?.id || null,
-              p_group_id: group_id,
-            });
+            // Repasse feito pelo trigger do banco (trg_credit_wallet_on_payment).
+            console.log(`Repasse da assinatura do grupo ${group_id} sera feito pelo trigger do banco`);
+            console.log(
+              `  margem da plataforma: ${sim.percent}% (faixa pelo preco mensal R$ ${Number(group.price_per_slot || 0).toFixed(2)})` +
+              ` | taxa R$ ${sim.platformFee.toFixed(2)} | liquido para o dono R$ ${ownerAmount.toFixed(2)}`,
+            );
           } catch (walletErr) {
             console.error("Wallet credit error:", walletErr);
           }

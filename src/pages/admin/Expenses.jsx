@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Trash2, Edit2, X, Repeat, DollarSign, BarChart3, Search, Save, Calendar, AlertTriangle, Clock } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+// A regra de recorrência mora em lib/expenseRecurrence.js: a tela de Evolução
+// precisa do MESMO cálculo para atribuir o custo de cada mês da linha de lucro.
+import { getRecurrenceMonths } from '../../lib/expenseRecurrence';
 import './Expenses.css';
 
 const CATEGORIES = [
@@ -38,32 +41,6 @@ const EMPTY_FORM = {
   status: 'pending',
   notes: '',
 };
-
-function getRecurrenceMonths(recurrenceDay, startDate, endDate, count, skippedMonths) {
-  const months = [];
-  if (!startDate || !recurrenceDay) return months;
-  const start = new Date(startDate + 'T12:00:00');
-  const limit = endDate ? new Date(endDate + 'T12:00:00') : null;
-  const day = parseInt(recurrenceDay);
-  const skipped = skippedMonths || [];
-  let current = new Date(start.getFullYear(), start.getMonth(), day);
-  let iterations = 0;
-  const maxIterations = count || 120;
-  while (iterations < maxIterations) {
-    if (limit && current > limit) break;
-    if (current >= start) {
-      const y = current.getFullYear();
-      const m = String(current.getMonth() + 1).padStart(2, '0');
-      const key = `${y}-${m}`;
-      if (!skipped.includes(key)) {
-        months.push(key);
-      }
-    }
-    current = new Date(current.getFullYear(), current.getMonth() + 1, day);
-    iterations++;
-  }
-  return months;
-}
 
 function DeleteModal({ expense, filterMonth, onClose, onDeleteAll, onDeleteMonth }) {
   if (!expense) return null;

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, CalendarDays, Check, ChevronDown, Copy, Loader2, X,
+  Activity, CalendarDays, Check, ChevronDown, Copy, Loader2, Search, X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import {
-  EVENT_META, EVENT_TONE,
+  EVENT_META, EVENT_TONE, PERIODS,
   dayKey, dayLabel, formatFullDate, formatRelative, formatStamp,
   metaEntries, parseMetadata, periodStart,
 } from './eventLogMeta';
@@ -14,11 +14,23 @@ import './EventLog.css';
 const PAGE_SIZE = 120;
 /* Com busca ativa carregamos o período inteiro para que o resultado seja completo. */
 const SEARCH_LIMIT = 2000;
+/* Na ficha do usuário o volume é pequeno: carregamos tudo de uma vez para a
+   contagem e a ordenação serem exatas, sem paginação pela metade. */
+const USER_LIMIT = 2000;
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-export default function EventLog({ type, search, period, counts }) {
+export default function EventLog({ type = 'all', search: searchProp = '', period: periodProp = 'all', counts, userId }) {
   const navigate = useNavigate();
+
+  /* Com `userId` o log vira a ficha de um usuário: ele carrega a própria
+     busca e o próprio período, porque na página do usuário não existe a
+     barra de controles do painel de eventos. */
+  const isUserScope = Boolean(userId);
+  const [localSearch, setLocalSearch] = useState('');
+  const [localPeriod, setLocalPeriod] = useState('all');
+  const search = isUserScope ? localSearch : searchProp;
+  const period = isUserScope ? localPeriod : periodProp;
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -26,12 +38,71 @@ export default function EventLog({ type, search, period, counts }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  const [truncated, setTruncated] = useState(false);
 
   const userMapRef = useRef({});
   const groupMapRef = useRef({});
 
   /* ------------------------------ consultas ------------------------------ */
   const fetchRows = useCallback(async (from, size) => {
+    const since = periodStart(period);
+
+    /* Ficha do usuário: só os eventos ligados a ele. */
+    if (userId) {
+      /* Caminho preferencial: a função do banco lê o metadata nos dois
+         formatos em que ele é gravado (objeto jsonb e texto jsonb) e
+         devolve o log já filtrado. */
+      try {
+        const rpc = await supabase.rpc('admin_user_events', {
+          p_user_id: userId,
+          p_since: since,
+          p_limit: USER_LIMIT,
+        });
+        if (!rpc.error && Array.isArray(rpc.data)) {
+          const list = rpc.data.map(ev => ({ ...ev, parsed_meta: parseMetadata(ev.metadata) }));
+          return { rows: list, count: list.length, truncated: list.length >= USER_LIMIT };
+        }
+      } catch {
+        /* função ainda não aplicada no banco — segue para a consulta direta */
+      }
+
+      const build = () => {
+        let q = supabase
+          .from('platform_events')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (since) q = q.gte('created_at', since);
+        return q;
+      };
+
+      /* Caminho principal: o próprio usuário disparou o evento. */
+      const primary = await build().eq('created_by', userId).limit(USER_LIMIT);
+      if (primary.error) throw primary.error;
+
+      /* Caminho secundário: eventos em que o usuário aparece no metadata
+         (criados por outra sessão, por exemplo). O operador `->>` do
+         PostgREST pode ser recusado — nesse caso seguimos só com o caminho
+         principal, sem quebrar a tela. */
+      let secondary = [];
+      try {
+        const res = await build().eq('metadata->>user_id', userId).limit(USER_LIMIT);
+        if (!res.error && res.data) secondary = res.data;
+      } catch {
+        /* o banco recusou o filtro por metadata */
+      }
+
+      const merged = new Map();
+      [...(primary.data || []), ...secondary].forEach(ev => {
+        if (ev?.id && !merged.has(ev.id)) merged.set(ev.id, ev);
+      });
+
+      const list = [...merged.values()]
+        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+        .map(ev => ({ ...ev, parsed_meta: parseMetadata(ev.metadata) }));
+
+      return { rows: list, count: list.length, truncated: list.length >= USER_LIMIT };
+    }
+
     let query = supabase
       .from('platform_events')
       .select('*', { count: 'exact' })
@@ -40,7 +111,6 @@ export default function EventLog({ type, search, period, counts }) {
 
     if (type !== 'all') query = query.eq('event_type', type);
 
-    const since = periodStart(period);
     if (since) query = query.gte('created_at', since);
 
     const { data, error, count } = await query;
@@ -50,7 +120,7 @@ export default function EventLog({ type, search, period, counts }) {
       rows: (data || []).map(ev => ({ ...ev, parsed_meta: parseMetadata(ev.metadata) })),
       count: count ?? (data || []).length,
     };
-  }, [type, period]);
+  }, [type, period, userId]);
 
   /* Enriquece com usuário e grupo — um lote por página, nunca N+1. */
   const enrich = useCallback(async (parsed) => {
@@ -79,6 +149,11 @@ export default function EventLog({ type, search, period, counts }) {
     }));
   }, []);
 
+  /* Na ficha do usuário a busca é local (a lista inteira já está em
+     memória), então digitar não pode disparar nova consulta. No painel a
+     busca recarrega o período inteiro, para o resultado ser completo. */
+  const searchKey = isUserScope ? '' : search;
+
   useEffect(() => {
     let cancelled = false;
 
@@ -86,22 +161,25 @@ export default function EventLog({ type, search, period, counts }) {
       setLoading(true);
       setExpandedId(null);
       try {
-        const { rows: raw, count } = await fetchRows(0, search ? SEARCH_LIMIT : PAGE_SIZE);
+        const { rows: raw, count, truncated: cut } = await fetchRows(0, search ? SEARCH_LIMIT : PAGE_SIZE);
         const enriched = await enrich(raw);
         if (cancelled) return;
         setRows(enriched);
         setTotal(count);
+        setTruncated(Boolean(cut));
       } catch {
         if (!cancelled) {
           setRows([]);
           setTotal(0);
+          setTruncated(false);
         }
       }
       if (!cancelled) setLoading(false);
     })();
 
     return () => { cancelled = true; };
-  }, [fetchRows, enrich, search]);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [fetchRows, enrich, searchKey]);
 
   const loadMore = async () => {
     if (loadingMore) return;
@@ -214,12 +292,48 @@ export default function EventLog({ type, search, period, counts }) {
   /* -------------------------------- render -------------------------------- */
   return (
     <div className="ev-root">
+      {/* --------------------- busca e período (ficha do usuário) --------------------- */}
+      {isUserScope && (
+        <div className="ev-toolbar">
+          <div className="ev-search">
+            <Search size={16} />
+            <input
+              type="text"
+              placeholder="Buscar nos eventos deste usuário..."
+              value={search}
+              onChange={(e) => setLocalSearch(e.target.value)}
+            />
+            {search && (
+              <button className="ev-search-clear" onClick={() => setLocalSearch('')} aria-label="Limpar busca">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="ev-period" role="group" aria-label="Período">
+            {PERIODS.map(p => (
+              <button
+                key={p.value}
+                className={period === p.value ? 'active' : ''}
+                onClick={() => setLocalPeriod(p.value)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ------------------------------ contagem ------------------------------ */}
       <div className="ev-stats">
         <span className="ev-stats-main">
           {search.trim() ? (
             <>
               <strong>{visible.length}</strong> resultado{visible.length !== 1 ? 's' : ''} para <em>“{search.trim()}”</em>
+            </>
+          ) : isUserScope ? (
+            <>
+              <strong>{visible.length}</strong> evento{visible.length !== 1 ? 's' : ''} deste usuário
             </>
           ) : (
             <>
@@ -228,7 +342,9 @@ export default function EventLog({ type, search, period, counts }) {
           )}
         </span>
         <span className="ev-stats-sub">
-          {total} no período · {counts.total} no histórico
+          {isUserScope
+            ? `${total} no histórico${truncated ? ` · mostrando os ${USER_LIMIT} mais recentes` : ''}`
+            : `${total} no período · ${counts?.total ?? total} no histórico`}
         </span>
       </div>
 
@@ -244,7 +360,9 @@ export default function EventLog({ type, search, period, counts }) {
           <p>
             {search.trim()
               ? `Nenhum evento corresponde a “${search.trim()}”.`
-              : 'Nenhum evento registrado neste período.'}
+              : isUserScope
+                ? 'Nenhum evento registrado para este usuário.'
+                : 'Nenhum evento registrado neste período.'}
           </p>
         </div>
       ) : (
@@ -333,13 +451,22 @@ export default function EventLog({ type, search, period, counts }) {
                           </div>
 
                           <div className="ev-detail-actions">
-                            {ev.user && (
-                              <button
-                                className="ev-ghost-btn"
-                                onClick={() => navigate(`/admin/users/${ev.user.id}`)}
-                              >
-                                Ver usuário
-                              </button>
+                            {ev.user && !isUserScope && (
+                              <>
+                                <button
+                                  className="ev-ghost-btn"
+                                  onClick={() => navigate(`/admin/users/${ev.user.id}`)}
+                                >
+                                  Ver usuário
+                                </button>
+                                <button
+                                  className="ev-ghost-btn"
+                                  onClick={() => navigate(`/admin/users/${ev.user.id}?tab=events`)}
+                                  title="Abrir o log de eventos deste usuário"
+                                >
+                                  Ver logs
+                                </button>
+                              </>
                             )}
                             {ev.group && (
                               <button

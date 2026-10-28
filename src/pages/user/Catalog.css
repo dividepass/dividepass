@@ -410,6 +410,18 @@
   gap: 0;
 }
 
+/* Grupo verificado pela DividePass: compra mais segura, então o card inteiro
+   ganha um fio verde — o selo é o que segura o olhar. */
+.group-card.is-verified {
+  border-color: rgba(16, 185, 129, 0.38);
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 14px 34px -26px rgba(16, 185, 129, 0.75);
+}
+
+.group-card.is-verified:hover {
+  border-color: rgba(16, 185, 129, 0.6);
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05), 0 18px 40px -24px rgba(16, 185, 129, 0.85);
+}
+
 .group-card:hover {
   transform: translateY(-3px);
   box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05);
@@ -652,6 +664,23 @@
 
 .gc-creator-avatar.gc-avatar-dp {
   background: linear-gradient(135deg, var(--primary), #818CF8);
+}
+
+/* Selos do grupo (verificado / anúncios / tipo de conta) */
+.gc-tags {
+  margin-top: 0.45rem;
+}
+
+/* Grupo oficial: mostra o LOGO da DividePass (o mark tem pontas que um
+   círculo cortaria, então o chip é quadrado com cantos arredondados). */
+.gc-creator-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  object-fit: contain;
+  padding: 2px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
 }
 
 .gc-creator strong {

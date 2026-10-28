@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { dispatchNotification } from "../_shared/send-notification.ts";
+import { applySubscriptionLifecycle } from "../_shared/subscriptionLifecycle.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -58,26 +59,26 @@ export default {
       const supabaseServiceKey = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
       const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-      const fiveDaysAgo = new Date();
-      fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
-      const cutoff = fiveDaysAgo.toISOString().split("T")[0];
+      const now = new Date();
 
-      // Busca faturas pendentes vencidas há mais de 5 dias
+      // Faturas pendentes que JÁ VENCERAM.
+      //
+      // O filtro antigo pegava as vencidas há mais de 5 dias e cancelava a
+      // assinatura ali mesmo. A regra oficial é outra: a assinatura fica
+      // ATRASADA por 7 dias (o grupo continua visível, com card de renovação)
+      // e só depois é cancelada e o usuário é desvinculado. Aqui a fatura
+      // vencida é marcada como failed — o cancelamento é do job de status
+      // (`applySubscriptionLifecycle`, chamado no fim deste job).
       //
       // O embed `subscription:user_subscriptions!inner(...)` foi removido: a
       // tabela `invoices` NAO tem coluna `subscription_id` nem FK para
       // `user_subscriptions`, entao o PostgREST rejeitava o SELECT inteiro
       // e o job morria com 500 antes de processar qualquer fatura.
-      // A assinatura agora e resolvida separadamente, por (user_id, group_id).
-      //
-      // `service_id` tambem NAO existe em `invoices` (o servico vem do grupo):
-      // pedir uma coluna inexistente faz o PostgREST devolver 42703 e derruba
-      // o job inteiro. A coluna foi removida do select.
       const { data: overdueInvoices, error: invoiceError } = await supabaseAdmin
         .from("invoices")
         .select("id, user_id, group_id, amount, due_date, status")
         .eq("status", "pending")
-        .lt("due_date", cutoff);
+        .lt("due_date", now.toISOString().slice(0, 10));
 
       if (invoiceError) {
         throw invoiceError;
@@ -91,44 +92,31 @@ export default {
 
         if (!userId || !groupId) continue;
 
-        const { data: subRows } = await supabaseAdmin
-          .from("user_subscriptions")
-          .select("id, status, group_id, user_id")
-          .eq("user_id", userId)
-          .eq("group_id", groupId)
-          .order("created_at", { ascending: false })
-          .limit(1);
-
-        const subscription = (subRows && subRows[0]) || null;
-
         // 1. Marca fatura como falha/inadimplente
         await supabaseAdmin
           .from("invoices")
           .update({ status: "failed", updated_at: new Date().toISOString() })
           .eq("id", invoice.id);
 
-        // 2. Cancela/expira a assinatura
-        const subscriptionId = subscription?.id || null;
-        if (subscriptionId) {
-          await supabaseAdmin
-            .from("user_subscriptions")
-            .update({ status: "expired", updated_at: new Date().toISOString() })
-            .eq("id", subscriptionId);
-        }
-
-        // 3. Remove o membro do grupo
+        // 2. O membro fica inadimplente (grupo visível, credencial bloqueada).
         await supabaseAdmin
           .from("group_members")
-          .update({ status: "inactive", left_at: new Date().toISOString() })
+          .update({ payment_status: "overdue", updated_at: new Date().toISOString() })
           .eq("group_id", groupId)
           .eq("user_id", userId);
 
-        // 4. Reseta a senha da credencial do grupo para invalidar acesso
+        // 3. Reseta a senha DA CREDENCIAL DESTE MEMBRO.
+        //
+        //    O codigo antigo fazia `.eq("group_id", groupId)` sem filtro de
+        //    `assigned_to`: isso trocava a senha de TODAS as credenciais do
+        //    grupo e derrubava o acesso de quem estava em dia. Agora so a
+        //    credencial atribuida a este membro e invalidada.
         const newPassword = generatePassword();
         await supabaseAdmin
           .from("group_credentials")
           .update({ login_password: newPassword, updated_at: new Date().toISOString() })
-          .eq("group_id", groupId);
+          .eq("group_id", groupId)
+          .eq("assigned_to", userId);
 
         const { data: group } = await supabaseAdmin
           .from("groups")
@@ -136,16 +124,16 @@ export default {
           .eq("id", groupId)
           .maybeSingle();
 
-        // 5. Log de atividade
+        // 4. Log de atividade
         await supabaseAdmin.from("activity_logs").insert({
           user_id: userId,
           action: "update",
-          entity_type: subscriptionId ? "subscription" : "invoice",
-          entity_id: subscriptionId || invoice.id,
-          description: `Membro removido por inadimplência. Fatura ${invoice.id} vencida há mais de 5 dias. Senha da credencial alterada.`,
+          entity_type: "invoice",
+          entity_id: invoice.id,
+          description: `Fatura vencida. A assinatura fica atrasada por 7 dias antes de ser cancelada.`,
         });
 
-        // 6. Notifica os outros membros ativos do grupo sobre a remoção
+        // 5. Notifica o membro (e o dono do grupo) sobre a renovação
         const { data: activeMembers } = await supabaseAdmin
           .from("group_members")
           .select("user_id")
@@ -160,8 +148,8 @@ export default {
 
         if (audienceIds.length > 0) {
           await dispatchNotification(supabaseAdmin, {
-            title: "Atualização de segurança no grupo",
-            message: "Um membro foi removido por inadimplência e a senha da conta foi alterada. Verifique suas credenciais.",
+            title: "Renovação em atraso",
+            message: `A renovação do grupo "${group?.name || "grupo"}" está atrasada. Regularize em até 7 dias para não perder o acesso.`,
             event_type: "overdue_member_removed",
             metadata: { user_id: userId, group_id: groupId, group_name: group?.name || groupId },
             audience: { type: "users", user_ids: Array.from(new Set(audienceIds)) },
@@ -173,8 +161,20 @@ export default {
         processed.push(invoice.id);
       }
 
+      // 6. Regra de status (ATRASADA / CANCELADA após 7 dias).
+      //
+      //    Rodar aqui é uma rede de seguranca: se o job de status estiver
+      //    atrasado, a regra oficial ainda e aplicada.
+      const lifecycle = await applySubscriptionLifecycle(supabaseAdmin, now);
+
       return Response.json(
-        { processed: processed.length, invoices: processed },
+        {
+          processed: processed.length,
+          invoices: processed,
+          overdue: lifecycle.overdue,
+          cancelled: lifecycle.cancelled,
+          cancelledIds: lifecycle.cancelledIds,
+        },
         { headers: corsHeaders }
       );
     } catch (error) {

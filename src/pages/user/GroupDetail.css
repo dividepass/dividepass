@@ -79,8 +79,15 @@
 }
 
 .gd-badge.verified {
-  background: rgba(79, 70, 229, 0.1);
-  color: var(--primary);
+  background: linear-gradient(135deg, #10B981, #059669);
+  color: #FFFFFF;
+  font-weight: 700;
+  box-shadow: 0 4px 12px -6px rgba(16, 185, 129, 0.8);
+}
+
+/* Selos (anúncios / tipo de conta) logo abaixo dos badges do header */
+.gd-group-tags {
+  margin-top: 0.55rem;
 }
 
 .gd-badge.status.open {

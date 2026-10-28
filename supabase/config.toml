@@ -63,6 +63,28 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# ---------------------------------------------------------------------------
+# E-MAILS DE CICLO DE VIDA
+#
+# `send-lifecycle-emails` é chamada pelo pg_cron com `Authorization: Bearer
+# <segredo>` — e segredo não é JWT. Com verify_jwt = true (padrão) o gateway
+# do Supabase responde 401 ANTES do código rodar e o job nunca acontece.
+# A validação real (SERVICE_ROLE_KEY, segredo do app_settings ou
+# BILLING_CRON_SECRET) está dentro da própria função.
+#
+# `send-welcome-email` também fica com verify_jwt = false porque o front
+# chama no login com o token do usuário — e a função valida a sessão dela
+# mesma, ignorando o `user_id` do corpo nesse caso (ninguém consegue
+# disparar e-mail em nome de outra pessoa).
+# ---------------------------------------------------------------------------
+[functions.send-lifecycle-emails]
+enabled = true
+verify_jwt = false
+
+[functions.send-welcome-email]
+enabled = true
+verify_jwt = false
+
 [functions.admin-update-user]
 enabled = true
 verify_jwt = false

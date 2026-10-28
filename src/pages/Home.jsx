@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import logoImg from '../assets/logo.png';
 import {
@@ -73,27 +73,22 @@ const steps = [
   {
     icon: UserPlus,
     title: 'Crie sua conta',
-    description: 'Cadastre-se gratuitamente em poucos minutos.',
+    description: 'Leva menos de 1 minuto. Só e-mail e senha, sem cartão.',
   },
   {
     icon: Compass,
-    title: 'Encontre uma plataforma',
-    description: 'Encontre a plataforma ou assinatura que você quer acessar e economize dividindo o valor.',
+    title: 'Escolha o serviço',
+    description: 'Netflix, Prime, Spotify, ChatGPT… escolha o que você quer usar.',
   },
   {
     icon: Users,
-    title: 'Entre em um grupo',
-    description: 'Escolha uma vaga disponível e entre em um grupo já formado.',
+    title: 'Entre num grupo',
+    description: 'Vagas abertas de quem já tem a assinatura. Você fica com a sua parte.',
   },
   {
     icon: Key,
-    title: 'Receba as credenciais',
-    description: 'Após a confirmação, você recebe as informações necessárias para acessar a assinatura.',
-  },
-  {
-    icon: Sparkles,
-    title: 'Aproveite e economize',
-    description: 'Acesse sua assinatura e aproveite pagando apenas a sua parte.',
+    title: 'Receba o acesso',
+    description: 'Assim que o pagamento confirma, as credenciais chegam para você usar.',
   },
 ];
 
@@ -142,6 +137,78 @@ const faqs = [
   }
 ];
 
+/**
+ * SplitDemo — a assinatura visual do DividePass: o preço CHEIO de uma
+ * assinatura aparece dividido em N partes. A primeira parte (azul) é a que o
+ * visitante paga. Usa o preço oficial real do catálogo, então não é número
+ * inventado — se o catálogo não tiver preço, o bloco simplesmente não aparece.
+ */
+function SplitDemo({ services, members = 4 }) {
+  const service = useMemo(() => {
+    const lista = Array.isArray(services) ? services : [];
+    return lista.find(s => parseFloat(s.official_price || 0) > 0) || null;
+  }, [services]);
+
+  if (!service) return null;
+
+  const full = parseFloat(service.official_price || 0);
+  const share = full / members;
+  const saving = full - share;
+
+  return (
+    <div className="split-demo">
+      <div className="split-head">
+        <span className="split-service">
+          {service.icon_url ? (
+            <img src={service.icon_url} alt="" />
+          ) : (
+            <span className="split-service-fallback" style={{ background: service.color }}>
+              {service.icon || service.name?.[0]}
+            </span>
+          )}
+          {service.full_name || service.name}
+        </span>
+        <span className="split-price-full">
+          <small>preço oficial</small>
+          <strong>{fmtBRL(full)}</strong>
+          <small>/mês</small>
+        </span>
+      </div>
+
+      <div className="split-bar">
+        {Array.from({ length: members }).map((_, i) => (
+          <span
+            key={i}
+            className={`split-slice ${i === 0 ? 'is-yours' : ''}`}
+            style={{ animationDelay: `${0.30 + i * 0.08}s` }}
+          />
+        ))}
+      </div>
+
+      <div className="split-parts">
+        {Array.from({ length: members }).map((_, i) => (
+          <span
+            key={i}
+            className={`split-part ${i === 0 ? 'is-yours' : ''}`}
+            style={{ animationDelay: `${0.40 + i * 0.08}s` }}
+          >
+            <small>{i === 0 ? 'você paga' : `pessoa ${i + 1}`}</small>
+            <strong>{fmtBRL(share)}</strong>
+          </span>
+        ))}
+      </div>
+
+      <p className="split-note">
+        <Sparkles size={15} />
+        <span>
+          Em vez de <strong>{fmtBRL(full)}</strong> por mês, você paga <strong>{fmtBRL(share)}</strong> —
+          economiza <strong>{fmtBRL(saving)}</strong> todo mês.
+        </span>
+      </p>
+    </div>
+  );
+}
+
 export default function Home() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -168,12 +235,55 @@ export default function Home() {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-    supabase.from('users')
+    // Avatares do hero: prioriza quem tem foto — foto real passa mais
+    // credibilidade que uma letra colorida — e completa com os mais recentes.
+    // A tabela `users` é bloqueada para visitante (RLS), então a fonte de
+    // foto real é o depoimento aprovado (foto de perfil publicada por quem
+    // usa o app). O avatar do perfil entra como complemento, caso a RLS
+    // seja liberada no futuro.
+    const comFoto = supabase.from('users')
+      .select('id, name, email, avatar_url')
+      .gte('created_at', startOfMonth)
+      .not('avatar_url', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(4);
+
+    const recentes = supabase.from('users')
       .select('id, name, email, avatar_url')
       .gte('created_at', startOfMonth)
       .order('created_at', { ascending: false })
-      .limit(4)
-      .then(({ data }) => { if (data) setMonthUsers(data); });
+      .limit(8);
+
+    const fotosPublicadas = supabase.from('testimonials')
+      .select('id, user_id, user_name, avatar_url')
+      .eq('status', 'approved')
+      .not('avatar_url', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(6);
+
+    Promise.all([comFoto, recentes, fotosPublicadas]).then(([comFotoRes, recentesRes, fotosRes]) => {
+      const comFotoList = comFotoRes.data || [];
+      const jaPegos = new Set(comFotoList.map(u => u.id));
+      const resto = (recentesRes.data || []).filter(u => !jaPegos.has(u.id));
+      const usuarios = [...comFotoList, ...resto];
+
+      const publicados = (fotosRes.data || []).map(t => ({
+        id: t.user_id || t.id,
+        name: t.user_name,
+        email: null,
+        avatar_url: t.avatar_url,
+      }));
+
+      // Sem duplicidade: quem tem foto de perfil já vem do depoimento.
+      const vistos = new Set();
+      const faces = [...publicados, ...usuarios].filter(u => {
+        if (!u.id || vistos.has(u.id)) return false;
+        vistos.add(u.id);
+        return true;
+      });
+
+      setMonthUsers(faces.slice(0, 4));
+    });
 
     supabase.from('users')
       .select('id', { count: 'exact', head: true })
@@ -262,12 +372,30 @@ export default function Home() {
       .in('status', ['open', 'forming'])
       .then(({ data }) => { if (data) setGroups(data); });
 
+    // Depoimentos: busca um pool maior, junta a foto atual do perfil de cada
+    // um e traz para frente quem tem foto.
     supabase.from('testimonials')
-      .select('id, user_name, user_role, text, rating, avatar_url')
+      .select('id, user_id, user_name, user_role, text, rating, avatar_url, created_at')
       .eq('status', 'approved')
       .order('created_at', { ascending: false })
-      .limit(6)
-      .then(({ data }) => { if (data) setTestimonials(data); });
+      .limit(12)
+      .then(async ({ data }) => {
+        const lista = data || [];
+        if (!lista.length) { setTestimonials([]); return; }
+        const ids = [...new Set(lista.map(t => t.user_id).filter(Boolean))];
+        let fotos = {};
+        if (ids.length) {
+          const { data: perfis } = await supabase
+            .from('users').select('id, avatar_url').in('id', ids);
+          (perfis || []).forEach(u => { fotos[u.id] = u.avatar_url; });
+        }
+        const comFoto = lista.map(t => ({
+          ...t,
+          foto: t.avatar_url || fotos[t.user_id] || null,
+        }));
+        comFoto.sort((a, b) => (b.foto ? 1 : 0) - (a.foto ? 1 : 0));
+        setTestimonials(comFoto.slice(0, 6));
+      });
 
     supabase.from('users')
       .select('id', { count: 'exact', head: true })
@@ -407,6 +535,39 @@ export default function Home() {
       <main className="main-content">
         {/* HERO */}
         <section className="hero">
+          {(monthCount > 0 || monthUsers.length > 0) && (
+            <div className="hero-proof">
+              <div className="hero-trust-avatars">
+                {monthUsers.slice(0, 3).map((user, i) => {
+                  const initials = (user.name || user.email || 'U').charAt(0).toUpperCase();
+                  const colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+                  const bg = colors[i % colors.length];
+                  return (
+                    <div
+                      key={user.id}
+                      className="hero-trust-avatar"
+                      title={user.name || user.email}
+                      style={{ background: user.avatar_url ? 'transparent' : bg }}
+                    >
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt={user.name || 'Usuário'} />
+                      ) : (
+                        <span>{initials}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <span className="hero-proof-text">
+                {monthCount > 0 ? (
+                  <><strong>{monthCount} {monthCount === 1 ? 'pessoa entrou' : 'pessoas entraram'}</strong> neste mês</>
+                ) : (
+                  <><strong>Gente real</strong> já divide assinaturas aqui com você</>
+                )}
+              </span>
+            </div>
+          )}
+
           <h1 className="hero-title">
             Assinaturas digitais
             <br />
@@ -414,12 +575,13 @@ export default function Home() {
           </h1>
 
           <p className="hero-subtitle">
-            A DividePass conecta você a grupos de assinaturas digitais para economizar em serviços como Netflix, Spotify, Disney+, ChatGPT Plus e muitos outros. Tenha acesso de forma simples e segura, com entrega em minutos, suporte contínuo e renovação automática.
+            Entre num grupo que já tem Netflix, Spotify ou ChatGPT, pague só a sua
+            parte e receba o acesso na hora. Sem mensalidade escondida, sem surpresa.
           </p>
 
           <div className="hero-buttons">
-            <Link to="/register" className="btn btn-primary btn-lg">
-              Economize agora!
+            <Link to="/register" className="btn btn-primary btn-lg btn-hero">
+              Criar conta grátis agora!
               <ArrowRight size={20} />
             </Link>
             <button onClick={() => scrollToSection('como-funciona')} className="btn btn-outline btn-lg">
@@ -428,43 +590,10 @@ export default function Home() {
             </button>
           </div>
 
+          <SplitDemo services={allServices} />
+
           {(monthCount > 0 || monthSavingsTotal > 0) && (
             <div className="hero-trust">
-              {monthCount > 0 && (
-                <div className="hero-stat-card">
-                  <div className="hero-trust-avatars">
-                    {monthUsers.slice(0, 3).map((user, i) => {
-                      const initials = (user.name || user.email || 'U').charAt(0).toUpperCase();
-                      const colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
-                      const bg = colors[i % colors.length];
-                      return (
-                        <div
-                          key={user.id}
-                          className="hero-trust-avatar"
-                          title={user.name || user.email}
-                          style={{ background: user.avatar_url ? 'transparent' : bg }}
-                        >
-                          {user.avatar_url ? (
-                            <img src={user.avatar_url} alt={user.name || 'Usuário'} />
-                          ) : (
-                            <span>{initials}</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {monthCount > 3 && (
-                      <div
-                        className="hero-trust-avatar hero-trust-avatar-more"
-                        title={`+${monthCount - 3} usuários`}
-                      >
-                        +{monthCount - 3}
-                      </div>
-                    )}
-                  </div>
-                  <span className="hero-stat-value">{monthCount}</span>
-                  <span className="hero-stat-label">novos usuários este mês</span>
-                </div>
-              )}
               {monthSavingsTotal > 0 && (
                 <div className="hero-stat-card hero-stat-card-highlight">
                   <span className="hero-stat-emoji">💰</span>
@@ -586,7 +715,8 @@ export default function Home() {
         <section id="como-funciona" className="how-it-works-section">
           <div className="section-header">
             <span className="section-tag">Como Funciona</span>
-            <h2 className="section-title">Em 5 passos você já está economizando</h2>
+            <h2 className="section-title">Em 4 passos você já está economizando</h2>
+            <p className="section-description">Sem burocracia: você escolhe, entra no grupo e usa.</p>
           </div>
 
           {/* Desktop: grid direto */}
@@ -631,15 +761,19 @@ export default function Home() {
                 />
               ))}
             </div>
-            <div className="step-highlight-card">
-              <div className="step-highlight-icon"><PlusCircle size={24} /></div>
+          </div>
+
+          {/* Chamada para quem JÁ tem assinatura — vale no desktop e no mobile */}
+          <div className="step-highlight-card">
+            <div className="step-highlight-icon"><PlusCircle size={24} /></div>
+            <div className="step-highlight-copy">
               <h3>{stepHighlight.title}</h3>
               <p>{stepHighlight.description}</p>
-              <Link to="/dashboard/groups/new" className="step-highlight-cta">
-                Criar um grupo
-                <ArrowRight size={15} />
-              </Link>
             </div>
+            <Link to="/dashboard/my-groups/create" className="step-highlight-cta">
+              Criar um grupo
+              <ArrowRight size={15} />
+            </Link>
           </div>
         </section>
 
@@ -663,8 +797,8 @@ export default function Home() {
                     <p className="testimonial-text">"{testimonial.text}"</p>
                     <div className="testimonial-author">
                       <div className="testimonial-avatar">
-                        {testimonial.avatar_url ? (
-                          <img src={testimonial.avatar_url} alt={testimonial.user_name || 'Usuário'} />
+                        {testimonial.foto ? (
+                          <img src={testimonial.foto} alt={testimonial.user_name || 'Usuário'} />
                         ) : (
                           (testimonial.user_name?.[0] || '?')
                         )}
@@ -709,13 +843,20 @@ export default function Home() {
                 <button
                   className="faq-question"
                   onClick={() => setOpenFaq(openFaq === index ? -1 : index)}
+                  aria-expanded={openFaq === index}
                 >
-                  <HelpCircle size={18} />
-                  <span>{faq.question}</span>
-                  <ChevronRight size={18} className="faq-chevron" />
+                  <span className="faq-question-text">
+                    <span className="faq-question-index">{String(index + 1).padStart(2, '0')}</span>
+                    <span className="faq-question-label">{faq.question}</span>
+                  </span>
+                  <span className="faq-toggle" aria-hidden="true">
+                    <ChevronRight size={18} className="faq-chevron" />
+                  </span>
                 </button>
                 <div className="faq-answer">
-                  <p>{faq.answer}</p>
+                  <div className="faq-answer-inner">
+                    <p>{faq.answer}</p>
+                  </div>
                 </div>
               </div>
             ))}

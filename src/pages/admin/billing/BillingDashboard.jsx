@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../../lib/supabase';
+import { isSubscriptionOverdue } from '../../../lib/subscriptionAccess';
+import { attentionServerFilter } from '../../../lib/subscriptionFilters';
 import {
   DollarSign,
   TrendingUp,
@@ -22,6 +24,7 @@ import {
   Info,
   X,
   AlertCircle,
+  ArrowUpRight,
 } from 'lucide-react';
 import './BillingDashboard.css';
 
@@ -51,7 +54,15 @@ function formatDateTime(value) {
   if (!value) return '—';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('pt-BR');
+  // Sem segundos: economiza ~30px por célula e mantém a coluna legível
+  // dentro do viewport, sem cortar a coluna "Ação".
+  return d.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 const CYCLE_LABELS = {
@@ -62,6 +73,25 @@ const CYCLE_LABELS = {
   days: 'Dias',
   custom: 'Personalizado',
 };
+
+// A bandeira por extenso ("mastercard") estourava ~50px na coluna Cartão e
+// empurrava a coluna Ação para fora da tela. Na tabela vai a sigla; o nome
+// completo fica no title.
+const CARD_BRAND_SHORT = {
+  visa: 'VISA',
+  mastercard: 'MC',
+  maestro: 'MC',
+  elo: 'ELO',
+  amex: 'AMEX',
+  hipercard: 'HIRO',
+  diners: 'DINERS',
+};
+
+function cardBrandLabel(brand) {
+  if (!brand) return '';
+  const key = String(brand).toLowerCase();
+  return CARD_BRAND_SHORT[key] || key.slice(0, 4).toUpperCase();
+}
 
 function cycleLabel(subscription) {
   const base = CYCLE_LABELS[subscription?.billing_cycle] || subscription?.billing_cycle || '—';
@@ -88,10 +118,14 @@ function monthlyEquivalent(subscription) {
 }
 
 // `billing_status` só aceita 'active' e 'retrying' — 'overdue'/'failed' não existem.
+//
+// "Vencida" usa a data de vencimento do ciclo (`renewal_due_at`), a mesma do
+// painel de Assinaturas. O `next_charge_at` anda a cada retry de cartão: usá-lo
+// aqui fazia uma assinatura vencida sumir do card depois do primeiro retry.
 function isOverdue(subscription, now = new Date()) {
   if (!subscription) return false;
   if (subscription.billing_status === 'retrying') return true;
-  return !!subscription.next_charge_at && new Date(subscription.next_charge_at) < now;
+  return isSubscriptionOverdue(subscription, now.getTime());
 }
 
 function subscriptionBadge(subscription, now = new Date()) {
@@ -149,7 +183,7 @@ async function fetchDirectory(userIds, groupIds) {
 
 const SUBSCRIPTION_FIELDS = `
   id, amount, status, billing_status, billing_cycle, custom_cycle_days, custom_cycle_months,
-  next_charge_at, retry_count, card_id, card_last4, card_brand,
+  next_charge_at, renewal_due_at, expires_at, retry_count, card_id, card_last4, card_brand,
   user:user_id (id, name, email),
   group:group_id (id, name),
   service:service_id (id, name)
@@ -164,7 +198,9 @@ async function querySubscriptions({ overdueOnly = false, from = null, to = null,
     .order('next_charge_at', { ascending: true });
 
   if (overdueOnly) {
-    query = query.or(`next_charge_at.lt.${nowIso},billing_status.eq.retrying`);
+    // Mesma regra do painel de Assinaturas: vencidas (pela data de renovação)
+    // + as que estão em retry.
+    query = query.or(attentionServerFilter(nowIso));
   }
   if (from) query = query.gte('next_charge_at', from);
   if (to) query = query.lte('next_charge_at', to);
@@ -373,7 +409,10 @@ function BillingDashboard() {
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
       const in30 = new Date(now.getTime() + 30 * 86400000).toISOString();
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
-      const overdueFilter = `next_charge_at.lt.${nowIso},billing_status.eq.retrying`;
+      // "Vencidas / atrasadas": a data de vencimento do ciclo (a mesma do
+      // painel de Assinaturas) + as que estão em retry. O `next_charge_at`
+      // mudava a cada tentativa e zerava a contagem de quem já venceu.
+      const overdueFilter = attentionServerFilter(nowIso);
 
       try {
         const [
@@ -692,6 +731,11 @@ function BillingDashboard() {
     else buckets[3].rows.push(subscription);
   });
 
+  // Total de cada faixa da agenda — dá contexto do volume antes da tabela.
+  buckets.forEach(bucket => {
+    bucket.sum = bucket.rows.reduce((total, s) => total + Number(s.amount || 0), 0);
+  });
+
   const totalPages = Math.max(1, Math.ceil(agendaTotal / AGENDA_PAGE_SIZE));
 
   const metricsList = [
@@ -700,7 +744,7 @@ function BillingDashboard() {
       label: 'Receita recebida no mês',
       value: formatCurrency(metrics.monthRevenue),
       sub: 'Pagamentos de assinatura pagos no mês',
-      icon: <DollarSign size={22} />,
+      icon: <DollarSign size={17} />,
       iconClass: 'revenue',
     },
     {
@@ -708,7 +752,7 @@ function BillingDashboard() {
       label: 'Receita mensal (MRR)',
       value: formatCurrency(metrics.mrr),
       sub: 'Assinaturas ativas normalizadas por mês',
-      icon: <Repeat size={22} />,
+      icon: <Repeat size={17} />,
       iconClass: 'subscriptions',
     },
     {
@@ -716,7 +760,7 @@ function BillingDashboard() {
       label: 'Assinaturas ativas',
       value: metrics.activeSubscriptions,
       sub: 'Status ativo no banco',
-      icon: <Users size={22} />,
+      icon: <Users size={17} />,
       iconClass: 'profit',
     },
     {
@@ -724,7 +768,7 @@ function BillingDashboard() {
       label: 'Vencidas / atrasadas',
       value: metrics.overdue,
       sub: `${metrics.retrying} em retry · as demais aguardam nova cobrança`,
-      icon: <Calendar size={22} />,
+      icon: <Calendar size={17} />,
       iconClass: 'costs',
     },
     {
@@ -732,7 +776,7 @@ function BillingDashboard() {
       label: 'Falhas de cobrança (30 dias)',
       value: metrics.failures,
       sub: 'Ciclos recusados pelo gateway',
-      icon: <XCircle size={22} />,
+      icon: <XCircle size={17} />,
       iconClass: 'costs',
     },
     {
@@ -740,44 +784,58 @@ function BillingDashboard() {
       label: 'A cobrar nos próximos 30 dias',
       value: formatCurrency(metrics.next30Amount),
       sub: `${metrics.next30Count} assinatura(s) na janela`,
-      icon: <TrendingUp size={22} />,
+      icon: <TrendingUp size={17} />,
       iconClass: 'tickets',
     },
   ];
 
   return (
     <div className="billing-dashboard">
-      <div className="admin-header">
-        <div>
-          <h1>Cobranças Recorrentes</h1>
-          <p>Controle os agendamentos de recorrência: quem vai ser cobrado, quando e o que falhou.</p>
-        </div>
-        <div className="billing-header-actions">
-          {confirmForce ? (
-            <>
-              <button className="btn btn-primary btn-sm" onClick={handleForceBilling} disabled={runningBilling}>
-                {runningBilling ? <><Loader2 size={14} className="spinning" /> Executando...</> : <><Zap size={14} /> Confirmar execução</>}
+      <header className="admin-header billing-hero">
+        <span className="billing-hero-eyebrow">
+          <Repeat size={13} aria-hidden="true" />
+          Recorrência
+        </span>
+        <div className="billing-hero-row">
+          <div className="billing-hero-copy">
+            <h1>Cobranças recorrentes</h1>
+            <p>
+              Acompanhe quem será cobrado, quando a próxima cobrança acontece e o que o
+              gateway recusou.
+            </p>
+          </div>
+          <div className="billing-hero-actions">
+            {confirmForce ? (
+              <>
+                <button className="btn btn-primary btn-sm" onClick={handleForceBilling} disabled={runningBilling}>
+                  {runningBilling ? <><Loader2 size={14} className="spinning" /> Executando...</> : <><Zap size={14} /> Confirmar execução</>}
+                </button>
+                <button className="btn btn-outline btn-sm" onClick={() => setConfirmForce(false)} disabled={runningBilling}>
+                  Cancelar
+                </button>
+              </>
+            ) : (
+              <button className="btn btn-outline btn-sm" onClick={() => setConfirmForce(true)} disabled={runningBilling}>
+                <Zap size={14} /> Forçar cobrança recorrente
               </button>
-              <button className="btn btn-outline btn-sm" onClick={() => setConfirmForce(false)} disabled={runningBilling}>
-                Cancelar
-              </button>
-            </>
-          ) : (
-            <button className="btn btn-outline btn-sm" onClick={() => setConfirmForce(true)} disabled={runningBilling}>
-              <Zap size={14} /> Forçar cobrança recorrente
+            )}
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => { setShowCustomCharge(v => !v); setChargeResult(null); setCustomAmount(''); setCustomDescription(''); }}
+            >
+              <DollarSign size={14} /> Cobrança avulsa
             </button>
-          )}
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => { setShowCustomCharge(v => !v); setChargeResult(null); setCustomAmount(''); setCustomDescription(''); }}
-          >
-            <DollarSign size={14} /> Cobrança avulsa
-          </button>
-          <button className="btn btn-outline btn-sm" onClick={() => setRefreshKey(k => k + 1)} title="Atualizar dados">
-            <RefreshCw size={14} className={loading ? 'spinning' : ''} />
-          </button>
+            <button
+              className="btn btn-outline btn-sm billing-icon-btn"
+              onClick={() => setRefreshKey(k => k + 1)}
+              title="Atualizar dados"
+              aria-label="Atualizar dados"
+            >
+              <RefreshCw size={14} className={loading ? 'spinning' : ''} />
+            </button>
+          </div>
         </div>
-      </div>
+      </header>
 
       {loadError && (
         <div className="billing-error-banner">
@@ -872,13 +930,38 @@ function BillingDashboard() {
         </div>
       )}
 
+      {/* ------------------------------------------- Indicadores (KPI) */}
+      <section className="billing-kpi-strip" aria-label="Indicadores de cobrança">
+        {metricsList.map(metric => (
+          <button
+            key={metric.key}
+            type="button"
+            className={`billing-kpi billing-kpi--${metric.iconClass}`}
+            onClick={() => openDrilldown(metric.key)}
+            title="Ver os lançamentos por trás do número"
+          >
+            <span className="billing-kpi-head">
+              <span className="billing-kpi-label">{metric.label}</span>
+              <span className="billing-kpi-icon">{metric.icon}</span>
+            </span>
+            <span className="billing-kpi-value">{metric.value}</span>
+            <span className="billing-kpi-foot">
+              <span className="billing-kpi-sub">{metric.sub}</span>
+              <ArrowUpRight size={15} className="billing-kpi-arrow" aria-hidden="true" />
+            </span>
+          </button>
+        ))}
+      </section>
+
       {/* ---------------------------------------------- Bloco 1: Agenda */}
-      <section className="billing-section">
+      <section className="billing-section billing-section--agenda">
         <div className="billing-section-header">
-          <div>
-            <h2>Agenda de recorrência</h2>
+          <div className="billing-section-head">
+            <span className="billing-section-eyebrow">Agenda</span>
+            <h2>Próximas cobranças</h2>
             <p className="billing-section-sub">
-              {agendaTotal} assinatura(s) com cobrança programada. Ordenado pela próxima cobrança.
+              {agendaTotal} assinatura(s) com cobrança programada, ordenadas pela data da
+              próxima cobrança.
             </p>
           </div>
           <div className="billing-section-actions">
@@ -893,26 +976,30 @@ function BillingDashboard() {
         </div>
 
         {agendaLoading ? (
-          <p className="empty-state">Carregando agendamentos...</p>
+          <div className="billing-skeleton" aria-hidden="true">
+            {[0, 1, 2, 3, 4].map(i => <div key={i} className="billing-skeleton-row" />)}
+          </div>
         ) : agenda.length === 0 ? (
           <p className="empty-state">Nenhuma assinatura ativa com próxima cobrança programada.</p>
         ) : (
           <div className="billing-agenda">
             {buckets.filter(bucket => bucket.rows.length > 0).map(bucket => (
               <div key={bucket.key} className={`billing-agenda-group ${bucket.tone}`}>
-                <h3 className="billing-agenda-title">
-                  {bucket.label}
+                <div className="billing-agenda-head">
+                  <span className="billing-agenda-dot" aria-hidden="true" />
+                  <h3 className="billing-agenda-title">{bucket.label}</h3>
                   <span className="billing-agenda-count">{bucket.rows.length}</span>
-                </h3>
+                  <span className="billing-agenda-sum">{formatCurrency(bucket.sum)}</span>
+                </div>
                 <div className="billing-table-wrap">
                   <table className="billing-table">
                     <thead>
                       <tr>
                         <th>Cliente</th>
                         <th>Serviço / Grupo</th>
-                        <th>Ciclo</th>
-                        <th>Valor</th>
-                        <th>Próxima cobrança</th>
+                        <th className="billing-nowrap">Ciclo</th>
+                        <th className="billing-th-num">Valor</th>
+                        <th className="billing-nowrap">Próxima cobrança</th>
                         <th>Cartão</th>
                         <th>Status</th>
                         <th>Ação</th>
@@ -936,12 +1023,19 @@ function BillingDashboard() {
                                 <span className="billing-cell-muted">{subscription.group?.name || '—'}</span>
                               </div>
                             </td>
-                            <td>{cycleLabel(subscription)}</td>
-                            <td><strong>{formatCurrency(subscription.amount)}</strong></td>
-                            <td>{formatDateTime(subscription.next_charge_at)}</td>
+                            <td className="billing-nowrap">{cycleLabel(subscription)}</td>
+                            <td className="billing-num">{formatCurrency(subscription.amount)}</td>
+                            <td className="billing-nowrap">{formatDateTime(subscription.next_charge_at)}</td>
                             <td>
                               {hasCard
-                                ? <span className="billing-card-chip"><CreditCard size={12} /> •••• {subscription.card_last4} {subscription.card_brand || ''}</span>
+                                ? (
+                                  <span
+                                    className="billing-card-chip"
+                                    title={`Cartão ${subscription.card_brand || ''} final ${subscription.card_last4}`}
+                                  >
+                                    <CreditCard size={12} /> •••• {subscription.card_last4} {cardBrandLabel(subscription.card_brand)}
+                                  </span>
+                                )
                                 : <span className="billing-no-card">sem cartão</span>}
                             </td>
                             <td><span className={`status-badge ${badge.tone}`}>{badge.label}</span></td>
@@ -970,9 +1064,10 @@ function BillingDashboard() {
       </section>
 
       {/* ------------------------------------- Assinaturas sem cartão salvo */}
-      <section className="billing-section billing-warning-section">
+      <section className="billing-section billing-section--warning billing-section--nocard">
         <div className="billing-section-header">
-          <div>
+          <div className="billing-section-head">
+            <span className="billing-section-eyebrow">Atenção</span>
             <h2><AlertTriangle size={16} /> Sem cartão salvo</h2>
             <p className="billing-section-sub">
               Estas assinaturas não são cobradas automaticamente — é a causa nº 1 de “a cobrança não aconteceu”.
@@ -988,8 +1083,8 @@ function BillingDashboard() {
                 <tr>
                   <th>Cliente</th>
                   <th>Serviço / Grupo</th>
-                  <th>Valor</th>
-                  <th>Próxima cobrança</th>
+                  <th className="billing-th-num">Valor</th>
+                  <th className="billing-nowrap">Próxima cobrança</th>
                   <th>Ação</th>
                 </tr>
               </thead>
@@ -1008,8 +1103,8 @@ function BillingDashboard() {
                         <span className="billing-cell-muted">{subscription.group?.name || '—'}</span>
                       </div>
                     </td>
-                    <td><strong>{formatCurrency(subscription.amount)}</strong></td>
-                    <td>{formatDateTime(subscription.next_charge_at)}</td>
+                    <td className="billing-num">{formatCurrency(subscription.amount)}</td>
+                    <td className="billing-nowrap">{formatDateTime(subscription.next_charge_at)}</td>
                     <td>
                       <button
                         className="btn btn-outline btn-sm"
@@ -1026,37 +1121,13 @@ function BillingDashboard() {
         )}
       </section>
 
-      {/* ---------------------------------------------- Bloco 2: Números */}
-      <section className="billing-section">
-        <div className="billing-section-header">
-          <div>
-            <h2>Números</h2>
-            <p className="billing-section-sub">Clique em um cartão para ver os lançamentos por trás do número.</p>
-          </div>
-        </div>
-        <div className="metrics-grid billing-metrics">
-          {metricsList.map(metric => (
-            <button
-              key={metric.key}
-              type="button"
-              className="metric-card billing-metric-card"
-              onClick={() => openDrilldown(metric.key)}
-            >
-              <div className={`metric-icon ${metric.iconClass}`}>{metric.icon}</div>
-              <div className="metric-info">
-                <span className="metric-label">{metric.label}</span>
-                <span className="metric-value">{metric.value}</span>
-                <span className="metric-sub">{metric.sub}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      </section>
-
       {/* -------------------------------------------- Bloco 3: Atividade */}
-      <section className="billing-section">
+      <section className="billing-section billing-section--today">
         <div className="billing-section-header">
-          <h2>Cobranças de hoje</h2>
+          <div className="billing-section-head">
+            <span className="billing-section-eyebrow">Dia corrente</span>
+            <h2>Cobranças de hoje</h2>
+          </div>
           <span className="billing-section-total">{formatCurrency(todayCharges.reduce((sum, c) => sum + Number(c.amount || 0), 0))}</span>
         </div>
         {todayCharges.length === 0 ? (
@@ -1068,8 +1139,8 @@ function BillingDashboard() {
                 <tr>
                   <th>Cliente</th>
                   <th>Serviço / Grupo</th>
-                  <th>Ciclo</th>
-                  <th>Valor</th>
+                  <th className="billing-nowrap">Ciclo</th>
+                  <th className="billing-th-num">Valor</th>
                   <th>Cartão</th>
                   <th>Status</th>
                   <th>Ação</th>
@@ -1093,8 +1164,8 @@ function BillingDashboard() {
                           <span className="billing-cell-muted">{charge.group?.name || '—'}</span>
                         </div>
                       </td>
-                      <td>{cycleLabel(charge)}</td>
-                      <td><strong>{formatCurrency(charge.amount)}</strong></td>
+                      <td className="billing-nowrap">{cycleLabel(charge)}</td>
+                      <td className="billing-num">{formatCurrency(charge.amount)}</td>
                       <td>
                         {hasCard
                           ? <span className="billing-card-chip"><CreditCard size={12} /> •••• {charge.card_last4}</span>
@@ -1122,9 +1193,10 @@ function BillingDashboard() {
         )}
       </section>
 
-      <section className="billing-section">
+      <section className="billing-section billing-section--failures">
         <div className="billing-section-header">
-          <div>
+          <div className="billing-section-head">
+            <span className="billing-section-eyebrow">Gateway</span>
             <h2>Falhas recentes</h2>
             <p className="billing-section-sub">Motivo informado pelo gateway e número de tentativas por assinatura.</p>
           </div>
@@ -1138,11 +1210,8 @@ function BillingDashboard() {
                 <tr>
                   <th>Cliente</th>
                   <th>Serviço / Grupo</th>
-                  <th>Origem</th>
-                  <th>Valor</th>
+                  <th className="billing-th-num">Valor</th>
                   <th>Motivo</th>
-                  <th>Tentativas</th>
-                  <th>Próxima tentativa</th>
                   <th>Ação</th>
                 </tr>
               </thead>
@@ -1159,21 +1228,23 @@ function BillingDashboard() {
                       <div className="billing-cell-stack">
                         <span>{failure.serviceName}</span>
                         <span className="billing-cell-muted">{failure.groupName}</span>
+                        <span className="billing-origin-badge">{failure.origem}</span>
                       </div>
                     </td>
-                    <td><span className="billing-origin-badge">{failure.origem}</span></td>
-                    <td><strong>{formatCurrency(failure.amount)}</strong></td>
+                    <td className="billing-num">{formatCurrency(failure.amount)}</td>
                     <td>
-                      <span className="error-cell" title={failure.reason || ''}>
-                        {failure.reason || 'Motivo não informado pelo gateway'}
-                      </span>
+                      <div className="billing-reason">
+                        <span className="error-cell" title={failure.reason || ''}>
+                          {failure.reason || 'Motivo não informado pelo gateway'}
+                        </span>
+                        <span className="billing-cell-muted">
+                          <span className={failure.attempt >= 2 ? 'billing-attempt billing-attempt-high' : 'billing-attempt'}>
+                            tentativa {failure.attempt}
+                          </span>
+                          {' · próxima '}{formatDate(failure.nextRetryAt)}
+                        </span>
+                      </div>
                     </td>
-                    <td>
-                      <span className={failure.attempt >= 2 ? 'billing-attempt billing-attempt-high' : 'billing-attempt'}>
-                        tentativa {failure.attempt}
-                      </span>
-                    </td>
-                    <td>{formatDate(failure.nextRetryAt)}</td>
                     <td>
                       {failure.subscriptionId ? (
                         <button
@@ -1207,11 +1278,17 @@ function BillingDashboard() {
             </div>
             <p className="billing-modal-desc">{drilldown.description}</p>
             {drilldownLoading ? (
-              <p className="empty-state">Carregando...</p>
+              <div className="billing-modal-body">
+                <p className="empty-state">Carregando...</p>
+              </div>
             ) : drilldown.error ? (
-              <div className="billing-panel-error"><AlertCircle size={16} /> {drilldown.error}</div>
+              <div className="billing-modal-body">
+                <div className="billing-panel-error"><AlertCircle size={16} /> {drilldown.error}</div>
+              </div>
             ) : drilldown.rows.length === 0 ? (
-              <p className="empty-state">Nenhum lançamento encontrado para este período.</p>
+              <div className="billing-modal-body">
+                <p className="empty-state">Nenhum lançamento encontrado para este período.</p>
+              </div>
             ) : (
               <div className="billing-modal-list">
                 {drilldown.rows.map(row => (

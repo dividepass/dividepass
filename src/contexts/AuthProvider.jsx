@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { AuthContext } from './AuthContext';
 import { getGoogleAdsAttribution } from '../lib/googleAds';
 import { logPlatformEvent } from '../lib/platformEventLogger';
+import { sendWelcomeEmail } from '../lib/welcomeEmail';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -68,6 +69,11 @@ export function AuthProvider({ children }) {
         metadata: { user_id: data.user.id, email },
         created_by: data.user.id,
       });
+
+      // E-mail de boas-vindas no primeiro login (a conta já está confirmada
+      // neste ponto). Fire and forget: o login não espera o e-mail. A trava
+      // de duplicidade garante UM e-mail só, mesmo com o job diário atrás.
+      sendWelcomeEmail(data.session?.access_token);
     }
 
     return data;
@@ -119,6 +125,12 @@ export function AuthProvider({ children }) {
       // Register customers on all payment gateways (fire and forget)
       try {
         const { data: sessionData } = await supabase.auth.getSession();
+
+        // E-mail de boas-vindas. Só sai agora se o Supabase já devolveu
+        // sessão (confirmação de e-mail desativada). Com confirmação ativa,
+        // ele sai no primeiro login — e o job diário cobre o buraco.
+        sendWelcomeEmail(sessionData?.session?.access_token);
+
         fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/register-customers`, {
           method: 'POST',
           headers: {
