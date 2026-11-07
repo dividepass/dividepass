@@ -46,6 +46,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { confirmPayment } from "../confirm-payment/index.ts";
 import { getGatewaySettings } from "../create-payment/handlers/settings.ts";
+// `payment_attempts.payment_method` guardava o OBJETO do gateway (cartao
+// inteiro / BR Code, 480–540 chars). Repassar isso cru para o
+// `confirm-payment` estourava `user_subscriptions.payment_method` (VARCHAR(50))
+// e a liberacao falhava depois do dinheiro cair. Normaliza sempre.
+import { metodoPagamentoSeguro } from "../_shared/metodo-pagamento.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -178,6 +183,7 @@ Deno.serve(async (req) => {
     falharam: 0,
     recusadas: 0,
     ja_aplicadas: 0,
+    orfas_ignoradas: 0,
     detalhes: [] as any[],
   };
 
@@ -213,9 +219,11 @@ Deno.serve(async (req) => {
     if (tentErr) throw new Error("payment_attempts: " + tentErr.message);
 
     const candidatas = (tentativas || []).filter((t: any) => {
-      // Recusadas no gateway não voltam.
+      // Recusadas no gateway não voltam. Órfãs (grupo que não existe mais)
+      // também não: já foram marcadas e não geram evento.
       const s = String(t.status || "").toLowerCase();
       if (s.includes("rejected") || s.includes("failed") || s.includes("cancelled")) return false;
+      if (s.includes("orphaned")) return false;
       return true;
     });
 
@@ -253,8 +261,41 @@ Deno.serve(async (req) => {
     resumo.examinadas = pendentes.length;
     resumo.ja_aplicadas = candidatas.length - pendentes.length;
 
+    // ── 2b) Tentativas ÓRFÃS: o grupo não existe (ou ficou sem serviço) ──────
+    //
+    // São tentativas antigas/quebradas apontando para um grupo que não existe
+    // mais. Sem este filtro o job chamava a confirmação, ela reprovava
+    // (`service_id` NOT NULL) e o painel enchia de "Pagamento aprovado sem
+    // liberação" — mais de 100 eventos por hora, sem nenhum cliente real
+    // envolvido. Aqui elas são marcadas e ignoradas, sem evento.
+    const idsGrupos = [...new Set(pendentes.map((t: any) => t.group_id).filter(Boolean))];
+    const { data: gruposExistentes } = idsGrupos.length
+      ? await supabaseAdmin.from("groups").select("id, service_id").in("id", idsGrupos)
+      : { data: [] as any[] };
+
+    const gruposOk = new Set(
+      (gruposExistentes || [])
+        .filter((g: any) => g.id && g.service_id)
+        .map((g: any) => g.id),
+    );
+
+    const orfas = pendentes.filter((t: any) => !gruposOk.has(t.group_id));
+    if (orfas.length > 0) {
+      await supabaseAdmin
+        .from("payment_attempts")
+        .update({ status: "reconciled_orphaned", updated_at: new Date().toISOString() })
+        .in("id", orfas.map((t: any) => t.id));
+      resumo.orfas_ignoradas = orfas.length;
+      console.log(
+        `[reconcile-payments] ${orfas.length} tentativa(s) orfa(s) (grupo inexistente ou sem service_id) — ignoradas`,
+      );
+    }
+
+    const pendentesValidas = pendentes.filter((t: any) => gruposOk.has(t.group_id));
+    resumo.examinadas = pendentesValidas.length;
+
     // ── 3) Pergunta ao gateway e confirma o que estiver aprovado ────────────
-    for (const tentativa of pendentes.slice(0, MAX_PER_RUN)) {
+    for (const tentativa of pendentesValidas.slice(0, MAX_PER_RUN)) {
       const txId = tentativa.gateway_transaction_id;
       const registro: any = {
         transaction_id: txId,
@@ -337,7 +378,9 @@ Deno.serve(async (req) => {
           amount,
           status: "approved",
           gateway_payment_id: txId,
-          payment_method: tx?.payment_method || tentativa.payment_method || "pix",
+          payment_method: metodoPagamentoSeguro(
+            tx?.payment_method || tentativa.payment_method || "pix",
+          ),
         });
 
         if (resultado?.success) {

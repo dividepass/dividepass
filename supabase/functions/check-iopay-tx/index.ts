@@ -4,6 +4,13 @@ import { notifyAdminPayment } from "../_shared/admin-payment-email.ts";
 // A confirmação compartilhada é a ÚNICA implementação de "o que fazer quando o
 // gateway aprova". O polling delegou para ela (ver `confirmIOPayment`).
 import { confirmPayment } from "../confirm-payment/index.ts";
+// A IO Pay devolve `payment_method` como OBJETO (o cartão inteiro ou o BR
+// Code). Gravar esse objeto cru em `payment_attempts.payment_method` cria
+// linhas de 480–540 caracteres; o job de reconciliacao lia essa linha e
+// repassava o valor para `user_subscriptions.payment_method` (VARCHAR(50)),
+// que estourava — a liberacao do grupo falhava depois do dinheiro cair.
+// Aqui o metodo e sempre normalizado antes de gravar.
+import { normalizarMetodoPagamento } from "../_shared/metodo-pagamento.ts";
 
 /** Obtém official_price e paid_amount (após cupom) para rastrear economia de assinatura. */
 async function getSavingsData(
@@ -484,7 +491,12 @@ export default {
         iopayCustomerId = src?.customer || txRaw.customer || txRaw.success?.customer || null;
         iopayReferenceId = src?.reference_id || txRaw.reference_id || txRaw.success?.reference_id || null;
 
-        payment_method = src?.payment_method || txRaw.payment_method || txRaw.success?.payment_method || "card";
+        // A IO Pay devolve `payment_method` como OBJETO (cartao inteiro / BR
+        // Code). Normaliza para o metodo curto: o que for gravado aqui no
+        // `payment_attempts` e depois lido pelo job de reconciliacao.
+        payment_method = normalizarMetodoPagamento(
+          src?.payment_method || txRaw.payment_method || txRaw.success?.payment_method || "card",
+        );
         pix_copy_paste = src?.pix_copy_paste || src?.copy_paste || src?.pix_payload || src?.pix_code || txRaw.pix_copy_paste || null;
         pix_qrcode_url = src?.pix_qrcode_url || txRaw.pix_qrcode_url || null;
 

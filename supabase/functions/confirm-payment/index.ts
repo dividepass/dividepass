@@ -17,6 +17,11 @@ import {
   processarCompraViaParceiro,
   resolverViaParceiro,
 } from "../_shared/pulse-orders.ts";
+// Metodo de pagamento: o gateway (IO Pay) devolve um OBJETO (cartao inteiro /
+// BR Code) e a coluna `user_subscriptions.payment_method` e VARCHAR(50).
+// Gravar o que veio do gateway estourava o limite e a liberacao do grupo
+// falhava DEPOIS do dinheiro cair. Aqui sempre grava-se o metodo normalizado.
+import { limitarTexto, metodoPagamentoSeguro } from "../_shared/metodo-pagamento.ts";
 
 interface ConfirmParams {
   gateway: string;
@@ -590,8 +595,8 @@ async function confirmarPagamento(params: ConfirmParams) {
             billing_status: "active",
             retry_count: 0,
             last_charge_at: new Date().toISOString(),
-            payment_method: payment_method || subInfo?.payment_method || null,
-            billing_cycle: cycle,
+            payment_method: metodoPagamentoSeguro(payment_method, subInfo?.payment_method),
+            billing_cycle: limitarTexto(cycle, 20),
             custom_cycle_days: days,
             custom_cycle_months: months,
             // IMPORTANTE: o valor do CICLO (nunca a taxa de adesão). É este
@@ -603,9 +608,9 @@ async function confirmarPagamento(params: ConfirmParams) {
       } else {
         await supabaseAdmin.from("user_subscriptions").insert({
           user_id, group_id, service_id: group?.service_id,
-          billing_cycle: cycle, amount: storedSubscriptionAmount, // IMPORTANTE: valor do ciclo, sem a taxa
+          billing_cycle: limitarTexto(cycle, 20), amount: storedSubscriptionAmount, // IMPORTANTE: valor do ciclo, sem a taxa
           status: "active", gateway: gateway, gateway_subscription_id: gateway_payment_id,
-          payment_method: payment_method || null,
+          payment_method: metodoPagamentoSeguro(payment_method),
           next_charge_at: viaParceiroAtivoCombinado ? null : nextChargeAt.toISOString(),
           renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
@@ -921,8 +926,8 @@ async function confirmarPagamento(params: ConfirmParams) {
             billing_status: "active",
             retry_count: 0,
             last_charge_at: new Date().toISOString(),
-            payment_method: payment_method || subInfo?.payment_method || null,
-            billing_cycle: cycle,
+            payment_method: metodoPagamentoSeguro(payment_method, subInfo?.payment_method),
+            billing_cycle: limitarTexto(cycle, 20),
             custom_cycle_days: days,
             custom_cycle_months: months,
             // Grupo Via Parceiro: o acesso purchased vale até a data do pacote.
@@ -939,9 +944,9 @@ async function confirmarPagamento(params: ConfirmParams) {
         const { data: grp } = await supabaseAdmin.from("groups").select("service_id, price_per_slot, billing_cycle").eq("id", group_id).maybeSingle();
         const { error: insErr } = await supabaseAdmin.from("user_subscriptions").insert({
           user_id, group_id, service_id: grp?.service_id,
-          billing_cycle: cycle, amount: amount || grp?.price_per_slot || 0,
+          billing_cycle: limitarTexto(cycle, 20), amount: amount || grp?.price_per_slot || 0,
           status: "active", gateway: gateway, gateway_subscription_id: gateway_payment_id,
-          payment_method: payment_method || null,
+          payment_method: metodoPagamentoSeguro(payment_method),
           next_charge_at: viaParceiroAtivo ? null : nextChargeAt.toISOString(),
           renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
