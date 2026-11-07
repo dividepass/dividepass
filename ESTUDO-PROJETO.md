@@ -3571,3 +3571,34 @@ antigos). Com ela, o `confirm-payment` verifica se o **mesmo pagamento** já
 foi registrado nas últimas 24h e, se sim, não duplica o evento.
 
 O caso real continua visível — só não se repete a cada 15 minutos.
+
+### 31.9 O job foi PAUSADO a pedido do dono (07/11/2026)
+
+Mesmo com o bug corrigido, o `reconcile-payments` continuava rodando a cada
+15 minutos e consumindo **21 chamadas à API da IO Pay por rodada**. O dono
+pediu para pausar. Foi pausado — **removido do `cron.job`** (a função segue
+no ar; só o agendamento parou).
+
+```
+node scripts\supabase-sql.mjs database\pausar-reconcile-payments.sql   # pausar
+node scripts\supabase-sql.mjs database\religar-reconcile-payments.sql  # religar
+node scripts\checar-reconciliacao.mjs                                  # rodar na mao
+```
+
+`scripts/checar-reconciliacao.mjs` roda a mesma coisa na mão e mostra o
+panorama: quantas foram liberadas, o que continua travado (com o motivo) e o
+que ainda está esperando o gateway.
+
+**O que fica sem a rede de segurança enquanto estiver pausado:** quem paga o
+Pix pelo aplicativo do banco e **fecha a aba** antes de a confirmação chegar.
+O caminho normal (webhook da IO Pay) continua funcionando — o job é a rede
+de segurança, não o caminho principal.
+
+**O caso que ficou aberto (decisão do dono):** o pagamento de R$ 1,00 no
+grupo "Max" (5/5, com 5 clientes reais pagando). O valor foi cobrado e a
+liberação não saiu porque o grupo está cheio. Duas saídas: abrir uma vaga no
+grupo e rodar `scripts\checar-reconciliacao.mjs`, ou estornar na IO Pay.
+
+O modal "Pagamento com Problema" do painel admin é disparado pelo Realtime a
+cada INSERT novo em `platform_events`. Com o job pausado e o evento pendente
+removido, ele não abre mais (verificado no browser: 0 inserções em 12s).
