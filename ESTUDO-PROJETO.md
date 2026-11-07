@@ -3909,3 +3909,56 @@ foi restaurado para `iopay` no mesmo dia.
 > ninguém estava testando. Simular o roteamento (`resolverGatewayParaPagamento`
 > com as chaves lidas do banco) é o que pega esse tipo de coisa; conferir só o
 > gateway do fluxo que você está testando, não.
+
+### 33.8 O CPF do perfil: "já cadastrei, não me perguntem de novo"
+
+O pedido do usuário foi: *quem já tem o CPF cadastrado não precisa perguntar
+de novo; quem não tem, aí sim pergunta*.
+
+**O que os dados mostravam** (antes de mexer):
+
+| Onde | Quantos têm CPF |
+|---|---|
+| `users.cpf` | **0 de 122** usuários |
+| `auth.users.raw_user_meta_data` | **0 de 120** |
+| `groups.pix_key` com `pix_type='cpf'` | 2 de 32 grupos |
+
+Ou seja: o CPF que as pessoas "já cadastram" é a **chave PIX do grupo** (para
+receber), não o CPF do **pagador**. O pagador nunca tinha CPF guardado em
+lugar nenhum — e a coluna `users.cpf` estava vazia.
+
+**A regra implementada:** o CPF do **perfil** manda.
+
+- O backend (`_shared/cpf.ts` → `escolherCpf`) usa o do perfil; o que vem no
+  pedido nunca sobrescreve. Um mandate em nome de outra pessoa é pior do que
+  nenhum mandate.
+- O checkout pergunta o **status** (`meu_cpf_status()`) e só mostra o campo
+  quando falta — e mostra **antes** do clique, barrando o botão no
+  navegador (sem gastar chamada no backend).
+- `Meu Perfil` ganhou o campo (mascarado / trocar / remover).
+
+**O detalhe de permissão que decide o desenho:** a coluna `users.cpf` **não
+tem `SELECT`** para `authenticated` — e não pode ter, porque a policy
+`Authenticated users read profiles` (`auth.role() = 'authenticated'`) deixa
+**qualquer** logado ler **qualquer** linha de `users`. Dar `SELECT` na coluna
+vazaria o CPF de todo mundo. Por isso o front só tem acesso a uma função
+`SECURITY DEFINER` que devolve status + mascarado, e a **escrita** é liberada
+por `GRANT UPDATE (cpf)` — com a RLS (`auth.uid() = id`) garantindo que cada
+um escreve só o próprio.
+
+**Duas armadilhas do RLS que o teste local pagou** (Postgres 18 no WSL):
+
+1. `CREATE POLICY` **não liga** o RLS — sem `ALTER TABLE ... ENABLE ROW LEVEL
+   SECURITY` a policy é decorativa e o dono grava o CPF de outra pessoa. (A
+   primeira rodada do teste pegou exatamente isso: `UPDATE 1` onde devia ser
+   `UPDATE 0`.)
+2. `REVOKE ... FROM PUBLIC` **não** fecha a função para o `anon`: o Supabase
+   dá `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon,
+   authenticated, service_role`, então o `anon` tem grant **direto**. Precisa
+   de `REVOKE ... FROM anon` explícito.
+
+> 💡 **A lição de método:** o teste do RLS local (Postgres no WSL) pegou as
+> duas armadilhas em minutos. As duas Apply SQL em produção direto teriam
+> deixado um CPF alheio gravável e a função aberta para o `anon` — e nenhuma
+> delas apareceria no QA do navegador.
+

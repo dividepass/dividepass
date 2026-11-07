@@ -921,6 +921,9 @@ que aquilo NÃO era recorrente.
    **correlationID** (`dp-user-<user_id>`) — sem isso, uma compra quebraria
    com 500 quando o `users.customer_id_woovi` não estivesse gravado.
 
+> Quem **já tem** CPF no perfil não passa por esse caminho: o checkout nem
+> mostra o campo. Ver a §14.5.
+
 ### 14.2 O `correlationID` é CHAVE ÚNICA — o retry sempre falhava
 
 ```
@@ -994,23 +997,73 @@ estava em `woovi` desde uma gravação no painel de Admin. Restaurado para
 `iopay` no mesmo dia, sem cliente real afetado (a última tentativa de um
 cliente real era de 02/11, antes da integração).
 
-### 14.5 Estado em 2026-11-07
+### 14.5 O CPF do PERFIL: quem já cadastrou não é perguntado de novo
+
+O primeiro corte só resolvia metade: o campo de CPF aparecia **depois** do
+erro. Quem já tinha CPF cadastrado no perfil ainda era obrigado a passar
+por ele (o backend usava o do perfil, mas a tela não sabia disso).
+
+A regra agora é uma só:
+
+> **O CPF cadastrado no perfil manda.** Quem tem, não é perguntado. Quem não
+> tem, é perguntado **antes** de clicar em pagar.
+
+**Onde o CPF fica.** Na coluna `users.cpf`. O dado é sensível, então o banco
+foi arrumado para que:
+
+| Quem | Pode ler `users.cpf` | Pode gravar `users.cpf` |
+|---|---|---|
+| `anon` | ❌ | ❌ |
+| `authenticated` (outro usuário) | ❌ | ❌ (RLS: `auth.uid() = id`) |
+| o próprio dono | ❌ (via tabela) | ✅ (o seu) |
+| `service_role` (backend) | ✅ | ✅ |
+
+O front **não** lê a coluna (o `SELECT` dela não tem grant). Para saber se o
+CPF está preenchido, o app chama a função `public.meu_cpf_status()`, que é
+`SECURITY DEFINER` e devolve só o **status** e uma versão **mascarada**
+(`***.444.777-35`) — o CPF completo não sai do banco. (`database/add-cpf-perfil.sql`.)
+
+**O que mudou no app:**
+
+1. **Meu Perfil** tem um campo de CPF: mostra o mascarado, permite trocar e
+   remover. Gravar é o dono gravando a própria linha.
+2. **Checkout**: quando a cobrança vai para a Woovi no PIX, o app pergunta o
+   status do CPF. Sem CPF no perfil, o campo aparece **na hora** (não depois
+   do erro) e o botão "Gerar PIX" é barrado no navegador até o CPF ser
+   válido — **sem gastar uma chamada no backend**. Com CPF no perfil, o
+   campo nem aparece.
+3. **Backend** (`_shared/cpf.ts` → `escolherCpf`): o CPF do perfil vence. O
+   que vem no pedido **nunca** sobrescreve o perfil (um mandate em nome de
+   outra pessoa é pior do que nenhum mandate) — e um CPF malformado no
+   pedido é sempre erro.
+
+> ⚠️ O `REVOKE ... FROM PUBLIC` **não basta** para fechar a função: o
+> Supabase dá `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon,
+> authenticated, service_role`, então o `anon` tem grant **direto**. Sem o
+> `REVOKE ... FROM anon` explícito, o `anon` continuava chamando a função
+> (verificado em produção).
+
+### 14.6 Estado em 2026-11-07
 
 | Item | Estado |
 |---|---|
 | CPF do pagador | ✅ **exigido** para o Pix Automático (erro `cpf_required`, sem fallback silencioso) |
-| Campo de CPF no checkout | ✅ **no ar** (máscara + dígitos verificadores, nos dois passos de pagamento) |
-| CPF gravado no perfil | ✅ em `users.cpf` (escrita só pelo backend) |
-| Cliente sem CPF na Woovi | ✅ corrigido com `PATCH /api/v1/customer/{correlationID}` |
+| CPF no perfil | ✅ `Meu Perfil` tem o campo (mascarado / trocar / remover) |
+| Quem já tem CPF | ✅ **não é perguntado** — o campo não aparece no checkout |
+| Quem não tem CPF | ✅ o campo aparece **antes** do clique e barra o botão no navegador |
+| CPF do perfil × do pedido | ✅ o **perfil vence**; o pedido nunca sobrescreve |
+| Leitura do CPF | ✅ só via `meu_cpf_status()` (status + mascarado); a coluna não tem `SELECT` |
 | `correlationID` | ✅ **único por tentativa** — o retry funciona |
 | "Copiar Código PIX" invisível | ✅ **corrigido** (CSS do admin escopado) |
 | `active_gateway` | ✅ restaurado para `iopay` (com o escopo `v2`, o V1 não pode ir para a Woovi) |
-| Testes | `test-cpf` **34/34** · `test-woovi-correlacao` **32/32** |
-| QA em produção | **15/15** (CPF → mandate) · **6/6** (retry) · produção: `cpf_required` sem "appID inválido" |
+| Testes | `test-cpf` **50/50** · `test-woovi-correlacao` **32/32** · ambiente 14/14 · gateway 25/25 · método 22/22 · piso 19/19 |
+| QA em produção | **18/18** (CPF no perfil: pede só o que falta) · **12/12** (tela Meu Perfil) · retry 6/6 · produção: `cpf_required` sem "appID inválido" |
 
-**O que o usuário precisa fazer:** no checkout V2, escolher **PIX · Woovi** e
-informar o **CPF** na primeira tentativa. A partir daí o Pix Automático é
-criado de verdade (o mandate fica em `user_subscriptions.woovi_subscription_id`
-e a próxima cobrança fica em `next_charge_at`).
+**O que o usuário precisa fazer:** no checkout V2, escolher **PIX · Woovi**. Se
+o CPF já estiver no perfil, o checkout nem pergunta. Se não estiver, o campo
+aparece na hora — e vale cadastrar em **Meu Perfil** para as próximas
+compras irem direto ao Pix Automático (o mandate fica em
+`user_subscriptions.woovi_subscription_id` e a próxima cobrança fica em
+`next_charge_at`).
 
 
