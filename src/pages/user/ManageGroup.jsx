@@ -27,7 +27,7 @@ import './ManageGroup.css';
 
 function ManageGroup() {
   const { groupId } = useParams();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const navigate = useNavigate();
 
   const [group, setGroup] = useState(null);
@@ -534,7 +534,9 @@ function ManageGroup() {
       setError('Informe o novo valor por vaga.');
       return;
     }
-    if (valor < MIN_PRICE_PER_SLOT) {
+    // PISO DE R$ 5,00 POR VAGA — vale para o usuário comum. O admin da
+    // plataforma ajusta o valor do grupo sem essa trava.
+    if (!isAdmin && valor < MIN_PRICE_PER_SLOT) {
       setError(`O valor mínimo por vaga é R$ ${MIN_PRICE_PER_SLOT.toFixed(2).replace('.', ',')}.`);
       return;
     }
@@ -1593,14 +1595,16 @@ function ManageGroup() {
                     id="new-price"
                     type="number"
                     step="0.01"
-                    min={MIN_PRICE_PER_SLOT}
+                    min={isAdmin ? 0 : MIN_PRICE_PER_SLOT}
                     value={newPrice}
                     onChange={e => setNewPrice(e.target.value)}
                     placeholder="0,00"
                   />
                 </div>
                 <span className="price-request-hint">
-                  Mínimo de R$ {brl(MIN_PRICE_PER_SLOT)} por vaga.
+                  {isAdmin
+                    ? 'Admin da plataforma: sem valor mínimo.'
+                    : `Mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)} por vaga.`}
                 </span>
               </div>
 

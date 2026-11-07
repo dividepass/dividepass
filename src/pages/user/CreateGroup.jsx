@@ -196,7 +196,7 @@ function stripMissingColumns(payload, error) {
 }
 
 function CreateGroup() {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const draftIdParam = searchParams.get('draft');
@@ -617,7 +617,9 @@ function CreateGroup() {
         const total = parseFloat(draft.price_total);
         if (!(total > 0)) return 'Informe o valor total do grupo.';
         const perSlot = pricePerSlot(total, draft.max_size);
-        if (perSlot > 0 && perSlot < MIN_PRICE_PER_SLOT) {
+        // PISO DE R$ 5,00 POR VAGA — vale para o usuário comum. O admin da
+        // plataforma controla os grupos e não passa por essa regra.
+        if (!isAdmin && perSlot > 0 && perSlot < MIN_PRICE_PER_SLOT) {
           return `O valor por pessoa (R$ ${brl(perSlot)}) está abaixo do mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)}.`;
         }
         // TETO DO PLANO: o min/max do plano vale por pessoa. Fora da faixa o

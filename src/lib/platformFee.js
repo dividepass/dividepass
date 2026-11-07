@@ -25,11 +25,32 @@
  *   acima de R$ 150,00 ....... 12%
  *
  * Abaixo de R$ 5,00 não existe grupo: é o valor mínimo aceito.
+ *
+ * EXCEÇÃO: o ADMIN da plataforma (users.role = 'admin') não passa por esse
+ * piso. Ele controla os grupos e precisa poder criar ou ajustar um grupo com
+ * valor menor que R$ 5,00 (testes, grupos de pouca duração, ajuste pontual).
+ * O banco nunca recusou isso — a trava era só de front — e a margem continua
+ * sendo calculada pela mesma tabela de faixas.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 /** Menor valor mensal que a plataforma aceita para um grupo. */
 export const MIN_PRICE_PER_SLOT = 5;
+
+/**
+ * O preço por vaga está abaixo do piso da plataforma?
+ *
+ * @param {number|string} perSlot valor por pessoa
+ * @param {boolean} [isAdmin] true quando quem está agindo é o admin da
+ *   plataforma — nesse caso o piso não se aplica.
+ * @returns {boolean}
+ */
+export function valorAbaixoDoMinimo(perSlot, isAdmin = false) {
+  if (isAdmin) return false;
+  const value = parseFloat(perSlot);
+  if (!Number.isFinite(value) || value <= 0) return false;
+  return value < MIN_PRICE_PER_SLOT;
+}
 
 /** Faixas de margem. `max` é o teto INCLUSIVO da faixa (em reais). */
 export const PLATFORM_FEE_TIERS = [
@@ -65,9 +86,10 @@ export function platformFeePercent(price) {
  * menos no app do que na carteira.
  *
  * @param {number|string} price valor mensal cobrado de cada pessoa
+ * @param {boolean} [isAdmin] true para o admin da plataforma (sem piso mínimo)
  * @returns {{ price:number, percent:number, platformFee:number, net:number, belowMinimum:boolean }}
  */
-export function simulatePrice(price) {
+export function simulatePrice(price, isAdmin = false) {
   const value = parseFloat(price) || 0;
   const cents = Math.round(value * 100);
   const percent = platformFeePercent(value);
@@ -77,7 +99,7 @@ export function simulatePrice(price) {
     percent,
     platformFee: platformFeeCents / 100,
     net: (cents - platformFeeCents) / 100,
-    belowMinimum: value > 0 && value < MIN_PRICE_PER_SLOT,
+    belowMinimum: valorAbaixoDoMinimo(value, isAdmin),
   };
 }
 

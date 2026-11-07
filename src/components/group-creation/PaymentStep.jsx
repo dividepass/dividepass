@@ -1,5 +1,6 @@
 import { Info } from 'lucide-react';
 import { brl, simulatePrice, MIN_PRICE_PER_SLOT } from '../../lib/platformFee';
+import { useAuth } from '../../hooks/useAuth';
 import {
   planSlotRange, planSlotRangeText, planTotalRange, pricePerSlot, planBasePrice, planOfficialPrice,
   suggestedGroupTotal, slotPriceOutOfRange, GROUP_PLAN_MARKUP,
@@ -38,6 +39,9 @@ export default function PaymentStep({
 
   const set = (patch) => onChange?.(patch);
 
+  // O admin da plataforma não passa pelo piso de R$ 5,00 por vaga.
+  const { isAdmin } = useAuth();
+
   const range = planSlotRange(plan);
   const totalRange = planTotalRange(plan, slots);
   const minPrice = MIN_PRICE_PER_SLOT;
@@ -46,7 +50,7 @@ export default function PaymentStep({
 
   const total = parseFloat(price_total) || 0;
   const perSlot = pricePerSlot(total, slots);
-  const simulation = simulatePrice(perSlot);
+  const simulation = simulatePrice(perSlot, isAdmin);
   const markup = Math.round(GROUP_PLAN_MARKUP * 100);
 
   // A faixa do plano vale para o valor POR PESSOA; o total do grupo é essa

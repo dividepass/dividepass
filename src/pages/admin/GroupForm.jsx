@@ -4,7 +4,7 @@ import { ArrowLeft, Loader2, Save, Plus, Trash2, CheckCircle, X, Info, UserPlus,
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import NotificationComposerCard from '../../components/NotificationComposerCard';
-import { simulatePrice, brl, MIN_PRICE_PER_SLOT } from '../../lib/platformFee';
+import { simulatePrice, brl } from '../../lib/platformFee';
 import { hasAdsColumnAvailable, isMissingHasAdsColumn } from '../../lib/groupHasAds';
 import { visibilityColumnAvailable, isMissingVisibilityColumn } from '../../lib/groupVisibility';
 import {
@@ -1185,9 +1185,10 @@ function GroupForm() {
         const total = parseFloat(formData.price_total);
         if (!(total > 0)) return 'Informe o valor total do grupo.';
         const perSlot = pricePerSlot(total, formData.max_size);
-        if (perSlot > 0 && perSlot < MIN_PRICE_PER_SLOT) {
-          return `O valor por pessoa (R$ ${brl(perSlot)}) está abaixo do mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)}.`;
-        }
+        // SEM PISO DE VALOR: esta é a tela do ADMIN da plataforma. Ele
+        // controla os grupos e pode criar/ajustar qualquer valor por vaga —
+        // o piso de R$ 5,00 vale para o usuário comum, não para o admin.
+        // (O banco nunca recusou preço baixo: só impõe price_per_slot > 0.)
         // TETO DO PLANO (por pessoa): fora da faixa o grupo não é criado.
         if (wizardPlan) {
           const range = slotPriceOutOfRange(wizardPlan, perSlot);
@@ -1786,7 +1787,7 @@ function GroupForm() {
             <input
               type="number"
               step="0.01"
-              min={MIN_PRICE_PER_SLOT}
+              min={0}
               name="price_per_slot"
               value={formData.price_per_slot}
               onChange={handleChange}
@@ -1794,8 +1795,8 @@ function GroupForm() {
             />
             <small className="field-hint">
               {wizardPlan
-                ? `Mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)} por vaga. O plano ${wizardPlan.name} permite de R$ ${brl(wizardPlan.min_price || 0)}${wizardPlan.max_price ? ` a R$ ${brl(wizardPlan.max_price)}` : ''} por pessoa.`
-                : `Mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)} por vaga.`}
+                ? `O plano ${wizardPlan.name} permite de R$ ${brl(wizardPlan.min_price || 0)}${wizardPlan.max_price ? ` a R$ ${brl(wizardPlan.max_price)}` : ''} por pessoa.`
+                : 'Admin da plataforma: sem valor mínimo por vaga.'}
             </small>
           </div>
 

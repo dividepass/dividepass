@@ -203,6 +203,39 @@ async function registrarLiberacaoFalhada(
     const userName = (usr || [])[0]?.name || "Usuário";
     const groupName = (grp || [])[0]?.name || group_id;
 
+    // ─────────────────────────────────────────────────────────────────────
+    // TRAVA DE SPAM: o mesmo problema não vira um evento por rodada.
+    //
+    // O job de reconciliação roda a cada 15 minutos e volta a tentar a mesma
+    // liberação. Um caso REAL que não se resolve sozinho (por exemplo
+    // "grupo cheio") gerava um evento a cada rodada — 96 por dia no painel,
+    // afogando os casos que importam.
+    //
+    // A regra: o mesmo pagamento (transaction_id) só é registrado UMA vez por
+    // dia. Se o erro mudar, ou se o caso for resolvido e acontecer de novo,
+    // o evento aparece de novo — o que se perde é a repetição, não o
+    // registro.
+    // ─────────────────────────────────────────────────────────────────────
+    const txIdSeguro = String(gateway_payment_id || "").trim();
+    if (txIdSeguro) {
+      const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: jaRegistrado } = await admin
+        .from("platform_events")
+        .select("id")
+        .eq("title", "Pagamento aprovado sem liberação")
+        .gte("created_at", desde)
+        .eq("transaction_id", txIdSeguro)
+        .limit(1);
+
+      if (jaRegistrado && jaRegistrado.length > 0) {
+        console.log(
+          `[confirm-payment] liberação ainda falhando (${payment_type}) tx=${gateway_payment_id}: ` +
+            `${erro || "erro desconhecido"} — já registrado hoje, não duplicando o evento`,
+        );
+        return;
+      }
+    }
+
     await admin.from("platform_events").insert({
       event_type: "payment",
       title: "Pagamento aprovado sem liberação",
@@ -210,6 +243,10 @@ async function registrarLiberacaoFalhada(
         `${userName} pagou R$ ${Number(amount || 0).toFixed(2)} no grupo "${groupName}" ` +
         `via ${gateway}, mas a liberação no grupo falhou: ${erro || "erro desconhecido"}. ` +
         `O valor foi cobrado — libere o acesso manualmente ou rode o job de reconciliação.`,
+      // Coluna dedicada: o `metadata` é gravado como STRING JSON (por isso
+      // `metadata->>'transaction_id'` não funciona) e não dá para filtrar por
+      // ele. Ver database/add-platform-events-transaction-id.sql.
+      transaction_id: txIdSeguro || null,
       metadata: JSON.stringify({
         user_id, group_id, amount, payment_type, gateway,
         transaction_id: gateway_payment_id,
