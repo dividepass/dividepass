@@ -22,6 +22,7 @@ import {
   cpfValido as cpfValidoBackend,
   soDigitos as soDigitosBackend,
   mascararCpf as mascararCpfBackend,
+  escolherCpf,
 } from "../supabase/functions/_shared/cpf.ts";
 import {
   cpfValido as cpfValidoFront,
@@ -89,6 +90,63 @@ for (const cpf of amostras) {
   if (mascararCpfBackend(cpf) !== mascararCpfFront(cpf)) divergentes++;
 }
 ok("backend e front concordam em todas as amostras", divergentes === 0, `${divergentes} divergências`);
+
+// ── ESCOLHER DE ONDE VEM O CPF ─────────────────────────────────────────────
+// A REGRA: o CPF CADASTRADO NO PERFIL MANDA. Quem já cadastrou não digita de
+// novo, e o que vem no pedido nunca sobrescreve o perfil (um mandate em nome
+// de outra pessoa é pior do que nenhum mandate).
+const CPF_VALIDO = "31324227036";
+const OUTRO_VALIDO = "11144477735";
+
+{
+  // Perfil com CPF válido, pedido vazio.
+  const e = escolherCpf(CPF_VALIDO, "");
+  ok("perfil com CPF: usa o do perfil", e.cpf === CPF_VALIDO && e.origem === "perfil");
+  ok("perfil com CPF: não é divergente", e.divergente === false);
+  ok("perfil com CPF: perfil não é inválido", e.perfilInvalido === false);
+}
+{
+  // Perfil com CPF válido, pedido com o MESMO CPF.
+  const e = escolherCpf(CPF_VALIDO, `313.242.270-36`);
+  ok("mesmo CPF nos dois lados: usa o perfil", e.cpf === CPF_VALIDO && e.origem === "perfil");
+  ok("mesmo CPF nos dois lados: não é divergente", e.divergente === false);
+}
+{
+  // Perfil com CPF válido, pedido com OUTRO CPF (divergente).
+  const e = escolherCpf(CPF_VALIDO, OUTRO_VALIDO);
+  ok("CPF divergente: o PERFIL vence", e.cpf === CPF_VALIDO && e.origem === "perfil");
+  ok("CPF divergente: sinaliza a divergência", e.divergente === true);
+}
+{
+  // Perfil sem CPF, pedido com CPF válido.
+  const e = escolherCpf(null, OUTRO_VALIDO);
+  ok("sem CPF no perfil: usa o do checkout", e.cpf === OUTRO_VALIDO && e.origem === "checkout");
+  ok("sem CPF no perfil: não é divergente", e.divergente === false);
+}
+{
+  // Perfil vazio (string vazia) e pedido vazio.
+  const e = escolherCpf("", "");
+  ok("nada em lugar nenhum: não há CPF", e.cpf === null && e.origem === null);
+  ok("nada em lugar nenhum: perfil não é inválido", e.perfilInvalido === false);
+}
+{
+  // Perfil com LIXO (CPF inválido gravado) e pedido com CPF válido: o do
+  // checkout vale e corrige o perfil.
+  const e = escolherCpf("11111111111", OUTRO_VALIDO);
+  ok("perfil com lixo: usa o CPF do checkout", e.cpf === OUTRO_VALIDO && e.origem === "checkout");
+  ok("perfil com lixo: sinaliza o perfil inválido", e.perfilInvalido === true);
+}
+{
+  // Perfil com lixo e NADA no pedido: não há CPF (e o perfil está sujo).
+  const e = escolherCpf("11111111111", null);
+  ok("perfil com lixo e sem pedido: não há CPF", e.cpf === null && e.origem === null);
+  ok("perfil com lixo e sem pedido: sinaliza o perfil inválido", e.perfilInvalido === true);
+}
+{
+  // A máscara do perfil não atrapalha.
+  const e = escolherCpf("313.242.270-36", "");
+  ok("perfil mascarado: normaliza", e.cpf === CPF_VALIDO && e.origem === "perfil");
+}
 
 console.log(`\n${passou} passou | ${falhou} falhou`);
 if (falhou > 0) process.exit(1);

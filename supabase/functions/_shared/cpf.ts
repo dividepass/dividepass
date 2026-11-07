@@ -72,3 +72,64 @@ export function mascararCpf(cpf: string | null | undefined): string {
   if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
 }
+
+/**
+ * De onde vem o CPF do mandate.
+ *
+ * - `cpf`       o CPF a usar (null = não há nenhum);
+ * - `origem`    de onde ele veio;
+ * - `divergente` o pedido trouxe um CPF DIFERENTE do que está no perfil;
+ * - `perfilInvalido` o perfil tem algo gravado que não é um CPF válido.
+ */
+export type CpfEscolhido = {
+  cpf: string | null;
+  origem: "perfil" | "checkout" | null;
+  divergente: boolean;
+  perfilInvalido: boolean;
+};
+
+/**
+ * ESCOLHE O CPF DO MANDATE.
+ *
+ * A REGRA: o CPF CADASTRADO NO PERFIL MANDA.
+ *
+ * Quem já cadastrou o CPF não pode ser obrigado a digitar de novo a cada
+ * compra — e o que vem no pedido NUNCA sobrescreve o que está no perfil. Um
+ * mandate em nome de outra pessoa é pior do que nenhum mandate: o CPF é o
+ * que amarra a cobrança recorrente a uma conta específica.
+ *
+ * Quem NÃO tem CPF no perfil usa o que digitou no checkout (e ele é gravado
+ * no perfil para a próxima compra não perguntar de novo).
+ *
+ * Se o perfil tem algo que não é um CPF válido (digitado errado em outro
+ * momento), ele é tratado como se não houvesse — o CPF novo do checkout
+ * vale e corrige o perfil.
+ */
+export function escolherCpf(
+  cpfDoPerfil: string | null | undefined,
+  cpfInformado: string | null | undefined,
+): CpfEscolhido {
+  const perfil = soDigitos(cpfDoPerfil);
+  const informado = soDigitos(cpfInformado);
+
+  const perfilValido = perfil.length === 11 && cpfValido(perfil);
+  if (perfilValido) {
+    return {
+      cpf: perfil,
+      origem: "perfil",
+      divergente: Boolean(informado && informado !== perfil),
+      perfilInvalido: false,
+    };
+  }
+
+  if (informado) {
+    return {
+      cpf: informado,
+      origem: "checkout",
+      divergente: false,
+      perfilInvalido: Boolean(perfil),
+    };
+  }
+
+  return { cpf: null, origem: null, divergente: false, perfilInvalido: Boolean(perfil) };
+}

@@ -1,10 +1,11 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Camera, Save, ArrowLeft, Trash2, AlertTriangle, Loader2, MessageCircle, Bell, BellOff, Copy, Check, Palette, X } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { optimizeImage } from '../../lib/imageOptimizer';
 import { maskPhone, onlyDigits } from '../../lib/maskPhone';
+import { cpfValido, mascararCpf, soDigitos } from '../../lib/cpf';
 import { usePushNotifications } from '../../hooks/usePushNotifications';
 import AvatarPicker from '../../components/AvatarPicker';
 import './UserProfile.css';
@@ -32,6 +33,41 @@ export default function UserProfile() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
   const [copied, setCopied] = useState(false);
+
+  // ── CPF ──────────────────────────────────────────────────────────────────
+  // O Pix Automático (Woovi) amarra a cobrança recorrente ao CPF do pagador.
+  // Quem tem CPF cadastrado NUNCA é perguntado de novo no checkout — por isso
+  // ele precisa existir aqui, no perfil.
+  //
+  // A coluna `users.cpf` é sensível: o front NÃO consegue LÊ-la (o banco
+  // bloqueia o SELECT) e só o dono pode GRAVÁ-la. O status chega pela função
+  // `meu_cpf_status()`, que devolve só o necessário: se existe e uma versão
+  // mascarada.
+  const [cpfCadastrado, setCpfCadastrado] = useState(false);
+  const [cpfMascarado, setCpfMascarado] = useState(null);
+  const [cpfEditando, setCpfEditando] = useState(false);
+  const [cpfValor, setCpfValor] = useState('');
+  const [cpfErro, setCpfErro] = useState('');
+  const [cpfRemovendo, setCpfRemovendo] = useState(false);
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase.rpc('meu_cpf_status');
+        if (cancelado) return;
+        if (error) {
+          console.warn('[UserProfile] status do CPF indisponível:', error.message);
+          return;
+        }
+        setCpfCadastrado(data?.cadastrado === true);
+        setCpfMascarado(data?.mascarado || null);
+      } catch (e) {
+        console.warn('[UserProfile] status do CPF indisponível:', e?.message);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [user?.id]);
 
   const handleChange = (e) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -112,6 +148,24 @@ export default function UserProfile() {
       if (form.nickname !== undefined) updateData.nickname = form.nickname || null;
       if (form.birthdate !== undefined) updateData.birthdate = form.birthdate || null;
 
+      // ── CPF ───────────────────────────────────────────────────────────────
+      // Grava só o que o usuário mexeu. O banco só deixa o dono escrever a
+      // própria linha (policy `auth.uid() = id`), então o grant da coluna é
+      // do próprio dono por construção.
+      if (cpfRemovendo) {
+        updateData.cpf = null;
+      } else if (cpfEditando) {
+        const digitos = soDigitos(cpfValor);
+        if (digitos) {
+          if (!cpfValido(digitos)) {
+            setSaving(false);
+            setMessage({ type: 'error', text: 'CPF inválido. Confira os dígitos e tente de novo.' });
+            return;
+          }
+          updateData.cpf = digitos;
+        }
+      }
+
       const { error } = await supabase
         .from('users')
         .update(updateData)
@@ -121,6 +175,8 @@ export default function UserProfile() {
         console.error('Update error:', error);
         if (error.message.includes('column') && error.message.includes('does not exist')) {
           setMessage({ type: 'error', text: 'Execute a migração SQL no Supabase primeiro. Veja: database/add-user-profile-fields.sql' });
+        } else if (error.message.includes('permission denied')) {
+          setMessage({ type: 'error', text: 'Não foi possível salvar o CPF. Rode o arquivo database/add-cpf-perfil.sql no Supabase.' });
         } else {
           setMessage({ type: 'error', text: 'Erro ao salvar: ' + error.message });
         }
@@ -128,6 +184,17 @@ export default function UserProfile() {
         setAvatarUrl(newAvatarUrl);
         setAvatarFile(null);
         setAvatarPreview(null);
+        if (cpfRemovendo) {
+          setCpfCadastrado(false);
+          setCpfMascarado(null);
+          setCpfRemovendo(false);
+        } else if (cpfEditando && updateData.cpf) {
+          setCpfCadastrado(true);
+          setCpfMascarado(mascararCpf(updateData.cpf));
+        }
+        setCpfEditando(false);
+        setCpfValor('');
+        setCpfErro('');
         setMessage({ type: 'success', text: 'Perfil atualizado com sucesso!' });
         await refreshProfile();
       }
@@ -390,6 +457,77 @@ export default function UserProfile() {
                 onChange={handleChange}
               />
             </div>
+          </div>
+
+          {/* ── CPF ─────────────────────────────────────────────────────────── */}
+          {/* O Pix Automático (Woovi) amarra a cobrança recorrente ao CPF do
+              pagador. Com o CPF aqui, o checkout nunca mais pergunta. */}
+          <div className="form-group">
+            <label htmlFor="cpf">CPF</label>
+
+            {cpfCadastrado && !cpfEditando && !cpfRemovendo ? (
+              <>
+                <input
+                  id="cpf"
+                  type="text"
+                  value={cpfMascarado || 'CPF cadastrado'}
+                  disabled
+                  className="disabled-field"
+                />
+                <span className="field-hint">
+                  Usamos este CPF nas cobranças recorrentes (Pix Automático). Ele não fica
+                  visível para mais ninguém.
+                </span>
+                <div className="profile-cpf-acoes">
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => { setCpfEditando(true); setCpfRemovendo(false); setCpfErro(''); }}
+                  >
+                    Trocar CPF
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => { setCpfRemovendo(true); setCpfEditando(false); setCpfErro(''); }}
+                  >
+                    Remover
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <input
+                  id="cpf"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={14}
+                  value={cpfValor}
+                  onChange={(e) => { setCpfValor(mascararCpf(e.target.value)); setCpfErro(''); }}
+                  placeholder="000.000.000-00"
+                  aria-invalid={cpfErro ? 'true' : 'false'}
+                />
+                <span className="field-hint">
+                  {cpfRemovendo
+                    ? 'O CPF será removido ao salvar. Sem ele, o checkout volta a pedir.'
+                    : 'Só os dígitos do seu CPF. Fica salvo no perfil — o checkout não pergunta de novo.'}
+                </span>
+                {cpfErro && <span className="profile-cpf-erro">{cpfErro}</span>}
+                {cpfCadastrado && (
+                  <div className="profile-cpf-acoes">
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => { setCpfEditando(false); setCpfRemovendo(false); setCpfValor(''); setCpfErro(''); }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <div className="form-group">

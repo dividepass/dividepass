@@ -346,6 +346,21 @@
   margin-top: 0.25rem;
 }
 
+/* CPF — as ações de trocar/remover e o erro de validação.
+   O `.field-hint` acima é global do app; estas regras são do perfil. */
+.profile-fields .profile-cpf-acoes {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.profile-fields .profile-cpf-erro {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--danger, #ef4444);
+  margin-top: 0.35rem;
+}
+
 .profile-fields .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

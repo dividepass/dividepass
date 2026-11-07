@@ -239,6 +239,7 @@ function CampoCpf({ valor, onChange, erro }) {
       />
       <p className="checkout-cpf-hint">
         O Pix Automático precisa do CPF: é ele que amarra a assinatura recorrente à sua conta.
+        Ele fica salvo no seu perfil — na próxima compra não perguntamos de novo.
       </p>
       {erro && (
         <p className="checkout-cpf-erro">
@@ -267,9 +268,15 @@ function CheckoutPagina({ variante }) {
   // A Woovi só cria a ASSINATURA (recorrência) de um cliente que ela
   // consiga resolver pelo CPF. Sem ele, o backend responde 400 com
   // `code: 'cpf_required'` e o campo aparece aqui.
+  //
+  // QUEM JÁ TEM CPF CADASTRADO NO PERFIL NÃO É PERGUNTADO — o backend usa o
+  // do perfil. O status chega pela função `meu_cpf_status()` (o banco não
+  // deixa o front LER a coluna `users.cpf`, só saber se ela está preenchida).
+  // Sem esse status, o campo só aparece se o backend pedir (`cpfPedido`).
   const [cpfValor, setCpfValor] = useState('');
   const [cpfPedido, setCpfPedido] = useState(false);
   const [cpfErro, setCpfErro] = useState('');
+  const [cpfStatus, setCpfStatus] = useState(null);
   const [remoteGroup, setRemoteGroup] = useState(undefined);
   const [memberStatus, setMemberStatus] = useState(null);
   // Confirmação de que a taxa de adesão foi paga, checada direto em payments.
@@ -459,6 +466,46 @@ function CheckoutPagina({ variante }) {
       setPaymentMethod('card');
     }
   }, [cfgGateway.carregado, activeGateway, paymentMethod]);
+
+  // ── O CPF DO PERFIL ─────────────────────────────────────────────────────
+  // Só o Pix Automático (Woovi) precisa do CPF do pagador. Quando a cobrança
+  // vai para a Woovi, perguntamos ao banco se o usuário JÁ TEM CPF no perfil:
+  //
+  //   - tem   -> o campo NÃO aparece (o backend usa o do perfil);
+  //   - não tem -> o campo aparece AGORA, antes de o usuário clicar em pagar.
+  //
+  // Sem isso, quem não tinha CPF descobria o problema só depois de clicar:
+  // o backend respondia 400 `cpf_required` e o campo surgia na tela.
+  const pixNaWoovi = paymentMethod === 'pix' && activeGateway === 'woovi';
+
+  useEffect(() => {
+    if (!user || !cfgGateway.carregado) return;
+    if (!pixNaWoovi) {
+      setCpfStatus(null);
+      return;
+    }
+    let cancelado = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase.rpc('meu_cpf_status');
+        if (cancelado) return;
+        if (error) {
+          // Sem o status, o campo só aparece se o backend pedir (cpfPedido).
+          console.warn('[Checkout] status do CPF indisponível:', error.message);
+          return;
+        }
+        setCpfStatus(data);
+      } catch (e) {
+        console.warn('[Checkout] status do CPF indisponível:', e?.message);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [user, cfgGateway.carregado, pixNaWoovi]);
+
+  // O campo de CPF aparece quando o Pix Automático precisa dele e ele NÃO
+  // está no perfil — ou quando o backend pediu explicitamente.
+  const cpfJaCadastrado = cpfStatus?.cadastrado === true;
+  const mostrarCampoCpf = cpfPedido || (pixNaWoovi && cpfStatus?.cadastrado === false);
   // Auto-apply testimonial reward if available
   useEffect(() => {
     if (!user || !details?.group) return;
@@ -704,11 +751,11 @@ function CheckoutPagina({ variante }) {
 
   /**
    * O CPF é obrigatório para o Pix Automático (a Woovi só cria a assinatura
-   * de um cliente que ela resolve pelo CPF). Se o campo já apareceu, o
+   * de um cliente que ela resolve pelo CPF). Se o campo está na tela, o
    * usuário precisa preencher antes de tentar de novo.
    */
   const cpfPronto = () => {
-    if (!cpfPedido) return true;
+    if (!mostrarCampoCpf) return true;
     if (!soDigitos(cpfValor)) {
       setCpfErro('Informe o seu CPF para gerar o PIX recorrente.');
       return false;
@@ -2542,7 +2589,7 @@ function CheckoutPagina({ variante }) {
                       )
                     ) : (
                       <div className="payment-buttons">
-                        {cpfPedido && (
+                        {mostrarCampoCpf && (
                           <CampoCpf
                             valor={cpfValor}
                             onChange={(v) => { setCpfValor(v); setCpfErro(''); }}
@@ -2865,7 +2912,7 @@ function CheckoutPagina({ variante }) {
                       )
                     ) : (
                       <div className="payment-buttons">
-                        {cpfPedido && (
+                        {mostrarCampoCpf && (
                           <CampoCpf
                             valor={cpfValor}
                             onChange={(v) => { setCpfValor(v); setCpfErro(''); }}

@@ -75,7 +75,7 @@ import {
   type WooviConfig,
   type WooviFrequency,
 } from "../../_shared/woovi.ts";
-import { cpfValido, soDigitos } from "../../_shared/cpf.ts";
+import { cpfValido, escolherCpf, soDigitos } from "../../_shared/cpf.ts";
 
 interface HandlerContext {
   supabaseAdmin: any;
@@ -109,11 +109,6 @@ function normalizePhone(raw: string | null | undefined): string {
   // 10 dígitos = fixo; 11 = celular. Sem o código do país, adiciona o 55.
   if (digits.length === 10 || digits.length === 11) digits = "55" + digits;
   return digits;
-}
-
-/** Normaliza CPF: só dígitos. */
-function normalizeCpf(raw: string | null | undefined): string {
-  return String(raw || "").replace(/\D/g, "");
 }
 
 /**
@@ -736,13 +731,19 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
  * (Verificado na API em 07/11/2026.) A API resolve o cliente pelo CPF — não
  * pelo que mandamos no corpo.
  *
- * Então o CPF é obtido de DUAS fontes, nesta ordem:
+ * Então o CPF é obtido de DUAS fontes — e o PERFIL MANDA:
  *
- *   1. o perfil (`users.cpf`);
- *   2. o `cpf` que o usuário acabou de digitar no checkout (`cpfInformado`).
+ *   1. o perfil (`users.cpf`), quando tem um CPF válido;
+ *   2. o `cpf` que o usuário acabou de digitar no checkout (`cpfInformado`),
+ *      só quando o perfil não tem nenhum (e aí ele é gravado no perfil).
+ *
+ * Quem já cadastrou o CPF não digita de novo a cada compra, e o que vem no
+ * pedido NUNCA sobrescreve o que está no perfil: um mandate em nome de outra
+ * pessoa é pior do que nenhum mandate. (A decisão está em `escolherCpf`, no
+ * `_shared/cpf.ts`.)
  *
  * O CPF digitado é VALIDADO pelos dígitos verificadores antes de qualquer
- * coisa: um mandate em nome de outra pessoa é pior do que nenhum mandate.
+ * coisa.
  *
  * Quando o cliente já existe na Woovi mas foi criado SEM CPF (é o caso
  * normal: o primeiro pagamento acontece antes de o app pedir o CPF), ele é
@@ -765,21 +766,34 @@ async function getOrCreateCustomer(
   const correlationID = `dp-user-${user_id}`;
 
   // ── CPF: perfil → informado no checkout ─────────────────────────────────
-  const cpfDoPerfil = normalizeCpf(profile?.cpf);
+  //
+  // O CPF CADASTRADO NO PERFIL MANDA: quem já cadastrou não digita de novo, e
+  // o que vem no pedido não sobrescreve o perfil (o `escolherCpf` decide).
   const cpfDoBody = soDigitos(cpfInformado || "");
 
+  // Um CPF MALFORMADO no pedido é erro sempre — mesmo havendo um CPF válido
+  // no perfil. Pedido malformado não passa em silêncio.
   if (cpfDoBody && !cpfValido(cpfDoBody)) {
     throw new WooviApiError("CPF inválido. Confira os dígitos e tente de novo.", 400);
   }
 
-  let cpf = cpfDoPerfil;
-  if (cpfDoBody && cpfDoBody !== cpfDoPerfil) {
+  const escolha = escolherCpf(profile?.cpf, cpfDoBody);
+  let cpf = escolha.cpf;
+
+  if (escolha.origem === "checkout") {
     // Grava no perfil para as próximas compras (e para a conciliação).
     // A coluna `users.cpf` é sensível: o front NÃO pode ler, só o backend
     // (service role) escreve.
-    await supabaseAdmin.from("users").update({ cpf: cpfDoBody }).eq("id", user_id);
-    cpf = cpfDoBody;
+    await supabaseAdmin.from("users").update({ cpf: cpf }).eq("id", user_id);
     console.log(`[woovi] CPF do checkout gravado no perfil (${user_id})`);
+  } else if (escolha.origem === "perfil" && escolha.divergente) {
+    // O pedido trouxe um CPF DIFERENTE do cadastrado. O do perfil vence: o
+    // mandate fica amarrado a quem se cadastrou, e não a quem digitou.
+    console.warn(`[woovi] CPF do checkout ignorado — o perfil já tem CPF (${user_id})`);
+  }
+
+  if (escolha.perfilInvalido) {
+    console.warn(`[woovi] o perfil tinha um CPF inválido gravado (${user_id})`);
   }
 
   // Cliente já conhecido: busca na Woovi para ter o objeto completo
@@ -839,7 +853,8 @@ async function getOrCreateCustomer(
   const phone = normalizePhone(profile?.phone) || normalizePhone(settings.woovi_default_phone);
   if (phone) payload.phone = phone;
 
-  const taxID = cpf || normalizeCpf(profile?.cpf);
+  // O `cpf` já vem normalizado do `escolherCpf` (perfil OU checkout).
+  const taxID = cpf;
   if (taxID) payload.taxID = taxID;
 
   // O Pix Automático exige endereço. O app ainda não coleta endereço do
@@ -907,7 +922,7 @@ async function getOrCreateCustomer(
 async function criarOuReaproveitarCliente(
   cfg: WooviConfig,
   payload: WooviCustomer,
-  taxID: string,
+  taxID: string | null,
   correlationID: string,
 ): Promise<any> {
   try {
