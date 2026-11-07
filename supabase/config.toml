@@ -159,6 +159,15 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/check-woovi-tx/index.ts"
 
+# Teste de credencial da Woovi (botão "Testar" na tela de Configurações).
+# O admin logado pede para testar um AppID contra a URL do ambiente escolhido.
+# verify_jwt = true (padrão) é o correto: quem chama é o navegador do admin
+# logado, e a função ainda checa `users.role = 'admin'` antes de responder.
+[functions.woovi-teste-conexao]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/woovi-teste-conexao/index.ts"
+
 [functions.send-group-alert]
 enabled = true
 verify_jwt = false

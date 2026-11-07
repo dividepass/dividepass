@@ -1,47 +1,170 @@
+/* ============================================================================
+   CONFIGURAÇÕES DA PLATAFORMA (Admin)
+
+   A tela tem 9 seções. A rolagem longa era o problema: o admin abria a página
+   para trocar UM campo e tinha de passar por todo o resto.
+
+   A solução aqui é de três partes:
+     1. menu lateral fixo com âncoras (a seção ativa é destacada);
+     2. cada seção é um CARD separado (não um bloco dentro de um card só);
+     3. barra de SALVAR fixa no rodapé, que diz quantas alterações estão
+        pendentes — o "Salvar" nunca some da tela.
+   ========================================================================== */
+
 .settings-page {
-  max-width: 700px;
+  max-width: 1150px;
   display: flex;
   flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ── Cabeçalho ─────────────────────────────────────────────────────────── */
+.settings-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 1.5rem;
+  flex-wrap: wrap;
 }
 
-.settings-page .admin-header {
-  margin-bottom: 0;
-}
-
-.settings-page .admin-header h1 {
-  font-size: 1.75rem;
+.settings-hero-text h1 {
+  font-size: 1.6rem;
   color: var(--secondary);
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  margin: 0;
 }
 
-.settings-page .admin-header p {
+.settings-hero-text p {
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   margin-top: 0.25rem;
 }
 
-/* ── Card ── */
+/* Resumo do estado atual: ambiente, gateway, divisão. */
+.settings-hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.settings-chip.chip-prod {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+}
+
+.settings-chip.chip-sandbox {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+}
+
+.settings-chip.chip-ativo {
+  border-color: rgba(14, 165, 233, 0.4);
+  background: rgba(14, 165, 233, 0.1);
+  color: var(--info);
+}
+
+.settings-chip.chip-alerta {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+/* ── Layout: menu + conteúdo ───────────────────────────────────────────── */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* Menu lateral: fica parado enquanto a página rola. */
+.settings-nav {
+  position: sticky;
+  top: 4.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.settings-nav-item:hover {
+  background: var(--background);
+  color: var(--text-main);
+}
+
+.settings-nav-item.active {
+  background: rgba(14, 165, 233, 0.12);
+  color: var(--info);
+}
+
+.settings-nav-item svg {
+  flex-shrink: 0;
+}
+
+/* ── Conteúdo: pilha de cards ──────────────────────────────────────────── */
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+/* Cada seção é um card próprio (antes: um card só com divisórias). */
 .settings-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 1rem;
   overflow: hidden;
-}
-
-/* ── Sections ── */
-.settings-section {
-  border-bottom: 1px solid var(--border);
-}
-
-.settings-section:last-child {
-  border-bottom: none;
+  /* Compensa a barra de contexto fixa do painel admin ao pular para a seção. */
+  scroll-margin-top: 4.5rem;
 }
 
 .settings-section-header {
-  padding: 1.25rem 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--border);
   background: var(--background);
 }
@@ -50,13 +173,40 @@
   font-size: 1rem;
   font-weight: 600;
   color: var(--secondary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.settings-section-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.settings-section-hint strong {
+  color: var(--text-main);
 }
 
 .settings-section-body {
-  padding: 1.5rem 1.75rem;
+  padding: 1.25rem 1.5rem;
 }
 
-/* ── Info Blocks ── */
+.settings-footnote {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.75rem;
+}
+
+.settings-inline-alert {
+  margin-top: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+/* ── Info Blocks ───────────────────────────────────────────────────────── */
 .settings-info-block {
   display: flex;
   align-items: flex-start;
@@ -85,6 +235,15 @@
   color: var(--text-main);
 }
 
+.settings-info-block code {
+  font-size: 0.78rem;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+  word-break: break-all;
+}
+
 .settings-info-block.warning {
   background: rgba(245, 158, 11, 0.06);
   border-color: rgba(245, 158, 11, 0.2);
@@ -94,15 +253,45 @@
   color: var(--warning);
 }
 
-/* ── Footer ── */
+/* ── Barra fixa de salvar ──────────────────────────────────────────────── */
 .settings-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: var(--surface);
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.08);
+}
+
+.settings-footer.tem-pendencias {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.settings-footer-info {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.settings-footer.tem-pendencias .settings-footer-info {
+  color: var(--warning);
+}
+
+.settings-footer-info strong {
+  color: var(--text-main);
 }
 
 .settings-footer .btn {
-  padding: 0.65rem 1.5rem;
-  font-size: 0.9rem;
+  padding: 0.6rem 1.4rem;
+  font-size: 0.88rem;
   font-weight: 600;
   border-radius: 0.5rem;
   display: inline-flex;
@@ -110,7 +299,7 @@
   gap: 0.4rem;
 }
 
-/* ── Success Banner ── */
+/* ── Banners ───────────────────────────────────────────────────────────── */
 .success-banner {
   background: rgba(16, 185, 129, 0.1);
   color: var(--success);
@@ -120,7 +309,6 @@
   border: 1px solid rgba(16, 185, 129, 0.2);
 }
 
-/* ── Error Banner ── */
 .error-banner {
   background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
@@ -130,7 +318,7 @@
   border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
-/* ── Loading ── */
+/* ── Loading ───────────────────────────────────────────────────────────── */
 .loading-state {
   display: flex;
   align-items: center;
@@ -157,33 +345,7 @@
   animation: spin 1s linear infinite;
 }
 
-/* ── Responsive ── */
-@media (max-width: 768px) {
-  .settings-page {
-    max-width: 100%;
-  }
-
-  .settings-section-header,
-  .settings-section-body {
-    padding-left: 1.25rem;
-    padding-right: 1.25rem;
-  }
-
-  .settings-footer {
-    justify-content: stretch;
-  }
-
-  .settings-footer .btn {
-    flex: 1;
-    justify-content: center;
-  }
-
-  .gateway-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* ── Gateway Selector ── */
+/* ── Gateway Selector ──────────────────────────────────────────────────── */
 .gateway-description {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -192,9 +354,13 @@
 
 .gateway-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 0.75rem;
   margin-bottom: 1rem;
+}
+
+.gateway-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .gateway-card {
@@ -263,7 +429,7 @@
   border-radius: 50%;
 }
 
-/* ── Gateway Credentials ── */
+/* ── Credenciais ───────────────────────────────────────────────────────── */
 .gateway-credentials {
   display: flex;
   flex-direction: column;
@@ -275,12 +441,43 @@
   margin-bottom: 0;
 }
 
+/* Campo com botão de ação (mostrar/ocultar senha). */
+.field-with-action {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.field-with-action input {
+  flex: 1;
+  min-width: 0;
+}
+
+.field-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.field-action:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 /* Abas de credenciais: escolher qual gateway editar SEM ativar nenhum. */
 .gateway-cred-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  padding: 0 1.5rem 0.5rem;
+  padding: 0.9rem 1.5rem 0;
 }
 
 .gateway-cred-tab {
@@ -307,7 +504,7 @@
   color: var(--primary);
 }
 
-/* Divisao de gateway por metodo (PIX / cartao). */
+/* ── Divisão por método (PIX / cartão) ─────────────────────────────────── */
 .split-toggle {
   display: flex;
   align-items: flex-start;
@@ -340,6 +537,42 @@
   color: var(--text-muted, #8b8b9a);
 }
 
+/* Resumo ao vivo: para onde vai cada método. */
+.split-resumo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--background);
+}
+
+.split-resumo > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.split-resumo span {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.split-resumo strong {
+  font-size: 0.9rem;
+  color: var(--secondary);
+}
+
+.split-resumo svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .split-gateway-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -351,7 +584,7 @@
   margin-bottom: 0;
 }
 
-/* Onde a divisao vale: so no checkout V2 (teste) ou em todos. */
+/* Onde a divisão vale: só no checkout V2 (teste) ou em todos. */
 .split-scope-group {
   margin-top: 1rem;
 }
@@ -376,10 +609,242 @@
   margin-top: 0.25rem;
   accent-color: var(--primary);
   cursor: pointer;
+  /* Outras telas do admin têm `.form-group input { width: 100% }` (Platforms.css).
+     Aqui o radio está dentro de um `.form-group`, então essa regra transformava o
+     radio numa barra de 100% de largura e empurrava o texto para o lado
+     oposto do cartão. O radio volta ao tamanho natural. */
+  width: auto;
+  flex: 0 0 auto;
 }
 
 .split-scope-option strong {
   display: block;
   color: var(--secondary);
   font-size: 0.88rem;
+}
+
+/* ============================================================================
+   CREDENCIAIS DA WOOVI — um AppID por ambiente
+   ========================================================================== */
+.woovi-creds {
+  margin-top: 1.25rem;
+}
+
+.woovi-creds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.woovi-cred-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: var(--background);
+}
+
+.woovi-cred-card.em-uso {
+  border-color: rgba(14, 165, 233, 0.5);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.08);
+}
+
+.woovi-cred-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.woovi-cred-title strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--secondary);
+}
+
+.woovi-cred-title code {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.woovi-cred-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--info);
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+}
+
+.woovi-cred-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.woovi-cred-field {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.woovi-cred-field input {
+  flex: 1;
+  min-width: 0;
+}
+
+.woovi-cred-eye {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.woovi-cred-eye:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.woovi-cred-test {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.woovi-cred-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.woovi-cred-result svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.woovi-cred-result strong {
+  display: block;
+  font-weight: 600;
+}
+
+.woovi-cred-result em {
+  display: block;
+  font-style: normal;
+  opacity: 0.85;
+  margin-top: 0.15rem;
+}
+
+.woovi-cred-result.ok {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: var(--success);
+}
+
+.woovi-cred-result.erro {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+}
+
+.woovi-creds-foot {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin: 1rem 0 0;
+}
+
+.woovi-creds-foot code {
+  font-size: 0.74rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+}
+
+/* ── Responsivo ────────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Menu vira uma faixa horizontal rolável no topo. */
+  .settings-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 0.35rem;
+    padding: 0.4rem;
+  }
+
+  .settings-nav-item {
+    width: auto;
+    white-space: nowrap;
+  }
+
+  .settings-section-hint {
+    text-align: left;
+  }
+}
+
+@media (max-width: 768px) {
+  .settings-page {
+    max-width: 100%;
+  }
+
+  .settings-hero-text h1 {
+    font-size: 1.3rem;
+  }
+
+  .settings-section-header,
+  .settings-section-body {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .gateway-cred-tabs {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .gateway-grid,
+  .gateway-grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
+  .settings-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .settings-footer-info {
+    justify-content: center;
+  }
 }

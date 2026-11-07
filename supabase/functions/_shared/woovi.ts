@@ -31,6 +31,37 @@ import { getAmbiente, type AmbienteOperacao } from "./ambiente.ts";
 export const WOOVI_PROD = "https://api.woovi.com";
 export const WOOVI_SANDBOX = "https://api.woovi-sandbox.com";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// APPID POR AMBIENTE
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// POR QUE SÃO DOIS
+// ---------------
+// A Woovi tem DUAS contas separadas: a de teste (api.woovi-sandbox.com) e a
+// real (api.woovi.com). Cada uma tem o seu AppID, e o AppID de uma NÃO
+// funciona na outra — a API responde 401 "appID inválido".
+//
+// Antes, o projeto guardava UM AppID só (`woovi_app_id`) e trocava apenas a
+// URL. Resultado: com o interruptor em "produção", a API real recebia o
+// AppID do sandbox e recusava TODA requisição com 401 "appID inválido" —
+// erro que não dá pista nenhuma do que era o problema.
+//
+// AGORA
+// -----
+//   woovi_app_id_sandbox    → AppID da conta de TESTE  (api.woovi-sandbox.com)
+//   woovi_app_id_production  → AppID da conta REAL     (api.woovi.com)
+//   woovi_app_id             → chave LIGADA (histórico): guardava o AppID do
+//                              sandbox. Continua valendo como reserva do
+//                              sandbox, para nada quebrar.
+//
+// O par (AppID, URL) é inseparable: cada AppID só vale na URL da sua conta.
+// Por isso a escolha é feita por AMBIENTE, e nunca "o AppID de um ambiente
+// com a URL do outro".
+export const WOOVI_APP_ID_SANDBOX_KEY = "woovi_app_id_sandbox";
+export const WOOVI_APP_ID_PRODUCTION_KEY = "woovi_app_id_production";
+/** Chave legada: guardava o AppID do sandbox. Reserva do ambiente de teste. */
+export const WOOVI_APP_ID_LEGACY_KEY = "woovi_app_id";
+
 /** Frequências aceitas pelo Pix Automático. `BIMONTHLY` NÃO é suportado. */
 export type WooviFrequency = "WEEKLY" | "MONTHLY" | "QUARTERLY" | "SEMIANNUALLY" | "ANNUALLY";
 
@@ -108,14 +139,58 @@ export function normalizarAppId(valor: string | null | undefined): string {
  * staging da VPS se declara sandbox).
  *
  * Um único interruptor, um único lugar para trocar.
+ *
+ * O APPID, ao contrário, É específico da Woovi: cada conta (teste e real) tem
+ * o seu. Por isso o AppID vem da chave que combina com o ambiente — nunca
+ * de uma chave "genérica". Ver `WOOVI_APP_ID_SANDBOX_KEY` /
+ * `WOOVI_APP_ID_PRODUCTION_KEY`.
  */
 export function getWooviConfig(settings: Record<string, string>): WooviConfig {
   const ambiente = getAmbiente(settings);
   return {
-    appId: normalizarAppId(settings.woovi_app_id),
+    appId: normalizarAppId(appIdDoAmbiente(settings, ambiente)),
     baseUrl: ambiente === "sandbox" ? WOOVI_SANDBOX : WOOVI_PROD,
     env: ambiente,
   };
+}
+
+/**
+ * Devolve o AppID que vale para um ambiente.
+ *
+ * Sandbox: `woovi_app_id_sandbox` e, se estiver vazio, a chave legada
+ * `woovi_app_id` (que sempre guardou o AppID de teste).
+ *
+ * Produção: SÓ `woovi_app_id_production`. Sem reserva: cair no AppID do
+ * sandbox aqui reproduziria o 401 "appID inválido" — e, pior, poderia
+ * mandar uma cobrança de verdade para uma conta errada se os dois AppIDs
+ * fossem válidos. Quando falta, quem chama mostra uma mensagem clara.
+ */
+export function appIdDoAmbiente(
+  settings: Record<string, string> | null | undefined,
+  ambiente: AmbienteOperacao,
+): string {
+  const map = settings || {};
+  if (ambiente === "sandbox") {
+    return String(map[WOOVI_APP_ID_SANDBOX_KEY] || map[WOOVI_APP_ID_LEGACY_KEY] || "").trim();
+  }
+  return String(map[WOOVI_APP_ID_PRODUCTION_KEY] || "").trim();
+}
+
+/**
+ * Mensagem de erro pronta para a tela quando falta o AppID do ambiente.
+ *
+ * Diz o que falta e ONDE resolver — um 401 "appID inválido" não diz nada
+ * disso (e o usuário não tem como adivinhar que o problema é a conta de
+ * produção vs a de teste).
+ */
+export function erroAppIdAusente(ambiente: AmbienteOperacao): string {
+  const rotulo = ambiente === "sandbox" ? "sandbox" : "produção";
+  // "AppID do Sandbox" x "AppID de Produção" — o campo do painel.
+  const campo = ambiente === "sandbox" ? "AppID do Sandbox" : "AppID de Produção";
+  return (
+    `Credenciais da Woovi (${rotulo}) não configuradas. ` +
+    `Cadastre o AppID em Admin → Configurações → Woovi (campo "${campo}").`
+  );
 }
 
 /**

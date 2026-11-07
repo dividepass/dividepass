@@ -3602,3 +3602,123 @@ grupo e rodar `scripts\checar-reconciliacao.mjs`, ou estornar na IO Pay.
 O modal "Pagamento com Problema" do painel admin é disparado pelo Realtime a
 cada INSERT novo em `platform_events`. Com o job pausado e o evento pendente
 removido, ele não abre mais (verificado no browser: 0 inserções em 12s).
+
+---
+
+## 32. "appID inválido": o AppID da Woovi é POR AMBIENTE (07/11/2026)
+
+### 32.1 O sintoma
+
+O dono estava testando o checkout V2 com o PIX na Woovi. Em **sandbox** o PIX
+saía; ao trocar o interruptor para **produção**, toda cobrança voltou:
+
+```
+Pagamento não concluído
+Erro ao criar cliente na Woovi: appID inválido
+```
+
+### 32.2 A causa (e por que o erro não ajudava)
+
+A Woovi tem **duas contas**: a de teste (`api.woovi-sandbox.com`) e a real
+(`api.woovi.com`). Cada uma tem o seu **AppID**, e o AppID de uma é **recusado**
+pela outra. O projeto guardava **um AppID só** (`woovi_app_id`) e trocava
+apenas a URL — então, em produção, a API real recebia o AppID do sandbox.
+
+Verificado na API em 2026-11-07, com o AppID do sandbox:
+
+| Chamada | Resultado |
+|---|---|
+| `GET api.woovi-sandbox.com/api/v1/customer` | **200** |
+| `GET api.woovi.com/api/v1/customer` | **401 `appID inválido`** |
+
+O 401 é o MESMO erro para AppID trocado, AppID do ambiente errado, conta
+diferente ou AppID revogado. Não dava nenhuma pista do que era.
+
+### 32.3 A correção
+
+Um AppID por ambiente, escolhido **pelo ambiente** (`_shared/woovi.ts`):
+
+- `woovi_app_id_sandbox` → conta de teste; se vazia, cai na legada
+  `woovi_app_id` (que sempre guardou o AppID de teste);
+- `woovi_app_id_production` → conta real. **Sem reserva**: cair no AppID do
+  sandbox reproduziria o 401 e poderia mandar cobrança para a conta errada;
+- `woovi_app_id` → legada, continua espelhando o sandbox (o script do webhook
+  ainda a lê).
+
+Migration idempotente: `database/add-woovi-app-id-por-ambiente.sql` (rodada em
+produção em 07/11/2026).
+
+**Detalhe que ficou claro:** o interruptor `app_settings.ambiente` — chamado de
+"global" — **só move a Woovi**. A IO Pay tem o seu (`iopay_env`). Dá, portanto,
+para testar o V2 na Woovi de sandbox **com o cartão da IO Pay em produção** ao
+mesmo tempo. A tela do Admin agora diz isso na cara.
+
+### 32.4 A tela de Configurações foi reformulada
+
+O pedido foi "melhorar o UI/UX e colocar o input das credenciais da Woovi
+por lá". O que mudou em `/admin/settings`:
+
+- **menu lateral fixo** com as 9 seções, com a seção ativa destacada;
+- cada seção virou um **card** próprio (antes era um card só com divisórias);
+- **barra de salvar fixa** no rodapé, com a contagem de alterações pendentes
+  ("3 alterações não salvas") e aviso ao sair da página;
+- **olho** para revelar/ocultar qualquer credencial (antes o campo de senha
+  era um `type=password` sem saída);
+- **credenciais da Woovi por ambiente** (Sandbox e Produção lado a lado), com a
+  etiqueta **"em uso agora"** no AppID do ambiente ativo e o botão **"Testar"**;
+- cabeçalho com o resumo do estado real (ambiente, gateway ativo, gateway do
+  PIX e do cartão) e alerta quando falta o AppID do ambiente ativo.
+
+O botão "Testar" chama a edge function nova **`woovi-teste-conexao`** (só
+admin): ela faz uma leitura simples (`GET /api/v1/customer`) na URL do
+ambiente escolhido e devolve "aceita" ou "recusada, com a dica de qual AppID
+usar". Testa **o que está no campo**, sem precisar salvar antes. O AppID
+nunca volta na resposta.
+
+### 32.5 O roteamento do V2 foi PROVADO em produção
+
+Com a divisão ligada (`split_gateway_enabled=true`, `split_gateway_pix=woovi`,
+`split_gateway_card=iopay`, `split_gateway_scope=v2`), três chamadas reais
+ao `create-payment` (o grupo é um UUID **inexistente**, para não criar
+cobrança):
+
+| Chamada | Resposta | Prova |
+|---|---|---|
+| V2 + PIX (`split_gateway: true`) | 400 `Credenciais da Woovi (produção) não configuradas…` | caiu na **Woovi** |
+| V1 + PIX (sem `split_gateway`) | 404 `Grupo não encontrado` | caiu na **IO Pay** |
+| V2 + cartão (`split_gateway: true`) | 404 `Grupo não encontrado` | caiu na **IO Pay** |
+
+Script: `.tmp-verify/provar-roteamento-v2.mjs` (6/6).
+
+> ⚠️ **Armadilha do teste**: o id de grupo `00000000-0000-0000-0000-000000000000`
+> **existe** (é um grupo de teste antigo). Com ele, a chamada que vai para a IO
+> Pay **cria um PIX de verdade** antes de qualquer validação — o handler da IO
+> Pay cobra antes de conferir o grupo. Use sempre um UUID aleatório. (Foi o
+> que aconteceu na primeira rodada: sobrou um PIX pendente de R$ 14,90 na conta
+> "QA Mavis" — **não pago**, sem dinheiro movido, e as duas linhas do banco
+> foram apagadas. A IO Pay não expõe endpoint de cancelamento: os 4 tentados
+> devolvem 404 "This endpoint has not found".)
+
+### 32.6 Bônus: um bug de CSS que só apareceu com a tela nova
+
+O radio de "Onde a divisão vale" ficava a ~290px do texto. Causa: o
+`.form-group input { width: 100% }` de `src/pages/admin/Platforms.css` —
+o radio está dentro de um `.form-group`, então virava uma barra de 100% de
+largura e empurrava o texto. Corrigido com `width: auto` no
+`.split-scope-option input[type="radio"]`.
+
+**Lição:** `.form-group input` é regra **global por classe** — qualquer input
+dentro de um `.form-group` herda `width: 100%`. Radio e checkbox precisam
+voltar ao tamanho natural.
+
+### 32.7 O que ainda falta
+
+O **AppID da conta real da Woovi**. Ele só existe no painel da Woovi (conta de
+produção → API/Plugins → Nova API/Plugin) — nenhuma API do sandbox o gera
+(`POST /api/v1/application` cria aplicação **na conta do sandbox**).
+
+Caminho: Admin → Configurações → Credenciais → Woovi → "AppID de Produção" →
+colar → **Testar** (tem que responder "aceita") → **Salvar Configurações**.
+
+Até lá, o checkout V2 com PIX responde a mensagem clara acima — **não** cai
+para a IO Pay em silêncio (nunca cairia: o roteamento é decidido no backend).

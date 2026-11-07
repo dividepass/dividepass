@@ -61,6 +61,7 @@ import {
 } from "../../_shared/woovi-api.ts";
 import {
   getWooviConfig,
+  erroAppIdAusente,
   toCents,
   fromCents,
   wooviFrequencyForCycle,
@@ -156,7 +157,7 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
 
   if (!cfg.appId) {
     return json(
-      { error: "Credenciais WOOVI não configuradas. Configure no Admin → Configurações." },
+      { error: erroAppIdAusente(cfg.env), code: "woovi_app_id_missing", ambiente: cfg.env },
       corsHeaders,
       400,
     );

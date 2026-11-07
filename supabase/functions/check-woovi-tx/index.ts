@@ -28,6 +28,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGatewaySettings } from "../create-payment/handlers/settings.ts";
 import {
   getWooviConfig,
+  erroAppIdAusente,
   wooviRequest,
   fromCents,
   isApprovedStatus,
@@ -59,7 +60,13 @@ export default {
 
       if (!cfg.appId) {
         return json(
-          { transaction_id: null, status: "not_configured", confirmed: false, error: "Woovi não configurado" },
+          {
+            transaction_id: null,
+            status: "not_configured",
+            confirmed: false,
+            error: erroAppIdAusente(cfg.env),
+            ambiente: cfg.env,
+          },
           200,
         );
       }

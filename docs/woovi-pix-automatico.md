@@ -1,30 +1,34 @@
 # Woovi — Pix com Pagamento Automático (recorrência real)
 
-> **Estado: STANDBY.** A integração está pronta e testada, mas **não ativa**.
-> O gateway ativo continua sendo o que está em `app_settings.active_gateway`.
-> Nada aqui muda o comportamento do site até você explicitamente ativar.
+> **Estado: LIGADA NO CHECKOUT V2 (escopo `v2`), com credencial de produção pendente.**
+> O checkout normal (`/checkout`) continua intacto: ele **não** usa a divisão.
+> O que falta para a Woovi valer em produção é o **AppID da conta real**
+> (ver seção 13).
 
-## Situação em 2026-11-06
+## Situação em 2026-11-07
 
 | Item | Estado |
 |---|---|
 | Código da integração | ✅ pronto (handler, webhook, polling, front, admin) |
-| Migration do banco | ✅ **executada em produção** (as duas: Woovi e divisão por método) |
-| Interruptor produção x sandbox | ✅ pronto (Admin + `AMBIENTE` + env) |
-| `config.toml` (`verify_jwt = false` do webhook) | ✅ corrigido |
+| Migration do banco | ✅ **executada em produção** (Woovi, divisão por método e **AppID por ambiente**) |
+| Interruptor produção x sandbox | ✅ pronto (Admin + `AMBIENTE` + env) — **só move a Woovi**; a IO Pay tem o `iopay_env` dela |
+| **AppID por ambiente** | ✅ **separado** (`woovi_app_id_sandbox` / `woovi_app_id_production`) — o 401 "appID inválido" não acontece mais por conta trocada (seção 13) |
+| **Teste de credencial pelo painel** | ✅ **novo** — edge function `woovi-teste-conexao` + botão "Testar" na tela do Admin |
 | **Teste contra a API real (sandbox)** | ✅ **23/23 passando** — `scripts/test-woovi-api.ts` |
 | Escopos do AppID | ✅ `CUSTOMER_POST`, `CHARGE_POST`, `SUBSCRIPTION_POST`, `WEBHOOK_POST` liberados (`COMPANY_GET`/`ACCOUNT_GET_LIST` não — e não são usados) |
-| Publicação do frontend (Vercel) | ✅ **publicado em 2026-11-06** (`dividepass.com`) — card Woovi + toggle de ambiente + abas de credencial + **checkout V2** (`/v2/checkout/:groupSlug`) + seção "Gateway por método de pagamento" no Admin |
-| Credenciais no `app_settings` | ✅ **gravadas** pelo Admin: `woovi_app_id` (sandbox), `woovi_retry_policy=THREE_RETRIES_7_DAYS`, `woovi_day_due=3`, `ambiente=sandbox` |
-| Gateway ativo | ✅ segue `iopay` — **standby preservado**, a Woovi não está ativa |
-| Gateway por método (PIX / cartão em gateways diferentes) | ✅ pronto e **desligado** — divisão nova, ativação só no Admin |
-| Publicação das edge functions | ✅ **publicadas em 2026-11-06** — 10 funções (as 5 da Woovi + `reconcile-payments`, `notify-service-watchers`, `provision-group-mailbox`, `send-welcome-email`, `delete-account`) |
+| Publicação do frontend (Vercel) | ✅ **publicado em 2026-11-07** (`dividepass.com`) — tela de Configurações **reformulada** (menu lateral, barra de salvar, credenciais por ambiente) + checkout V2 (`/v2/checkout/:groupSlug`) |
+| Credenciais no `app_settings` | ✅ `woovi_app_id_sandbox` gravado · ⚠️ `woovi_app_id_production` **vazio** (falta o AppID da conta real) · `woovi_retry_policy=THREE_RETRIES_7_DAYS` · `woovi_day_due=3` |
+| Gateway ativo | ✅ segue `iopay` — o checkout normal não muda |
+| Gateway por método (PIX / cartão em gateways diferentes) | ✅ **ligado** — PIX = `woovi` · cartão = `iopay` · escopo = `v2` |
+| Publicação das edge functions | ✅ **13 publicadas em 2026-11-07** (incluindo a nova `woovi-teste-conexao` e todas as dependentes de `handlers/settings.ts`) |
 | Webhooks na Woovi | ✅ **9 cadastrados em 2026-11-06** (sandbox) — a `woovi-webhook` responde HTTP 200 |
 
 > ✅ **Instalação concluída em 2026-11-06**: código publicado, banco migrado,
-> functions no ar e webhooks registrados. O único passo que falta é **ligar**:
-> Admin → Configurações → "Gateway por método de pagamento" → escolher
-> PIX = Woovi, cartão = IO Pay → salvar. Até lá, **tudo continua na IO Pay**.
+> functions no ar e webhooks registrados.
+> Em **2026-11-07** a divisão foi **ligada** (PIX = Woovi, cartão = IO Pay,
+> escopo = V2) e o roteamento do V2 foi **provado em produção** (6/6).
+> O único passo que falta é **cadastrar o AppID da conta real da Woovi**
+> (seção 13) para as cobranças de produção deixarem de dar 401.
 
 ### Como LIGAR (1 passo, pelo painel)
 
@@ -752,3 +756,114 @@ Relevantes e **não cadastrados** (de 52):
 - Pix Automático: <https://developers.woovi.com/docs/pix-automatic/pix-automatic-how-to-create>
 - Webhooks do Pix Automático: <https://developers.woovi.com/docs/pix-automatic/webhooks/pix-automatic-webhooks>
 - OpenAPI: <https://api.woovi.com/api/openapi.json>
+
+---
+
+## 13. AppID POR AMBIENTE (07/11/2026)
+
+### O problema
+
+A Woovi tem **duas contas**: a de **teste** (`api.woovi-sandbox.com`) e a
+**real** (`api.woovi.com`). Cada uma tem o seu **AppID** — e o AppID de uma é
+**recusado** pela outra com `401 appID inválido`.
+
+O projeto guardava **um AppID só** (`woovi_app_id`) e trocava apenas a URL da
+API. Resultado: com o interruptor em "produção", a API real recebia o AppID
+do sandbox e recusava **toda** requisição — com um erro que não dava nenhuma
+pista de que o problema era o par (AppID, URL) errado.
+
+Verificado na API (2026-11-07), com o AppID do sandbox:
+
+| Chamada | Resultado |
+|---|---|
+| `GET api.woovi-sandbox.com/api/v1/customer` | **200** (a conta tem 5 clientes) |
+| `GET api.woovi.com/api/v1/customer` | **401 `appID inválido`** |
+
+### A correção
+
+Cada ambiente tem o seu AppID, e a escolha é feita **pelo ambiente** — nunca
+"o AppID de um ambiente com a URL do outro".
+
+| Chave no `app_settings` | Para quê |
+|---|---|
+| `woovi_app_id_sandbox` | AppID da conta de **teste** (`api.woovi-sandbox.com`) |
+| `woovi_app_id_production` | AppID da conta **real** (`api.woovi.com`) |
+| `woovi_app_id` | **legada** — continua espelhando o AppID do sandbox (o script do webhook e a reserva do backend ainda leem ela) |
+
+- **Sandbox**: usa `woovi_app_id_sandbox`; se estiver vazia, cai na legada
+  `woovi_app_id` (que sempre guardou o AppID de teste).
+- **Produção**: usa **só** `woovi_app_id_production`. **Sem reserva** — cair no
+  AppID do sandbox aqui reproduziria o 401 e poderia mandar uma cobrança
+  para a conta errada.
+
+A separação mora em `supabase/functions/_shared/woovi.ts`
+(`appIdDoAmbiente` / `getWooviConfig`).
+
+> O interruptor `app_settings.ambiente` continua sendo o "global" do sistema,
+> mas **na prática ele só move a Woovi**: a IO Pay tem o seu próprio
+> (`iopay_env`). É por isso que dá para testar o checkout V2 na Woovi de
+> sandbox **com o cartão da IO Pay em produção ao mesmo tempo**.
+
+### A mensagem de erro agora diz o que fazer
+
+Quando falta o AppID do ambiente ativo, a resposta é:
+
+```json
+{
+  "error": "Credenciais da Woovi (produção) não configuradas. Cadastre o AppID em Admin → Configurações → Woovi (campo \"AppID de Produção\").",
+  "code": "woovi_app_id_missing",
+  "ambiente": "production"
+}
+```
+
+### A edge function `woovi-teste-conexao`
+
+Nova função **só de admin** que testa um AppID sem precisar salvar:
+
+```
+POST /functions/v1/woovi-teste-conexao
+{ "app_id": "Client_Id_...", "ambiente": "sandbox" | "production" }
+```
+
+Ela faz **uma leitura simples** (`GET /api/v1/customer`) na URL do ambiente
+escolhido e devolve:
+
+- **200** → credencial aceita (diz quantos clientes a conta tem);
+- **401** → credencial recusada, com a dica de **qual** AppID usar;
+- o AppID **nunca** volta na resposta, nem em parte.
+
+Quem pode chamar: só o admin (`users.role = 'admin'`), com o JWT da sessão.
+
+### A tela de Configurações (reformulada em 07/11/2026)
+
+`/admin/settings` foi refeita:
+
+- **menu lateral fixo** com as 9 seções (a seção ativa é destacada);
+- cada seção é um **card** próprio;
+- **barra de salvar fixa** no rodapé, que diz quantas alterações estão
+  pendentes ("3 alterações não salvas") e avisa antes de sair da página;
+- **olho** para revelar/ocultar qualquer credencial;
+- **credenciais da Woovi por ambiente** com o AppID de Sandbox e o de Produção
+  lado a lado, a etiqueta **"em uso agora"** no que corresponde ao ambiente
+  ativo e o botão **"Testar"** em cada um;
+- o cabeçalho resume o estado real (ambiente, gateway ativo, gateway do PIX e
+  do cartão) e avisa quando falta o AppID do ambiente ativo.
+
+### Estado em 2026-11-07
+
+| Item | Estado |
+|---|---|
+| `woovi_app_id_sandbox` | ✅ gravado (o AppID de teste que já existia) |
+| `woovi_app_id_production` | ⚠️ **vazio** — falta o AppID da conta real |
+| Divisão por método | ✅ **ligada**: PIX = Woovi · cartão = IO Pay · escopo = `v2` |
+| Roteamento do V2 | ✅ **provado em produção** (6/6): V2+PIX → Woovi · V1+PIX → IO Pay · V2+cartão → IO Pay |
+| QA da tela nova | ✅ **20/20** em `dividepass.com/admin/settings` |
+
+**O que falta para a produção**: o AppID da conta real da Woovi. Ele só pode
+ser gerado no painel da Woovi (conta de produção → API/Plugins → Nova
+API/Plugin) e colado em **Admin → Configurações → Credenciais → Woovi →
+"AppID de Produção"** (botão **"Testar"** valida antes de salvar).
+
+**Migration**: `database/add-woovi-app-id-por-ambiente.sql` (idempotente,
+já executada em produção).
+

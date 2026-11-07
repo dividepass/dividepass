@@ -31,6 +31,10 @@ const CHAVES_POR_AMBIENTE = [
   "active_gateway",
   // Woovi
   "woovi_app_id",
+  // Woovi: AppID POR AMBIENTE (a conta de teste e a real são contas
+  // diferentes na Woovi — o AppID de uma é recusado pela outra com 401).
+  "woovi_app_id_sandbox",
+  "woovi_app_id_production",
   "woovi_retry_policy",
   "woovi_day_due",
   "woovi_default_address_zipcode",
