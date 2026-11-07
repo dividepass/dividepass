@@ -857,6 +857,7 @@ Quem pode chamar: só o admin (`users.role = 'admin'`), com o JWT da sessão.
 | `woovi_app_id_production` | ⚠️ **vazio** — falta o AppID da conta real |
 | Divisão por método | ✅ **ligada**: PIX = Woovi · cartão = IO Pay · escopo = `v2` |
 | Roteamento do V2 | ✅ **provado em produção** (6/6): V2+PIX → Woovi · V1+PIX → IO Pay · V2+cartão → IO Pay |
+| Tela do checkout V2 | ✅ **9/9**: o seletor mostra "Cartão · IOPay" e "PIX · Woovi"; ao escolher o PIX o texto do Pagamento Automático aparece. O checkout normal (V1) mostra só "Cartão" e "PIX" — **sem nome de provedor** |
 | QA da tela nova | ✅ **20/20** em `dividepass.com/admin/settings` |
 
 **O que falta para a produção**: o AppID da conta real da Woovi. Ele só pode
