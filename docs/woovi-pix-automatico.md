@@ -14,6 +14,8 @@
 | Interruptor produção x sandbox | ✅ pronto (Admin + `AMBIENTE` + env) — **só move a Woovi**; a IO Pay tem o `iopay_env` dela |
 | **AppID por ambiente** | ✅ **separado** (`woovi_app_id_sandbox` / `woovi_app_id_production`) — o 401 "appID inválido" não acontece mais por conta trocada (seção 13) |
 | **Teste de credencial pelo painel** | ✅ **novo** — edge function `woovi-teste-conexao` + botão "Testar" na tela do Admin |
+| **CPF do pagador** | ✅ **exigido** para o Pix Automático — o checkout pede e valida; sem ele a API da Woovi recusa a assinatura (ver seção 14) |
+| **Retry do pagamento** | ✅ **corrigido** — o `correlationID` da Woovi é chave única e agora leva o id da tentativa (seção 14.2) |
 | **Teste contra a API real (sandbox)** | ✅ **23/23 passando** — `scripts/test-woovi-api.ts` |
 | Escopos do AppID | ✅ `CUSTOMER_POST`, `CHARGE_POST`, `SUBSCRIPTION_POST`, `WEBHOOK_POST` liberados (`COMPANY_GET`/`ACCOUNT_GET_LIST` não — e não são usados) |
 | Publicação do frontend (Vercel) | ✅ **publicado em 2026-11-07** (`dividepass.com`) — tela de Configurações **reformulada** (menu lateral, barra de salvar, credenciais por ambiente) + checkout V2 (`/v2/checkout/:groupSlug`) |
@@ -867,4 +869,107 @@ API/Plugin) e colado em **Admin → Configurações → Credenciais → Woovi �
 
 **Migration**: `database/add-woovi-app-id-por-ambiente.sql` (idempotente,
 já executada em produção).
+
+---
+
+## 14. O Pix Automático precisa do CPF — e o retry tinha o correlationID repetido (07/11/2026)
+
+Duas armadilhas da API da Woovi que só apareceram quando o fluxo foi para
+produção de verdade. Ambas estão corrigidas.
+
+### 14.1 A ASSINATURA exige o CPF do pagador
+
+A Woovi **não cria a assinatura** de um cliente que ela não consiga resolver
+pelo `taxID` (CPF):
+
+```
+POST /api/v1/subscriptions
+-> 400 {"error":"You need to inform a customer to create a subscription"}
+```
+
+O `customer` enviado no corpo **não** é um objeto livre: a API procura o
+cliente pelo CPF. Verificado na API (sandbox e produção):
+
+| Cliente | Assinatura |
+|---|---|
+| COM `taxID` (CPF) | **200** — o mandate é criado |
+| SEM `taxID` | **400** "You need to inform a customer…" |
+
+E a cobrança avulsa (`POST /api/v1/charge`) **funciona sem CPF** — só o
+mandate exige. Por isso o CPF é obrigatório só nos fluxos com recorrência
+(`subscription` e `combined`).
+
+**O que acontecia antes:** o mandate falhava e o código caía no *fallback* —
+uma **cobrança Pix avulsa** do valor do ciclo. O usuário pagava uma vez,
+achava que tinha assinado uma assinatura e **nunca mais era cobrado**. O
+aviso existed, mas era um aviso pequeno depois de um QR normal: nada indicava
+que aquilo NÃO era recorrente.
+
+**O que mudou:**
+
+1. O backend exige o CPF: sem ele, responde `400` com
+   `code: "cpf_required"` e uma mensagem que diz o que fazer — **não** há
+   mais o fallback silencioso nesse caso.
+2. O checkout mostra o **campo de CPF** (com máscara e validação oficial de
+   dígitos verificadores) e reenvia.
+3. O CPF validado é **gravado no perfil** (`users.cpf`, que é sensível: só o
+   backend escreve).
+4. O cliente que já existe na Woovi **sem** CPF é atualizado com
+   `PATCH /api/v1/customer/{correlationID}` — o `POST` não serve, porque
+   devolve 400 "Há outro cliente com esses dados".
+5. O cliente já existente é reencontrado pelo **CPF** e, na falta dele, pelo
+   **correlationID** (`dp-user-<user_id>`) — sem isso, uma compra quebraria
+   com 500 quando o `users.customer_id_woovi` não estivesse gravado.
+
+### 14.2 O `correlationID` é CHAVE ÚNICA — o retry sempre falhava
+
+```
+POST /api/v1/subscriptions
+-> 400 {"error":"correlationID already used"}
+```
+
+O nosso `correlationID` era `{grupo}:{usuário}:{tipo}:{kind}` — **sempre o
+mesmo** para o mesmo grupo/usuário/tipo. Então a **segunda** tentativa de
+pagamento (o retry do checkout, ou um QR novo depois de um erro) era recusada
+pela Woovi.
+
+**A correção:** o correlationID ganhou uma 5ª parte — o **id da tentativa**,
+único por chamada:
+
+```
+{grupo}:{usuário}:{tipo}:{kind}:{tentativa}
+```
+
+O `parseCorrelationId` passou a aceitar 4 **ou** 5 partes. Isso não quebra o
+casamento do webhook: ele acha a assinatura pelo **id do mandate**
+(`woovi_subscription_id`) e, na falta, pelo grupo/usuário do correlationID.
+
+### 14.3 O botão "Copiar Código PIX" estava invisível
+
+O `.btn-outline` do `SavingsStats.css` (página do admin) não era escopado.
+Como o Vite junta **todo** o CSS do app em um arquivo só, e esse arquivo
+entra no bundle por último, a regra vencia a `.btn-outline` global do
+`index.css` — e o `color: var(--text, #e2e8f0)` (com `--text` inexistente
+globalmente) deixava o texto quase branco sobre o cartão branco do checkout.
+
+As regras de botão daquele arquivo foram escopadas em `.savings-stats`.
+
+### 14.4 Estado em 2026-11-07
+
+| Item | Estado |
+|---|---|
+| CPF do pagador | ✅ **exigido** para o Pix Automático (erro `cpf_required`, sem fallback silencioso) |
+| Campo de CPF no checkout | ✅ **no ar** (máscara + dígitos verificadores, nos dois passos de pagamento) |
+| CPF gravado no perfil | ✅ em `users.cpf` (escrita só pelo backend) |
+| Cliente sem CPF na Woovi | ✅ corrigido com `PATCH /api/v1/customer/{correlationID}` |
+| `correlationID` | ✅ **único por tentativa** — o retry funciona |
+| "Copiar Código PIX" invisível | ✅ **corrigido** (CSS do admin escopado) |
+| Testes | `test-cpf` **34/34** · `test-woovi-correlacao` **32/32** |
+| QA em produção | **15/15** (CPF → mandate) · **6/6** (retry) · produção: `cpf_required` sem "appID inválido" |
+
+**O que o usuário precisa fazer:** no checkout V2, escolher **PIX · Woovi** e
+informar o **CPF** na primeira tentativa. A partir daí o Pix Automático é
+criado de verdade (o mandate fica em `user_subscriptions.woovi_subscription_id`
+e a próxima cobrança fica em `next_charge_at`).
+
 

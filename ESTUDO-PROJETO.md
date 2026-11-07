@@ -3745,3 +3745,131 @@ node scripts\supabase-sql.mjs --query "update public.users set role = 'user' whe
 **Reverta sempre** — a conta não pode ficar como admin. Os scripts de QA do
 checkout (`qa-checkout-v2-split.mjs`) **não** precisam da promoção: rodam com
 usuário comum. E nenhum script de QA pode clicar em "Pagar" nem em "Salvar".
+
+---
+
+## 33. O Pix Automático é recorrente de verdade — três bugs achados no teste real (07/11/2026)
+
+O dono testou o V2 e escreveu: *"foi o pix normal, porem nesta caso estamos
+fazendo uma assinatura pix precisa ser recorrente e nao me mostrou nada
+quando foi gerado o pix"*.
+
+O diagnóstico saiu do dado, não do palpite. As duas tentativas dele estão no
+`payment_attempts` (`gateway = 'woovi'`, `payment_type = 'subscription'`) e as
+duas tinham **exatamente o mesmo formato**:
+
+```json
+{ "charge": { ... }, "subscription": null, "pix_copy_paste": null }
+```
+
+`subscription: null` = **o mandate (assinatura) NÃO foi criado**. O que
+chegou ao usuário foi uma cobrança avulsa — o "pix normal".
+
+### 33.1 Bug 1 — a Woovi só cria a assinatura de um cliente com CPF
+
+```
+POST /api/v1/subscriptions
+-> 400 {"error":"You need to inform a customer to create a subscription"}
+```
+
+O `customer` do corpo não é um objeto livre: **a API resolve o cliente pelo
+CPF** (`taxID`). Verificado na API:
+
+| Cliente | Assinatura |
+|---|---|
+| COM CPF | **200** (mandate criado) |
+| SEM CPF | **400** "You need to inform a customer…" |
+
+E o motivo de ninguém ter CPF: **o app não coleta CPF**. `users.cpf` era
+`null` para todo mundo — inclusive para o dono (`gabriel@byefit.com.br`) e
+para a conta de QA.
+
+A cobrança avulsa (`POST /api/v1/charge`) funciona sem CPF; só o mandate
+exige. Por isso o CPF é obrigatório só nos fluxos com recorrência.
+
+**O que piorava o estrago:** o código tinha um *fallback* — se o mandate
+falhava, criava uma cobrança Pix avulsa do valor do ciclo. O usuário pagava
+uma vez e **nunca mais era cobrado**, achando que tinha assinado. Havia um
+aviso, mas pequeno, depois de um QR normal: nada dizia que aquilo **não** era
+recorrente.
+
+**Correção:**
+
+- o backend responde `400` com `code: "cpf_required"` (sem fallback nesse
+  caso) e uma mensagem que diz o que fazer;
+- o checkout mostra o **campo de CPF** (máscara + dígitos verificadores
+  oficiais) e reenvia;
+- o CPF validado é gravado em `users.cpf` (coluna sensível: só o backend
+  escreve, o front não consegue ler);
+- o cliente que já existe na Woovi **sem** CPF é atualizado com
+  `PATCH /api/v1/customer/{correlationID}` — o `POST` devolve 400 "Há outro
+  cliente com esses dados";
+- o cliente existente é reencontrado pelo **CPF** e, na falta dele, pelo
+  **correlationID** (`dp-user-<user_id>`) — sem isso, uma compra quebraria
+  com 500 quando o `users.customer_id_woovi` não estivesse gravado.
+
+### 33.2 Bug 2 — o `correlationID` é chave ÚNICA e o retry sempre falhava
+
+```
+POST /api/v1/subscriptions
+-> 400 {"error":"correlationID already used"}
+```
+
+O nosso era `{grupo}:{usuário}:{tipo}:{kind}` — **sempre igual** para o mesmo
+grupo/usuário/tipo. A **segunda** tentativa de pagamento era recusada pela
+Woovi. (A cobrança avulsa NÃO sofre disso — só a assinatura.)
+
+**Correção:** o correlationID ganhou uma 5ª parte, o **id da tentativa**
+(único por chamada), e o `parseCorrelationId` passou a aceitar 4 **ou** 5
+partes. O webhook não depende dessa parte: ele acha a assinatura pelo **id
+do mandate** e, na falta, pelo grupo/usuário.
+
+### 33.3 Bug 3 (bônus) — o botão "Copiar Código PIX" estava invisível
+
+O `.btn-outline` do `SavingsStats.css` (admin) não era escopado. O Vite junta
+**todo** o CSS do app em UM arquivo, e esse entra no bundle por último — então
+a regra vencia a `.btn-outline` global do `index.css`, e o
+`color: var(--text, #e2e8f0)` (com `--text` inexistente globalmente) deixava o
+texto quase branco sobre o cartão branco.
+
+**Lição:** no bundle único do Vite, **toda regra genérica de página vaza para
+o app inteiro** — e vence. `.btn`, `.btn-outline`, `.modal-overlay`,
+`.badge`… precisam de escopo. As regras daquele arquivo foram escopadas em
+`.savings-stats`.
+
+### 33.4 Bug 4 (bônus) — o guard do CPF travava o botão
+
+O guard (`if (!cpfPronto()) return;`) estava **antes** do `try`, e o
+`setProcessing(false)` está no `finally` **dentro** do `try`. Resultado: com
+o CPF inválido, o botão ficava desabilitado para sempre. O QA achou isso
+esperando o segundo clique.
+
+### 33.5 O que a verificação provou
+
+| QA | Resultado |
+|---|---|
+| `qa-pix-automatico.mjs` | **15/15** — sem CPF pede o CPF (400 `cpf_required`), CPF inválido é recusado no navegador, CPF válido cria o **mandate** (`recurrence.enabled = true`, `fallback = false`), o QR aparece e o aviso de "recorrência não ativada" **não** aparece |
+| `qa-retry-woovi.mjs` | **6/6** — duas tentativas seguidas, cada uma com o **seu** mandate (antes: 400 "correlationID already used") |
+| `qa-woovi-producao.mjs` | **4/4** — em produção responde `cpf_required`, sem "appID inválido" |
+
+No banco, depois do teste:
+
+```
+woovi_subscription_id   = UGF5bWVudFN1YnNjcmlwdGlvbjo...   (o mandate)
+woovi_recurrency_id     = RN5481141720261107ID...
+woovi_recurrence_status = CREATED
+next_charge_at          = 2026-12-07        (a próxima cobrança, sozinha)
+```
+
+### 33.6 Testes que ficaram
+
+- `scripts/test-cpf.ts` — **34/34** (dígitos verificadores, máscara
+  progressiva, e as duas implementações — backend e front — têm que concordar)
+- `scripts/test-woovi-correlacao.ts` — **32/32** (formato, tentativa, parse)
+- `.tmp-verify/resetar-qa-woovi.mjs` — zera o estado da conta de teste (perfil,
+  assinatura, tentativas e o CPF do cliente na Woovi) para o QA poder rodar
+  várias vezes
+
+> ⚠️ O `resetar-qa-woovi.mjs` **precisa** rodar antes do QA: sem ele, o CPF
+> fica salvo da rodada anterior e o primeiro clique já vai direto para o
+> mandate (o teste espera o `cpf_required`).
