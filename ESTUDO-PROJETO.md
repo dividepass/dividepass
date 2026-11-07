@@ -3529,3 +3529,45 @@ gateway reenviar). Como a confirmação falhava sempre, virava **loop**.
 pagou. Os 43 pagamentos de 24h (R$ 1.167,60) são todos `paid` — confirmações
 de pagamentos que já tinham sido feitos. O job de cobrança recorrente não
 rodou nenhuma vez no período (`billing_logs` vazio).
+
+### 31.7 A armadilha: function que importa function embute uma CÓPIA
+
+Depois de corrigir o `confirm-payment`, o job **continuou** criando um evento
+por rodada. A pista estava no dado: o evento novo nascia com
+`transaction_id = NULL`, porque a versão antiga nem tinha esse campo.
+
+**Por quê:** `reconcile-payments` faz
+`import { confirmPayment } from "../confirm-payment/index.ts"`. O bundler
+embute uma **cópia** do `confirm-payment` dentro do `reconcile-payments`.
+Publicar o `confirm-payment` **não** atualiza quem o importa — é preciso
+republicar as dependentes:
+
+| Function | Importa o `confirm-payment`? |
+|---|---|
+| `reconcile-payments` | sim (é o caso deste incidente) |
+| `check-iopay-tx` | sim |
+| `iopay-webhook` | sim |
+| `asaas-webhook` | sim |
+| `stripe-webhook` | sim |
+| `pagarme-webhook` | sim |
+| `force-confirm-payment` | sim |
+| `woovi-webhook` / `check-woovi-tx` | sim (via `_shared/woovi-confirm.ts`) |
+
+**Regra:** depois de mexer numa function compartilhada, liste quem a importa
+e publique todas. E confirme pelo **bundle publicado** (Management API:
+`GET /v1/projects/<ref>/functions/<fn>/body` — o corpo vem em **bytes**,
+decodifique como UTF-8), não pelo código local nem pelo "deployed
+successfully".
+
+### 31.8 A trava de spam: um evento por problema, não por rodada
+
+`platform_events.metadata` é jsonb, mas o conteúdo gravado é uma **STRING
+JSON** (`metadata: JSON.stringify({...})`). Por isso `metadata->>'transaction_id'`
+devolve NULL e `metadata LIKE` nem existe (jsonb não tem o operador `~~`).
+
+Daí a coluna dedicada `platform_events.transaction_id`
+(`database/add-platform-events-transaction-id.sql`, com backfill dos eventos
+antigos). Com ela, o `confirm-payment` verifica se o **mesmo pagamento** já
+foi registrado nas últimas 24h e, se sim, não duplica o evento.
+
+O caso real continua visível — só não se repete a cada 15 minutos.
