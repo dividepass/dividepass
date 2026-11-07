@@ -3722,3 +3722,26 @@ colar → **Testar** (tem que responder "aceita") → **Salvar Configurações**
 
 Até lá, o checkout V2 com PIX responde a mensagem clara acima — **não** cai
 para a IO Pay em silêncio (nunca cairia: o roteamento é decidido no backend).
+
+### 32.8 Como rodar o QA do painel admin (procedimento)
+
+`scripts/lib/conta-qa.mjs` injeta a sessão da conta `qa.mavis@divteste.com`
+no `localStorage`, mas **a conta não é admin no banco**. Isso não basta para
+QA de verdade, por dois motivos:
+
+- a **RLS** do `app_settings` só libera as chaves públicas para usuário
+  logado — as credenciais (AppID, segredos) não chegam no frontend;
+- a edge function `woovi-teste-conexao` confere `users.role = 'admin'` **no
+  banco** e devolve 403 para quem não é.
+
+Procedimento (promover → rodar → reverter), com a conta de teste:
+
+```powershell
+node scripts\supabase-sql.mjs --query "update public.users set role = 'admin' where email = 'qa.mavis@divteste.com'"
+node .tmp-verify\qa-admin-settings.mjs      # 20/20
+node scripts\supabase-sql.mjs --query "update public.users set role = 'user' where email = 'qa.mavis@divteste.com'"
+```
+
+**Reverta sempre** — a conta não pode ficar como admin. Os scripts de QA do
+checkout (`qa-checkout-v2-split.mjs`) **não** precisam da promoção: rodam com
+usuário comum. E nenhum script de QA pode clicar em "Pagar" nem em "Salvar".
