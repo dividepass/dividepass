@@ -3462,3 +3462,70 @@ passa (400 `saldo_insuficiente`) e nenhum pedido real sai.
 "Combo Play — Spotify Premium + YouTube Premium | 3 Meses Cada" caía na
 plataforma **Spotify** (a regra do serviço batia antes da regra do combo).
 Agora a regra "combo" vem **primeiro** na lista.
+
+---
+
+## 31. `payment_method` do gateway é um OBJETO — e o VARCHAR(50) travava a liberação (07/11/2026)
+
+### 31.1 O que apareceu
+
+No painel admin, o evento **"Pagamento aprovado sem liberação"** se repetia a
+cada 15 minutos, para vários clientes, com a mesma mensagem:
+
+```
+user_subscriptions update failed: value too long for type character varying(50)
+```
+
+Em 24h foram **1.536 eventos** — o painel ficou inutilizável e, o pior: o
+cliente **tinha pago** e a liberação do grupo falhava.
+
+### 31.2 A causa (três elos)
+
+1. A IO Pay devolve `payment_method` como **objeto**: no cartão é o cartão
+   inteiro (`holder_name`, `fingerprint`, `verification_checklist`) e no Pix é
+   o BR Code. São **480–540 caracteres**.
+2. `check-iopay-tx` gravava esse objeto **cru** em
+   `payment_attempts.payment_method`.
+3. O job `reconcile-payments` lia a tentativa e repassava o valor cru para o
+   `confirm-payment`, que gravava em `user_subscriptions.payment_method` —
+   uma coluna **VARCHAR(50)**. → estouro.
+
+### 31.3 Por que explodiu de uma vez
+
+O bug era antigo, mas o **`reconcile-payments` estava AUSENTE em produção**
+até 06/11/2026. Publicada a função, o job passou a rodar a cada 15 minutos e
+a reprocessar as tentativas antigas — todas com o JSON dentro.
+
+E o webhook responde **503** de propósito quando a confirmação falha (para o
+gateway reenviar). Como a confirmação falhava sempre, virava **loop**.
+
+### 31.4 A regra
+
+> Para uma coluna curta, **NUNCA** gravar o que veio do gateway. Grave o
+> método **normalizado**: `pix` / `credit_card` / `bank_slip`.
+
+- `supabase/functions/_shared/metodo-pagamento.ts` (novo) — normaliza e limita;
+- `check-iopay-tx` grava o método normalizado em `payment_attempts`;
+- `reconcile-payments` normaliza antes de confirmar e **ignora tentativas
+  órfãs** (grupo que não existe mais), que geravam evento sem cliente real;
+- `confirm-payment` grava o método normalizado e limita `billing_cycle`;
+- `scripts/test-metodo-pagamento.ts` — 22 casos, com o JSON real do IO Pay.
+
+### 31.5 O que foi feito em produção
+
+- Cron `reconcile-payments` **removido** durante o atendimento e **recriado**
+  (jobid 18, `*/15`);
+- 3 functions republicadas;
+- 71 `payment_attempts` com JSON normalizadas;
+- 29 tentativas órfãs marcadas (`reconciled_orphaned`);
+- **42 assinaturas liberadas** nas rodadas manuais do job;
+- **1.542 eventos de spam** removidos do painel (ficaram só 3 casos reais de
+  "grupo cheio").
+
+### 31.6 O que NÃO era
+
+**Nenhum cobro indevido.** O `reconcile-payments` **não cobra**: ele pergunta
+à IO Pay o status de transações antigas e **libera** o acesso de quem já
+pagou. Os 43 pagamentos de 24h (R$ 1.167,60) são todos `paid` — confirmações
+de pagamentos que já tinham sido feitos. O job de cobrança recorrente não
+rodou nenhuma vez no período (`billing_logs` vazio).
