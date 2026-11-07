@@ -954,7 +954,47 @@ globalmente) deixava o texto quase branco sobre o cartão branco do checkout.
 
 As regras de botão daquele arquivo foram escopadas em `.savings-stats`.
 
-### 14.4 Estado em 2026-11-07
+### 14.4 O `active_gateway` NÃO pode ser a Woovi enquanto o escopo for `v2`
+
+Armadilha de configuração que só apareceu ao conferir o roteamento de verdade
+em produção (07/11/2026).
+
+O `active_gateway` é o **gateway padrão** — o de sempre, usado quando a
+divisão por método **não se aplica**. E a divisão só se aplica quando o
+cliente pede (`split_gateway: true`, que só o checkout V2 manda) **ou** quando
+o escopo é `all`.
+
+Então, com o escopo em `v2`:
+
+| `active_gateway` | checkout V1 (produção real) | checkout V2 (teste) |
+|---|---|---|
+| `iopay` ✅ | pix → **iopay** · cartão → **iopay** | pix → **woovi** · cartão → **iopay** |
+| `woovi` ❌ | pix → **woovi** · cartão → **woovi** | pix → **woovi** · cartão → **iopay** |
+
+Com `active_gateway = 'woovi'`, o checkout **V1** (que está em produção e
+funciona) passa a ir para a Woovi inteira — e quebra:
+
+- **cartão** → `400 "A integração Woovi está disponível apenas para PIX por
+  enquanto."` (o handler da Woovi recusa cartão);
+- **PIX** → cai no fluxo de recorrência, que exige CPF → `400 cpf_required`
+  para quem não tem CPF no perfil.
+
+Ou seja: o gateway padrão e o gateway do método são coisas **diferentes**.
+Com a divisão ligada, quem manda no método é `split_gateway_pix` /
+`split_gateway_card`; o `active_gateway` só é o **fallback** (método
+desconhecido ou divisão não aplicável).
+
+> **Regra:** enquanto o escopo for `v2`, `active_gateway` fica em `iopay`.
+> Só se mexe nele quando a divisão for para `all` — e, mesmo aí, ele continua
+> sendo só o fallback.
+
+Foi assim que o bug foi encontrado: `node .tmp-verify/testar-gateway-por-metodo-producao.mjs`
+(simula, sem gravar) mostrou `V1: pix → woovi, cartão → woovi`. O valor
+estava em `woovi` desde uma gravação no painel de Admin. Restaurado para
+`iopay` no mesmo dia, sem cliente real afetado (a última tentativa de um
+cliente real era de 02/11, antes da integração).
+
+### 14.5 Estado em 2026-11-07
 
 | Item | Estado |
 |---|---|
@@ -964,6 +1004,7 @@ As regras de botão daquele arquivo foram escopadas em `.savings-stats`.
 | Cliente sem CPF na Woovi | ✅ corrigido com `PATCH /api/v1/customer/{correlationID}` |
 | `correlationID` | ✅ **único por tentativa** — o retry funciona |
 | "Copiar Código PIX" invisível | ✅ **corrigido** (CSS do admin escopado) |
+| `active_gateway` | ✅ restaurado para `iopay` (com o escopo `v2`, o V1 não pode ir para a Woovi) |
 | Testes | `test-cpf` **34/34** · `test-woovi-correlacao` **32/32** |
 | QA em produção | **15/15** (CPF → mandate) · **6/6** (retry) · produção: `cpf_required` sem "appID inválido" |
 

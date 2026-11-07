@@ -3873,3 +3873,39 @@ next_charge_at          = 2026-12-07        (a próxima cobrança, sozinha)
 > ⚠️ O `resetar-qa-woovi.mjs` **precisa** rodar antes do QA: sem ele, o CPF
 > fica salvo da rodada anterior e o primeiro clique já vai direto para o
 > mandate (o teste espera o `cpf_required`).
+
+### 33.7 A armadilha do `active_gateway` (achada já no fim da sessão)
+
+Ao conferir o roteamento de verdade em produção, com a simulação
+`testar-gateway-por-metodo-producao.mjs`, apareceu isto:
+
+```
+gatewayPadrao = woovi     escopoDoSplit = v2
+
+checkout V1:  pix -> woovi    cartao -> woovi     ← produção real quebrada
+checkout V2:  pix -> woovi    cartao -> iopay
+```
+
+O `active_gateway` é o gateway **padrão**, não o do método. Com o escopo em
+`v2`, a divisão só vale no checkout que **pede** (`split_gateway: true`), e
+todo mundo cai no `active_gateway` — inclusive o checkout V1, que está em
+produção e funciona.
+
+Com `woovi` no `active_gateway`, o V1 quebrava nos dois métodos: o cartão
+tomava `400 "A integração Woovi está disponível apenas para PIX por enquanto"`
+e o PIX caía na recorrência, que exige CPF (`cpf_required`).
+
+**A regra:** com o escopo `v2`, `active_gateway` fica em `iopay`. Quem manda no
+método é `split_gateway_pix` / `split_gateway_card`. O `active_gateway` só é
+o **fallback** (método desconhecido ou divisão não aplicável).
+
+O valor estava em `woovi` desde uma gravação no painel de Admin — nenhuma
+dassuas rotinas de QA escreve nessa chave. Nenhum cliente real foi afetado
+(a última tentativa de cliente real era de 02/11, antes da integração), e
+foi restaurado para `iopay` no mesmo dia.
+
+> 💡 **O custo de não conferir:** nada quebrou visivelmente — o V2 continuou
+> funcionando exatamente igual. O defeito só aparecia no checkout V1, que
+> ninguém estava testando. Simular o roteamento (`resolverGatewayParaPagamento`
+> com as chaves lidas do banco) é o que pega esse tipo de coisa; conferir só o
+> gateway do fluxo que você está testando, não.
