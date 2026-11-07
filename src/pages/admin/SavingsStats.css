@@ -362,8 +362,19 @@
   margin-bottom: 1rem;
 }
 
-/* Buttons */
-.btn {
+/* Buttons
+   ─────────────────────────────────────────────────────────────────────────
+   Estas regras são ESCOPADAS em `.savings-stats` de propósito.
+
+   O Vite junta TODOS os CSS do app em UM arquivo só. Uma regra `.btn-outline`
+   sem escopo aqui vaza para o app inteiro — e como este arquivo entra no
+   bundle por último, ela vencia a `.btn-outline` global do `index.css`.
+
+   O estrago: `color: var(--text, #e2e8f0)` com a variável `--text` não
+   existindo globalmente caía no fallback #e2e8f0 (cinza claríssimo) — e o
+   botão "Copiar Código PIX" do checkout ficava INVISÍVEL no cartão branco.
+   ───────────────────────────────────────────────────────────────────────── */
+.savings-stats .btn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -377,27 +388,27 @@
   text-decoration: none;
 }
 
-.btn:disabled {
+.savings-stats .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.btn-outline {
+.savings-stats .btn-outline {
   background: transparent;
   border: 1px solid var(--border, rgba(255,255,255,0.12));
   color: var(--text, #e2e8f0);
 }
 
-.btn-outline:hover:not(:disabled) {
+.savings-stats .btn-outline:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.05);
 }
 
-.btn-sm {
+.savings-stats .btn-sm {
   padding: 0.35rem 0.65rem;
   font-size: 0.78rem;
 }
 
-.btn-icon {
+.savings-stats .btn-icon {
   padding: 0.35rem;
   background: transparent;
   border: none;
@@ -405,12 +416,12 @@
   border-radius: 0.25rem;
 }
 
-.btn-icon:hover {
+.savings-stats .btn-icon:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text, #e2e8f0);
 }
 
-.btn-ghost {
+.savings-stats .btn-ghost {
   background: transparent;
   border: none;
   color: var(--text-muted, #94a3b8);
@@ -419,7 +430,7 @@
   line-height: 1;
 }
 
-.btn-ghost:hover {
+.savings-stats .btn-ghost:hover {
   color: var(--text, #e2e8f0);
 }
 

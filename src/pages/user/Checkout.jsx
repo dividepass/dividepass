@@ -6,6 +6,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useGatewayPorMetodo } from '../../hooks/useGatewayPorMetodo';
 import { supabase } from '../../lib/supabase';
 import { reportGoogleAdsConversion } from '../../lib/googleAds';
+import { mascararCpf, cpfValido, soDigitos } from '../../lib/cpf';
 import IOPayCardForm from '../../components/IOPayCardForm';
 import GroupRules from '../../components/GroupRules';
 import jsQR from 'jsqr';
@@ -209,6 +210,45 @@ function PixAutomaticBox({ recurrence }) {
  * O resto do componente é o mesmo nos dois: a única coisa que muda é de
  * onde vem o gateway (o padrão, ou o do método escolhido).
  */
+/**
+ * Campo de CPF — exigido pela Woovi para o Pix Automático.
+ *
+ * A Woovi só cria a ASSINATURA (recorrência) de um cliente que ela consiga
+ * resolver pelo CPF (`taxID`). Sem ele, a API responde 400 e o checkout
+ * mostra este campo (o backend responde `code: 'cpf_required'`).
+ *
+ * A validação é a oficial (dígitos verificadores) e acontece aqui e no
+ * backend. O CPF validado é gravado no perfil, para as próximas compras não
+ * perguntarem de novo.
+ */
+function CampoCpf({ valor, onChange, erro }) {
+  return (
+    <div className="checkout-cpf-field">
+      <label htmlFor="checkout-cpf">CPF do pagador</label>
+      <input
+        id="checkout-cpf"
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        spellCheck={false}
+        placeholder="000.000.000-00"
+        maxLength={14}
+        value={valor}
+        onChange={(e) => onChange(mascararCpf(e.target.value))}
+        aria-invalid={erro ? 'true' : 'false'}
+      />
+      <p className="checkout-cpf-hint">
+        O Pix Automático precisa do CPF: é ele que amarra a assinatura recorrente à sua conta.
+      </p>
+      {erro && (
+        <p className="checkout-cpf-erro">
+          <AlertTriangle size={13} /> {erro}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function CheckoutPagina({ variante }) {
   const { groupSlug } = useParams();
   const [searchParams] = useSearchParams();
@@ -223,6 +263,13 @@ function CheckoutPagina({ variante }) {
   const [checking, setChecking] = useState(false);
   const [paymentAttempted, setPaymentAttempted] = useState(false);
   const [error, setError] = useState('');
+  // ── CPF (Pix Automático da Woovi) ──────────────────────────────────────
+  // A Woovi só cria a ASSINATURA (recorrência) de um cliente que ela
+  // consiga resolver pelo CPF. Sem ele, o backend responde 400 com
+  // `code: 'cpf_required'` e o campo aparece aqui.
+  const [cpfValor, setCpfValor] = useState('');
+  const [cpfPedido, setCpfPedido] = useState(false);
+  const [cpfErro, setCpfErro] = useState('');
   const [remoteGroup, setRemoteGroup] = useState(undefined);
   const [memberStatus, setMemberStatus] = useState(null);
   // Confirmação de que a taxa de adesão foi paga, checada direto em payments.
@@ -637,12 +684,57 @@ function CheckoutPagina({ variante }) {
     }
   };
 
+  /**
+   * Traduz a resposta de erro do backend em mensagem para a tela.
+   *
+   * A Woovi pede o CPF com um código próprio (`cpf_required`). Nesse caso o
+   * campo de CPF APARECE (em vez de um erro genérico) e o usuário preenche e
+   * tenta de novo — o backend valida os dígitos e grava no perfil.
+   */
+  const mensagemDoBackend = (data, padrao = 'Erro ao criar pagamento.') => {
+    if (data?.code === 'cpf_required') {
+      setCpfPedido(true);
+      setCpfErro('');
+      return data.error || 'Informe o seu CPF para gerar o PIX recorrente.';
+    }
+    if (typeof data?.details === 'string') return data.details;
+    if (typeof data?.error === 'string') return data.error;
+    return JSON.stringify(data?.error || data?.details || padrao);
+  };
+
+  /**
+   * O CPF é obrigatório para o Pix Automático (a Woovi só cria a assinatura
+   * de um cliente que ela resolve pelo CPF). Se o campo já apareceu, o
+   * usuário precisa preencher antes de tentar de novo.
+   */
+  const cpfPronto = () => {
+    if (!cpfPedido) return true;
+    if (!soDigitos(cpfValor)) {
+      setCpfErro('Informe o seu CPF para gerar o PIX recorrente.');
+      return false;
+    }
+    if (!cpfValido(cpfValor)) {
+      setCpfErro('CPF inválido. Confira os dígitos e tente de novo.');
+      return false;
+    }
+    setCpfErro('');
+    return true;
+  };
+
   const handleEntrancePayment = async (cardData = null, selectedIdCard = null) => {
     setProcessing(true);
     setPaymentAttempted(true);
     setError('');
     setGatewayResult(null);
     setPollingTimedOut(false);
+    // O Pix Automático da Woovi exige o CPF do pagador. Se o backend já
+    // pediu (campo na tela), não vai para a API sem ele.
+    // `setProcessing(false)` é obrigatório: sem ele o botão ficaria
+    // travado para sempre (o `finally` só roda dentro do `try`).
+    if (!cpfPronto()) {
+      setProcessing(false);
+      return;
+    }
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
@@ -697,7 +789,7 @@ function CheckoutPagina({ variante }) {
       const data = await response.json();
       console.log('[Checkout] Entrance response:', response.status, data);
       if (!response.ok) {
-        const detail = typeof data.details === 'string' ? data.details : (typeof data.error === 'string' ? data.error : JSON.stringify(data.error || data.details || 'Erro ao criar pagamento.'));
+        const detail = mensagemDoBackend(data);
         throw new Error(detail);
       }
 
@@ -742,6 +834,14 @@ function CheckoutPagina({ variante }) {
     setError('');
     setGatewayResult(null);
     setPollingTimedOut(false);
+    // O Pix Automático da Woovi exige o CPF do pagador. Se o backend já
+    // pediu (campo na tela), não vai para a API sem ele.
+    // `setProcessing(false)` é obrigatório: sem ele o botão ficaria
+    // travado para sempre (o `finally` só roda dentro do `try`).
+    if (!cpfPronto()) {
+      setProcessing(false);
+      return;
+    }
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
@@ -787,6 +887,9 @@ function CheckoutPagina({ variante }) {
         payload.final_amount = couponResult.final_amount;
       }
 
+      // O CPF (Pix Automático da Woovi) — o backend valida e grava no perfil.
+      if (soDigitos(cpfValor)) payload.cpf = soDigitos(cpfValor);
+
       if (selectedIdCard) {
         payload.id_card = selectedIdCard;
       } else if (GATEWAYS_WITH_CARD_FORM.includes(activeGateway) && paymentMethod === 'card' && cardData) {
@@ -810,7 +913,7 @@ function CheckoutPagina({ variante }) {
       const data = await response.json();
       console.log('[Checkout] Combined response:', response.status, data);
       if (!response.ok) {
-        const detail = typeof data.details === 'string' ? data.details : (typeof data.error === 'string' ? data.error : JSON.stringify(data.error || data.details || 'Erro ao criar pagamento.'));
+        const detail = mensagemDoBackend(data);
         throw new Error(detail);
       }
 
@@ -855,6 +958,14 @@ function CheckoutPagina({ variante }) {
     setError('');
     setGatewayResult(null);
     setPollingTimedOut(false);
+    // O Pix Automático da Woovi exige o CPF do pagador. Se o backend já
+    // pediu (campo na tela), não vai para a API sem ele.
+    // `setProcessing(false)` é obrigatório: sem ele o botão ficaria
+    // travado para sempre (o `finally` só roda dentro do `try`).
+    if (!cpfPronto()) {
+      setProcessing(false);
+      return;
+    }
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
@@ -906,6 +1017,10 @@ function CheckoutPagina({ variante }) {
         payload.card_cvv = cardData.card_cvv;
       }
 
+      // O CPF vai junto quando o usuário já informou (o backend valida os
+      // dígitos verificadores e grava no perfil).
+      if (soDigitos(cpfValor)) payload.cpf = soDigitos(cpfValor);
+
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-payment`, {
         method: 'POST',
         headers: {
@@ -919,7 +1034,7 @@ function CheckoutPagina({ variante }) {
       const data = await response.json();
       console.log('[Checkout] Subscription response:', response.status, data);
       if (!response.ok) {
-        const detail = typeof data.details === 'string' ? data.details : (typeof data.error === 'string' ? data.error : JSON.stringify(data.error || data.details || 'Erro ao criar pagamento.'));
+        const detail = mensagemDoBackend(data);
         throw new Error(detail);
       }
 
@@ -1949,7 +2064,8 @@ function CheckoutPagina({ variante }) {
 
                 {gatewayResult?.recurrence?.fallback && (
                   <p className="iopay-method-note" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
-                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora.
+                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora
+                    {gatewayResult?.recurrence?.fallback_reason ? ` (${gatewayResult.recurrence.fallback_reason})` : ''}.
                     Seu pagamento está valendo normalmente, mas as próximas renovações precisarão ser feitas por você.
                   </p>
                 )}
@@ -2290,7 +2406,8 @@ function CheckoutPagina({ variante }) {
 
                 {gatewayResult?.recurrence?.fallback && (
                   <p className="iopay-method-note" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
-                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora.
+                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora
+                    {gatewayResult?.recurrence?.fallback_reason ? ` (${gatewayResult.recurrence.fallback_reason})` : ''}.
                     Seu pagamento está valendo normalmente, mas as próximas renovações precisarão ser feitas por você.
                   </p>
                 )}
@@ -2425,6 +2542,13 @@ function CheckoutPagina({ variante }) {
                       )
                     ) : (
                       <div className="payment-buttons">
+                        {cpfPedido && (
+                          <CampoCpf
+                            valor={cpfValor}
+                            onChange={(v) => { setCpfValor(v); setCpfErro(''); }}
+                            erro={cpfErro}
+                          />
+                        )}
                         <button className="btn btn-primary btn-full btn-lg" onClick={() => iniciarPagamento()} disabled={processing}>
                           {processing ? (<><Loader2 size={18} className="spin" /> Processando...</>) : (
                             paymentMethod === 'pix'
@@ -2607,7 +2731,8 @@ function CheckoutPagina({ variante }) {
 
                 {gatewayResult?.recurrence?.fallback && (
                   <p className="iopay-method-note" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
-                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora.
+                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora
+                    {gatewayResult?.recurrence?.fallback_reason ? ` (${gatewayResult.recurrence.fallback_reason})` : ''}.
                     Seu pagamento está valendo normalmente, mas as próximas renovações precisarão ser feitas por você.
                   </p>
                 )}
@@ -2740,6 +2865,13 @@ function CheckoutPagina({ variante }) {
                       )
                     ) : (
                       <div className="payment-buttons">
+                        {cpfPedido && (
+                          <CampoCpf
+                            valor={cpfValor}
+                            onChange={(v) => { setCpfValor(v); setCpfErro(''); }}
+                            erro={cpfErro}
+                          />
+                        )}
                         <button className="btn btn-primary btn-full btn-lg" onClick={() => iniciarPagamento()} disabled={processing}>
                           {processing ? (<><Loader2 size={18} className="spin" /> Processando...</>) : (
                             paymentMethod === 'pix'

@@ -56,6 +56,7 @@ import {
   createCharge as apiCreateCharge,
   createCustomer as apiCreateCustomer,
   getCustomer as apiGetCustomer,
+  updateCustomer as apiUpdateCustomer,
   findCustomerByTaxID as apiFindCustomerByTaxID,
   createPixAutomatic as apiCreatePixAutomatic,
 } from "../../_shared/woovi-api.ts";
@@ -69,10 +70,12 @@ import {
   nextChargeDate,
   chargeDayOfMonth,
   buildCorrelationId,
+  novaTentativa,
   WooviApiError,
   type WooviConfig,
   type WooviFrequency,
 } from "../../_shared/woovi.ts";
+import { cpfValido, soDigitos } from "../../_shared/cpf.ts";
 
 interface HandlerContext {
   supabaseAdmin: any;
@@ -177,6 +180,13 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   const type = payment_type || "subscription";
   const cycle = billing_cycle || group.billing_cycle || "monthly";
 
+  // Identificador da TENTATIVA. A Woovi trata o correlationID como chave
+  // ÚNICA ("correlationID already used"), então toda chamada precisa de um
+  // novo — sem isso, a segunda tentativa de pagamento do mesmo grupo/usuário
+  // seria sempre recusada. A mesma tentativa é usada no charge e no mandate
+  // do mesmo fluxo, para os dois continuarem parecendo um par.
+  const tentativa = novaTentativa();
+
   // A Woovi entra só para PIX por enquanto. Cartão na Woovi é outro fluxo
   // (smartform) e não faz sentido ativar junto com o Pix Automático.
   if (body.payment_method && body.payment_method !== "pix") {
@@ -257,7 +267,7 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   let customer: WooviCustomer;
   let customerId: string | null = null;
   try {
-    customer = await getOrCreateCustomer(cfg, supabaseAdmin, user_id, settings);
+    customer = await getOrCreateCustomer(cfg, supabaseAdmin, user_id, settings, body?.cpf);
     customerId = extractCustomerId(customer);
   } catch (e: any) {
     console.error("[woovi] customer error:", e?.message || e);
@@ -272,6 +282,40 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   if (customer.phone) customerPayload.phone = customer.phone;
   if (customer.taxID) customerPayload.taxID = customer.taxID;
   if (customer.address) customerPayload.address = customer.address;
+
+  // ── O CPF é obrigatório nos fluxos COM recorrência ───────────────────────
+  //
+  // A Woovi só cria a assinatura (Pix Automático) de um cliente que ela
+  // consiga resolver pelo `taxID`:
+  //
+  //     POST /api/v1/subscriptions
+  //     -> 400 {"error":"You need to inform a customer to create a subscription"}
+  //
+  // (Verificado na API em 07/11/2026.)
+  //
+  // Sem CPF, o mandate NÃO é criado. O que acontecia antes é que o código
+  // caía no FALLBACK e gerava uma COBRANÇA AVULSA de um PIX normal — o
+  // usuário pagava uma vez e nunca mais era cobrado, sem nenhum aviso claro
+  // de que a recorrência não existia.
+  //
+  // Aqui a falha é devolvida COMO ERRO: o checkout pede o CPF e tenta de novo.
+  // A cobrança avulsa (entrance/invoice) NÃO precisa de CPF e continua
+  // funcionando como sempre.
+  const precisaRecorrencia = type === "subscription" || type === "combined";
+  if (precisaRecorrencia && !customer.taxID) {
+    console.warn(`[woovi] sem CPF no cliente (${user_id}) — Pix Automático exige taxID`);
+    return json(
+      {
+        error:
+          "Para o Pix Automático a Woovi precisa do CPF do pagador. " +
+          "Informe o seu CPF abaixo para gerar o PIX recorrente.",
+        code: "cpf_required",
+        field: "cpf",
+      },
+      corsHeaders,
+      400,
+    );
+  }
 
   // ── Log de tentativa ─────────────────────────────────────────────────────
   const logAttempt = async (
@@ -353,7 +397,7 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
     }
 
     const amount = Number(invoice.amount || 0);
-    const correlationId = buildCorrelationId(group_id, user_id, "invoice", "charge");
+    const correlationId = buildCorrelationId(group_id, user_id, "invoice", "charge", tentativa);
 
     try {
       const charge = await apiCreateCharge(cfg, {
@@ -401,7 +445,7 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
     if (!couponRes.ok) return json({ error: couponRes.error }, corsHeaders, 400);
     const chargedAmount = couponRes.amount;
 
-    const correlationId = buildCorrelationId(group_id, user_id, "entrance", "charge");
+    const correlationId = buildCorrelationId(group_id, user_id, "entrance", "charge", tentativa);
 
     try {
       const charge = await apiCreateCharge(cfg, {
@@ -460,7 +504,7 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
 
   if (isCombined) {
     chargeAmount = entranceAmount + cycleAmount;
-    const correlationId = buildCorrelationId(group_id, user_id, "combined", "charge");
+    const correlationId = buildCorrelationId(group_id, user_id, "combined", "charge", tentativa);
     try {
       chargeArtifact = await apiCreateCharge(cfg, {
         valueCents: toCents(chargeAmount),
@@ -477,6 +521,7 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
 
   // ── Pix Automático (mandate) ─────────────────────────────────────────────
   let mandate: WooviMandate | null = null;
+  let mandateError: string | null = null;
 
   if (canUsePixAutomatic) {
     // Jornada 3 no fluxo `subscription` (o QR paga o 1º ciclo) e Jornada 2 no
@@ -502,7 +547,7 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
     try {
       mandate = await apiCreatePixAutomatic(cfg, {
         valueCents: toCents(cycleAmount),
-        correlationId: buildCorrelationId(group_id, user_id, type, "rec"),
+        correlationId: buildCorrelationId(group_id, user_id, type, "rec", tentativa),
         comment: "Assinatura DividePass".substring(0, 29),
         customer: customerPayload,
         frequency: frequency as WooviFrequency,
@@ -517,15 +562,18 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
       // precisa saber que NÃO vai ter renovação automática.
       console.error("[woovi] pix automatic creation error:", e);
       mandate = null;
+      mandateError = String(e?.message || e);
     }
   } else if (!frequency) {
     console.log(
       `[woovi] ciclo "${cycle}" sem equivalente no Pix Automático — sem mandato de recorrência`,
     );
+    mandateError = `O ciclo "${cycle}" não tem equivalente no Pix Automático da Woovi.`;
   } else {
     console.log(
       `[woovi] próximo vencimento em ${daysUntilNextCharge} dias (< 3) — Pix Automático exige >= 3 dias`,
     );
+    mandateError = `O próximo vencimento cai em ${daysUntilNextCharge} dias e o Pix Automático exige pelo menos 3.`;
   }
 
   // ── Fallback: o mandate falhou e NÃO é o fluxo combinado ─────────────────
@@ -538,12 +586,17 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   // Com o fallback, ele paga por uma cobrança Pix avulsa do valor do ciclo e
   // entra no grupo normalmente. O que se perde é a RENOVAÇÃO AUTOMÁTICA, e o
   // front avisa isso (`recurrence.fallback`).
+  //
+  // O MOTIVO vai junto na resposta (`recurrence.fallback_reason`): um "não
+  // funcionou" sem explicação é justamente o que fez o usuário acreditar que
+  // estava pagando por uma assinatura recorrente.
   let recurrenceFallback = false;
+  let recurrenceFallbackReason: string | null = null;
   if (!mandate && !isCombined) {
     try {
       chargeArtifact = await apiCreateCharge(cfg, {
         valueCents: toCents(cycleAmount),
-        correlationId: buildCorrelationId(group_id, user_id, type, "charge"),
+        correlationId: buildCorrelationId(group_id, user_id, type, "charge", tentativa),
         comment: `Assinatura ${group.name || ""}`.substring(0, 40),
         customer: customerPayload,
       });
@@ -558,7 +611,14 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
 
   // ── Persistência ─────────────────────────────────────────────────────────
   const paymentArtifactId = isCombined ? chargeArtifact!.identifier : mandate?.globalID || chargeArtifact?.identifier || null;
-  const paymentBrCode = isCombined ? chargeArtifact!.brCode : mandate?.emv || null;
+  // O código EMV (o "copia e cola") do artefato que o usuário vai PAGAR:
+  //   - com mandate: o `emv` do Pix Automático (o browser gera o QR a partir
+  //     dele, porque a Woovi não devolve imagem do mandate);
+  //   - no fallback: o `brCode` da cobrança avulsa.
+  // Sem isto, o fallback entregava um QR remoto e NENHUM código para copiar.
+  const paymentBrCode = isCombined
+    ? chargeArtifact!.brCode
+    : mandate?.emv || chargeArtifact?.brCode || null;
   // A URL da imagem do QR só existe para as COBRANÇAS (a Woovi devolve o
   // `qrCodeImage`). O mandate do Pix Automático vem só com o código EMV — o
   // QR dele é gerado no browser a partir desse código.
@@ -648,6 +708,8 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
       // true = o Pix Automático não pôde ser criado e o pagamento caiu para
       // uma cobrança Pix avulsa. O usuário paga, mas sem renovação automática.
       fallback: recurrenceFallback,
+      // POR QUE caiu para a cobrança avulsa (null quando há recorrência).
+      fallback_reason: recurrenceFallback ? mandateError : null,
     },
   }, corsHeaders);
 }
@@ -662,12 +724,37 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
  * O `correlationID` do cliente é o `user_id` do DividePass: isso torna a
  * criação idempotente na Woovi (mesmos dados → mesmo cliente) e garante que
  * a gente sempre consiga reencontrar o cliente.
+ *
+ * ── O CPF (taxID) ────────────────────────────────────────────────────────
+ *
+ * A Woovirecusa criar uma ASSINATURA (Pix Automático) de um cliente sem
+ * `taxID`:
+ *
+ *     POST /api/v1/subscriptions
+ *     -> 400 {"error":"You need to inform a customer to create a subscription"}
+ *
+ * (Verificado na API em 07/11/2026.) A API resolve o cliente pelo CPF — não
+ * pelo que mandamos no corpo.
+ *
+ * Então o CPF é obtido de DUAS fontes, nesta ordem:
+ *
+ *   1. o perfil (`users.cpf`);
+ *   2. o `cpf` que o usuário acabou de digitar no checkout (`cpfInformado`).
+ *
+ * O CPF digitado é VALIDADO pelos dígitos verificadores antes de qualquer
+ * coisa: um mandate em nome de outra pessoa é pior do que nenhum mandate.
+ *
+ * Quando o cliente já existe na Woovi mas foi criado SEM CPF (é o caso
+ * normal: o primeiro pagamento acontece antes de o app pedir o CPF), ele é
+ * ATUALIZADO com `PATCH /api/v1/customer/{correlationID}` — o `POST` não
+ * serve, porque devolve 400 "Há outro cliente com esses dados".
  */
 async function getOrCreateCustomer(
   cfg: WooviConfig,
   supabaseAdmin: any,
   user_id: string,
   settings: Record<string, string>,
+  cpfInformado?: string,
 ): Promise<WooviCustomer> {
   const { data: profile } = await supabaseAdmin
     .from("users")
@@ -676,6 +763,24 @@ async function getOrCreateCustomer(
     .maybeSingle();
 
   const correlationID = `dp-user-${user_id}`;
+
+  // ── CPF: perfil → informado no checkout ─────────────────────────────────
+  const cpfDoPerfil = normalizeCpf(profile?.cpf);
+  const cpfDoBody = soDigitos(cpfInformado || "");
+
+  if (cpfDoBody && !cpfValido(cpfDoBody)) {
+    throw new WooviApiError("CPF inválido. Confira os dígitos e tente de novo.", 400);
+  }
+
+  let cpf = cpfDoPerfil;
+  if (cpfDoBody && cpfDoBody !== cpfDoPerfil) {
+    // Grava no perfil para as próximas compras (e para a conciliação).
+    // A coluna `users.cpf` é sensível: o front NÃO pode ler, só o backend
+    // (service role) escreve.
+    await supabaseAdmin.from("users").update({ cpf: cpfDoBody }).eq("id", user_id);
+    cpf = cpfDoBody;
+    console.log(`[woovi] CPF do checkout gravado no perfil (${user_id})`);
+  }
 
   // Cliente já conhecido: busca na Woovi para ter o objeto completo
   // (endereço, taxID normalizado).
@@ -686,11 +791,34 @@ async function getOrCreateCustomer(
     try {
       const existing = await apiGetCustomer(cfg, profile.customer_id_woovi);
       if (existing && (existing.email || existing.taxID || existing.phone)) {
+        const taxIDExistente = existing.taxID?.taxID || existing.taxID || cpf || undefined;
+
+        // O cliente existe mas foi criado SEM CPF (primeira compra, antes de
+        // o app pedir o CPF). Atualiza para a assinatura poder ser criada.
+        if (!taxIDExistente && cpf) {
+          try {
+            const atualizado = await apiUpdateCustomer(cfg, existing.correlationID || correlationID, {
+              taxID: cpf,
+            });
+            console.log(`[woovi] cliente atualizado com CPF (${existing.correlationID || correlationID})`);
+            return {
+              name: atualizado?.name || existing.name || profile?.name || "Cliente",
+              email: atualizado?.email || existing.email || profile?.email || undefined,
+              phone: atualizado?.phone || existing.phone || profile?.phone || undefined,
+              taxID: cpf,
+              correlationID: atualizado?.correlationID || existing.correlationID || correlationID,
+              address: atualizado?.address || existing.address || buildDefaultAddress(settings),
+            };
+          } catch (e: any) {
+            console.warn("[woovi] PATCH do cliente falhou:", e?.message || e);
+          }
+        }
+
         return {
           name: existing.name || profile?.name || "Cliente",
           email: existing.email || profile?.email || undefined,
           phone: existing.phone || profile?.phone || undefined,
-          taxID: existing.taxID?.taxID || existing.taxID || normalizeCpf(profile?.cpf) || undefined,
+          taxID: taxIDExistente,
           correlationID: existing.correlationID || correlationID,
           address: existing.address || buildDefaultAddress(settings),
         };
@@ -711,7 +839,7 @@ async function getOrCreateCustomer(
   const phone = normalizePhone(profile?.phone) || normalizePhone(settings.woovi_default_phone);
   if (phone) payload.phone = phone;
 
-  const taxID = normalizeCpf(profile?.cpf);
+  const taxID = cpf || normalizeCpf(profile?.cpf);
   if (taxID) payload.taxID = taxID;
 
   // O Pix Automático exige endereço. O app ainda não coleta endereço do
@@ -719,18 +847,38 @@ async function getOrCreateCustomer(
   // da IoPay já faz (senão NENHUM usuário novo consegue pagar).
   payload.address = buildDefaultAddress(settings);
 
-  const created = await criarOuReaproveitarCliente(cfg, payload, taxID);
+  const created = await criarOuReaproveitarCliente(cfg, payload, taxID, correlationID);
   const newId = extractCustomerId(created);
 
   if (newId) {
     await supabaseAdmin.from("users").update({ customer_id_woovi: newId }).eq("id", user_id);
   }
 
+  // O cliente pode ter sido criado SEM taxID (não tínhamos CPF ainda) ou ter
+  // sido reaproveitado de outro cadastro. Se agora temos CPF, atualizamos.
+  const taxIDDoCriado = created?.taxID?.taxID || created?.taxID || null;
+  if (!taxIDDoCriado && taxID && created?.correlationID) {
+    try {
+      const atualizado = await apiUpdateCustomer(cfg, created.correlationID, { taxID });
+      console.log(`[woovi] cliente criado sem CPF — atualizado (${created.correlationID})`);
+      return {
+        name: atualizado?.name || payload.name,
+        email: atualizado?.email || payload.email,
+        phone: atualizado?.phone || payload.phone,
+        taxID,
+        correlationID: atualizado?.correlationID || created.correlationID || correlationID,
+        address: atualizado?.address || payload.address,
+      };
+    } catch (e: any) {
+      console.warn("[woovi] PATCH do cliente recém-criado falhou:", e?.message || e);
+    }
+  }
+
   return {
     name: created?.name || payload.name,
     email: created?.email || payload.email,
     phone: created?.phone || payload.phone,
-    taxID: created?.taxID?.taxID || created?.taxID || payload.taxID,
+    taxID: taxIDDoCriado || payload.taxID,
     correlationID: created?.correlationID || correlationID,
     address: created?.address || payload.address,
   };
@@ -741,8 +889,16 @@ async function getOrCreateCustomer(
  *
  * A criação NÃO é idempotente: cliente com os mesmos dados devolve 400
  * ("Há outro cliente com esses dados"). Esse 400 é tratado como "já existe",
- * e o cliente é localizado pelo CPF (a listagem da API não tem filtro, então
- * a busca é feita por nós).
+ * e o cliente é localizado de duas formas, nesta ordem:
+ *
+ *   1. pelo **CPF** (`findCustomerByTaxID`) — é o que a API usa para
+ *      resolver o cliente na assinatura;
+ *   2. pelo **correlationID** (`GET /api/v1/customer/{correlationID}`) — o
+ *      nosso identificador (`dp-user-<user_id>`).
+ *
+ * O passo 2 existe porque o primeiro pode não existir: se o usuário ainda
+ * não informou o CPF, o cliente na Woovi foi criado SEM taxID e não há como
+ * achá-lo pelo CPF. Sem o passo 2, essa compra quebraria com 500.
  *
  * Sem esse tratamento, a segunda compra do mesmo usuário travaria sempre que
  * o `users.customer_id_woovi` não tivesse sido gravado — e o cliente ficaria
@@ -752,6 +908,7 @@ async function criarOuReaproveitarCliente(
   cfg: WooviConfig,
   payload: WooviCustomer,
   taxID: string,
+  correlationID: string,
 ): Promise<any> {
   try {
     return await apiCreateCustomer(cfg, payload);
@@ -762,15 +919,27 @@ async function criarOuReaproveitarCliente(
       mensagem.includes("já existe") ||
       mensagem.includes("ja existe");
 
-    if (!duplicado || !taxID) throw e;
+    if (!duplicado) throw e;
 
-    console.warn("[woovi] cliente já existe na Woovi — localizando pelo CPF");
-    const existente = await apiFindCustomerByTaxID(cfg, taxID);
-    if (!existente) {
-      // O 400 era por outro motivo — repassa o erro original.
-      throw e;
+    if (taxID) {
+      console.warn("[woovi] cliente já existe na Woovi — localizando pelo CPF");
+      const existente = await apiFindCustomerByTaxID(cfg, taxID);
+      if (existente) return existente;
     }
-    return existente;
+
+    // Sem CPF (ou sem cliente com esse CPF): tenta o nosso correlationID.
+    console.warn("[woovi] cliente já existe na Woovi — localizando pelo correlationID");
+    try {
+      const peloCorrelation = await apiGetCustomer(cfg, correlationID);
+      if (peloCorrelation && (peloCorrelation.email || peloCorrelation.phone || peloCorrelation.taxID)) {
+        return peloCorrelation;
+      }
+    } catch (e2: any) {
+      console.warn("[woovi] GET customer por correlationID falhou:", e2?.message || e2);
+    }
+
+    // O 400 era por outro motivo — repassa o erro original.
+    throw e;
   }
 }
 

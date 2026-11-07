@@ -1537,6 +1537,66 @@
   font-size: 0.95rem;
 }
 
+/* ── Campo de CPF (Pix Automático da Woovi) ───────────────────────────────
+   A Woovi só cria a assinatura recorrente de um cliente que ela resolva
+   pelo CPF (taxID). Sem ele, o backend responde 400 `cpf_required` e o
+   campo aparece no lugar do botão de pagamento. */
+.checkout-cpf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: rgba(14, 165, 233, 0.05);
+  text-align: left;
+}
+
+.checkout-cpf-field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--secondary);
+}
+
+.checkout-cpf-field input {
+  width: 100%;
+  max-width: 230px;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--surface);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+}
+
+.checkout-cpf-field input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.checkout-cpf-field input[aria-invalid="true"] {
+  border-color: #ef4444;
+}
+
+.checkout-cpf-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.checkout-cpf-erro {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: #ef4444;
+  margin: 0;
+}
+
 .coupon-input-row {
   display: flex;
   align-items: center;

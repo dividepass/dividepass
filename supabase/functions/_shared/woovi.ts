@@ -406,17 +406,52 @@ export function isRejectedStatus(status: string | null | undefined): boolean {
 
 /**
  * `correlationID` é a chave que amarra a resposta da Woovi com o nosso banco.
- * Ele volta no webhook, e é por ele que encontramos a assinatura/cobrança.
+ * Ele volta em TODOS os eventos do artefato (charge e mandate, com suas
+ * parcelas), então é a rede de segurança quando o id do mandate não bate.
  *
- * Formato: `{group_id}:{user_id}:{type}:{kind}`
+ * Formato: `{group_id}:{user_id}:{type}:{kind}[:{tentativa}]`
  *   - `kind = "charge"` → cobrança avulsa (fatura, adesão, combined)
  *   - `kind = "rec"`    → assinatura Pix Automático (e suas parcelas)
  *
  * O `kind` existe porque o fluxo `combined` cria UM charge e UM mandate: sem
  * ele, o webhook não saberia qual dos dois eventos posteriores deve ser confirmado.
+ *
+ * ── A TENTATIVA (a 5ª parte) ────────────────────────────────────────────
+ *
+ * A Woovi trata o `correlationID` como CHAVE ÚNICA na assinatura:
+ *
+ *     POST /api/v1/subscriptions
+ *     -> 400 {"error":"correlationID already used"}
+ *
+ * (Verificado na API em 07/11/2026.) Sem a tentativa, o correlationID era
+ * sempre o mesmo para o mesmo grupo/usuário/tipo — e a SEGUNDA tentativa de
+ * pagamento (o retry do checkout, ou um novo QR depois de um erro) era
+ * recusada. A tentativa torna a chave única por chamada.
+ *
+ * O webhook NÃO depende dessa parte: ele acha a assinatura pelo id do
+ * mandate (`woovi_subscription_id`) e, na falta, pelo grupo/usuário do
+ * correlationID. Por isso o `parseCorrelationId` aceita 4 ou 5 partes.
  */
-export function buildCorrelationId(groupId: string, userId: string, type: string, kind: "charge" | "rec"): string {
-  return `${groupId}:${userId}:${type}:${kind}`;
+export function buildCorrelationId(
+  groupId: string,
+  userId: string,
+  type: string,
+  kind: "charge" | "rec",
+  attempt?: string | null,
+): string {
+  const base = `${groupId}:${userId}:${type}:${kind}`;
+  return attempt ? `${base}:${attempt}` : base;
+}
+
+/**
+ * Identificador único da TENTATIVA de pagamento.
+ *
+ * Entra na 5ª parte do correlationID (ver `buildCorrelationId`). Precisa ser
+ * único por chamada — e curto, porque a Woovi tem limite de tamanho no
+ * correlationID.
+ */
+export function novaTentativa(): string {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
 export type ParsedCorrelationId = {
@@ -424,14 +459,26 @@ export type ParsedCorrelationId = {
   userId: string;
   type: string;
   kind: "charge" | "rec";
+  /** A 5ª parte: o id da tentativa. Não é usada para casar, só para depurar. */
+  attempt?: string;
 };
 
-/** Faz o parse do correlationID. Devolve `null` se não for do nosso formato. */
+/**
+ * Faz o parse do correlationID. Devolve `null` se não for do nosso formato.
+ *
+ * Aceita 4 partes (formato antigo, sem tentativa) e 5 (com a tentativa).
+ */
 export function parseCorrelationId(correlationId: string | null | undefined): ParsedCorrelationId | null {
   const parts = String(correlationId || "").split(":");
-  if (parts.length !== 4) return null;
+  if (parts.length < 4 || parts.length > 5) return null;
   const [groupId, userId, type, kind] = parts;
   if (!groupId || !userId || !type) return null;
   if (kind !== "charge" && kind !== "rec") return null;
-  return { groupId, userId, type, kind };
+  return {
+    groupId,
+    userId,
+    type,
+    kind,
+    attempt: parts[4] || undefined,
+  };
 }

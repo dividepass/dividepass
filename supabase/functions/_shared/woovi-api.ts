@@ -71,6 +71,36 @@ export async function getCustomer(cfg: WooviConfig, correlationId: string): Prom
 }
 
 /**
+ * Atualiza o cliente na Woovi.
+ *
+ * PARA QUE SERVE
+ * --------------
+ * A ASSINATURA (Pix Automático) só é criada se a API conseguir resolver o
+ * cliente pelo `taxID` (CPF). Sem ele:
+ *
+ *     POST /api/v1/subscriptions
+ *     -> 400 {"error":"You need to inform a customer to create a subscription"}
+ *
+ * (Verificado na API em 07/11/2026.)
+ *
+ * E o `POST /api/v1/customer` NÃO aceita corrigir isso: um cliente que já
+ * existe com os mesmos dados devolve 400 "Há outro cliente com esses dados".
+ *
+ * O caminho é o `PATCH /api/v1/customer/{correlationID}`: ele atualiza o
+ * cliente que já existe, e a assinatura passa a ser criada. (Verificado.)
+ *
+ * O identificador é o `correlationID` — a API não tem id de cliente.
+ */
+export async function updateCustomer(
+  cfg: WooviConfig,
+  correlationId: string,
+  patch: Record<string, any>,
+): Promise<any> {
+  const res = await wooviRequest<any>(cfg, "PATCH", `/api/v1/customer/${correlationId}`, patch);
+  return res?.customer || res;
+}
+
+/**
  * Procura um cliente existente pelo CPF.
  *
  * POR QUE ISSO EXISTE
