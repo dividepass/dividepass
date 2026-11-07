@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './useAuth';
 import { isSubscriptionVisible } from '../lib/subscriptionAccess';
+import { visibilityColumnAvailable } from '../lib/groupVisibility';
 
 /**
  * Status que a listagem do usuário busca.
@@ -60,14 +61,24 @@ export function useAppData() {
     setError(null);
 
     try {
-      const [servicesRes, groupsRes, subscriptionsRes, plansRes] = await Promise.all([
-        supabase.from('streaming_services').select('*').eq('status', 'active').order('name'),
-        supabase.from('groups').select(`
+      // Grupo privado não entra no catálogo público. A coluna `visibility` entra
+      // por migration — antes dela existir, nada é filtrado (comportamento
+      // antigo) em vez de a query quebrar.
+      const hasVisibility = await visibilityColumnAvailable();
+
+      const groupsQuery = () => {
+        const q = supabase.from('groups').select(`
           *,
           service:service_id (*),
-          members:group_members (*),
+          members:group_members (*, user:user_id (id, name, avatar_url)),
           credential:group_credentials (*)
-        `).in('status', ['open', 'forming']),
+        `).in('status', ['open', 'forming']);
+        return hasVisibility ? q.eq('visibility', 'public') : q;
+      };
+
+      const [servicesRes, groupsRes, subscriptionsRes, plansRes] = await Promise.all([
+        supabase.from('streaming_services').select('*').eq('status', 'active').order('name'),
+        groupsQuery(),
         supabase.from('user_subscriptions').select(`
           *,
           group:group_id (*, members:group_members(*)),
@@ -108,15 +119,22 @@ export function useAppData() {
       if (!cancelled) setLoading(true);
 
       try {
-        const [servicesRes, groupsRes, subscriptionsRes, announcementsRes, plansRes] = await Promise.all([
-          supabase.from('streaming_services').select('*').eq('status', 'active').order('name'),
-          supabase.from('groups').select(`
+        const hasVisibility = await visibilityColumnAvailable();
+
+        const groupsQuery = () => {
+          const q = supabase.from('groups').select(`
             *,
             service:service_id (*),
-            members:group_members (*),
+            members:group_members (*, user:user_id (id, name, avatar_url)),
             credential:group_credentials (*),
             owner:owner_id (id, name, email, avatar_url, role)
-          `).in('status', ['open', 'forming']),
+          `).in('status', ['open', 'forming']);
+          return hasVisibility ? q.eq('visibility', 'public') : q;
+        };
+
+        const [servicesRes, groupsRes, subscriptionsRes, announcementsRes, plansRes] = await Promise.all([
+          supabase.from('streaming_services').select('*').eq('status', 'active').order('name'),
+          groupsQuery(),
           supabase.from('user_subscriptions').select(`
             *,
             group:group_id (*, credential:group_credentials (*), profiles:group_profiles(*), owner:owner_id (id, name, avatar_url, role), members:group_members(*)),

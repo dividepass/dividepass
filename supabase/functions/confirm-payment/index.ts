@@ -5,6 +5,18 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { dispatchNotification } from "../_shared/send-notification.ts";
 import { notifyAdminPayment } from "../_shared/admin-payment-email.ts";
 import { notifySubscriptionCreated } from "../_shared/subscription-emails.ts";
+import {
+  notifyPaymentReceived,
+  notifyMemberJoined,
+} from "../_shared/payment-emails.ts";
+// Pulse Coding (revenda): grupos "Via Parceiro" — a compra na Pulse acontece
+// depois do pagamento confirmado, com o external_id do MEU pedido.
+import {
+  dataValidade,
+  instanteValidade,
+  processarCompraViaParceiro,
+  resolverViaParceiro,
+} from "../_shared/pulse-orders.ts";
 
 interface ConfirmParams {
   gateway: string;
@@ -18,6 +30,13 @@ interface ConfirmParams {
   billing_cycle?: string | null;
   custom_cycle_days?: number | null;
   custom_cycle_months?: number | null;
+  /**
+   * A confirmação veio do botão "forçar" do admin? Muda o título do evento
+   * no painel ("Pagamento confirmado (forçado)") e grava `forced: true` no
+   * metadado, para dar pra distinguir na hora o que foi automático do que
+   * foi manual.
+   */
+  forced?: boolean;
 }
 
 /**
@@ -92,8 +111,229 @@ async function getSavingsData(
   }
 }
 
+/**
+ * Os DOIS e-mails do cliente: "recebemos o seu pagamento" e "você entrou no
+ * grupo".
+ *
+ * Por que aqui e não em cada chamador: o polling do navegador, o webhook do
+ * gateway e a confirmação manual do admin são três entradas diferentes. Com a
+ * chamada dentro da confirmação compartilhada, qualquer uma delas dispara os
+ * e-mails — e a trava de duplicidade (`dedup_key`) impede o e-mail duplo
+ * quando as duas chegam ao mesmo tempo.
+ *
+ * São DOIS e-mails, não três:
+ *   1. "Recebemos o seu pagamento"   → sempre;
+ *   2. "Sua assinatura foi criada"   → quando tem assinatura (`subscription`
+ *      e `combined`, pelo `notifySubscriptionCreated`);
+ *      "Sua vaga foi liberada"       → quando é só taxa de adesão (`entrance`,
+ *      pelo `notifyMemberJoined`).
+ *
+ * NUNCA derruba a confirmação: uma falha de SMTP fica no log e no
+ * `email_logs`, mas o pagamento continua liberado.
+ */
+async function enviarEmailsDoCliente(
+  supabaseAdmin: any,
+  params: {
+    user_id: string;
+    group_id: string;
+    amount: number;
+    gateway_payment_id: string;
+    payment_type: string;
+  },
+): Promise<void> {
+  const ctx = {
+    userId: params.user_id,
+    groupId: params.group_id,
+    amount: Number(params.amount) || 0,
+    transactionId: params.gateway_payment_id,
+    paymentType: params.payment_type,
+  };
+
+  try {
+    const recebido = await notifyPaymentReceived(supabaseAdmin, ctx);
+    console.log(
+      `[confirm-payment] e-mail "recebemos seu pagamento": ${recebido.sent ? "enviado" : recebido.reason}`,
+    );
+  } catch (e: any) {
+    console.error("[confirm-payment] falha no e-mail de pagamento recebido:", e);
+  }
+
+  // Na assinatura (pura ou combinada) o e-mail de "assinatura criada" já
+  // cobre a entrada no grupo — mandar os dois seria spam.
+  if (params.payment_type !== "subscription" && params.payment_type !== "combined") {
+    try {
+      const entrou = await notifyMemberJoined(supabaseAdmin, ctx);
+      console.log(
+        `[confirm-payment] e-mail "você entrou no grupo": ${entrou.sent ? "enviado" : entrou.reason}`,
+      );
+    } catch (e: any) {
+      console.error("[confirm-payment] falha no e-mail de entrada no grupo:", e);
+    }
+  }
+}
+
+/**
+ * Pagamento aprovado no gateway, mas a liberação no grupo FALHOU.
+ *
+ * Antes isso era silencioso: a tentativa ficava "aprovada" no painel, a
+ * pessoa não entrava no grupo, não havia evento e não havia e-mail — o
+ * admin só descobria quando a cliente reclamava. Agora o caso vira um evento
+ * visível no painel + um aviso para o e-mail do admin.
+ */
+async function registrarLiberacaoFalhada(
+  params: ConfirmParams,
+  erro?: string,
+): Promise<void> {
+  const { group_id, user_id, amount, gateway_payment_id, payment_type, gateway } = params;
+
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const supabaseServiceKey = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
+    const admin = createClient(supabaseUrl, supabaseServiceKey);
+
+    const [{ data: usr }, { data: grp }] = await Promise.all([
+      admin.from("users").select("name, email").eq("id", user_id).limit(1),
+      admin.from("groups").select("name").eq("id", group_id).limit(1),
+    ]);
+    const userName = (usr || [])[0]?.name || "Usuário";
+    const groupName = (grp || [])[0]?.name || group_id;
+
+    await admin.from("platform_events").insert({
+      event_type: "payment",
+      title: "Pagamento aprovado sem liberação",
+      message:
+        `${userName} pagou R$ ${Number(amount || 0).toFixed(2)} no grupo "${groupName}" ` +
+        `via ${gateway}, mas a liberação no grupo falhou: ${erro || "erro desconhecido"}. ` +
+        `O valor foi cobrado — libere o acesso manualmente ou rode o job de reconciliação.`,
+      metadata: JSON.stringify({
+        user_id, group_id, amount, payment_type, gateway,
+        transaction_id: gateway_payment_id,
+        error: erro || null,
+        needs_reconcile: true,
+      }),
+      created_by: user_id,
+    });
+
+    console.error(
+      `[confirm-payment] LIBERAÇÃO FALHOU (${payment_type}) user=${user_id} group=${group_id} tx=${gateway_payment_id}: ${erro}`,
+    );
+  } catch (e: any) {
+    console.error("[confirm-payment] falha ao registrar a liberação que falhou:", e);
+  }
+}
+
+/**
+ * Ponto de entrada único da confirmação de pagamento.
+ *
+ * Todo caminho (webhook do gateway, polling do navegador, confirmação manual
+ * do admin e o job de reconciliação) passa por aqui — é o que garante que o
+ * pagamento confirmado SEMPRE libere o grupo e SEMPRE mande e-mail.
+ */
+/**
+ * A LIBERAÇÃO (acesso ao grupo) realmente aconteceu?
+ *
+ * O atalho de idempotência ("já pago, replay ignorado") só pode ser usado
+ * quando a liberação está completa: assinatura ativa + vínculo no grupo. Se o
+ * pagamento foi registrado mas a liberação ficou pela metade, a confirmação
+ * PRECISA rodar de novo — senão o cliente pagou e nunca entrou, e nenhuma
+ * nova tentativa conserta (todas caem no mesmo atalho).
+ */
+async function liberacaoConcluida(
+  supabaseAdmin: any,
+  group_id: string,
+  user_id: string,
+  payment_type: string,
+): Promise<boolean> {
+  try {
+    const { data: mem } = await supabaseAdmin
+      .from("group_members")
+      .select("status, payment_status")
+      .eq("group_id", group_id)
+      .eq("user_id", user_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (payment_type === "entrance") {
+      return mem?.payment_status === "entrance_paid" || mem?.payment_status === "active";
+    }
+
+    const { data: sub } = await supabaseAdmin
+      .from("user_subscriptions")
+      .select("status")
+      .eq("group_id", group_id)
+      .eq("user_id", user_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const assinaturaAtiva = sub?.status === "active";
+    const vinculoLiberado =
+      mem?.payment_status === "active" || mem?.payment_status === "entrance_paid";
+    return assinaturaAtiva && !!vinculoLiberado;
+  } catch (e) {
+    console.error("[confirm-payment] erro ao verificar a liberacao:", e);
+    // Na dúvida, refaz: a confirmação é idempotente.
+    return false;
+  }
+}
+
+/**
+ * Registra a linha em `payments` sem duplicar.
+ *
+ * A mesma transação pode ser confirmada várias vezes (webhook + polling +
+ * reconciliação + botão do admin). Sem esta checagem, cada confirmação
+ * acrescentava uma linha nova no extrato do cliente.
+ */
+async function registrarPagamento(supabaseAdmin: any, dados: any): Promise<{ ok: boolean; inserted: boolean; error?: string }> {
+  try {
+    const { data: existente } = await supabaseAdmin
+      .from("payments")
+      .select("id")
+      .eq("transaction_code", dados.transaction_code)
+      .eq("payment_type", dados.payment_type)
+      .eq("status", dados.status)
+      .limit(1);
+
+    if (existente && existente.length > 0) {
+      console.log(
+        `[confirm-payment] pagamento ${dados.payment_type} ja registrado (${dados.transaction_code}) — nao duplicado`,
+      );
+      return { ok: true, inserted: false };
+    }
+
+    const { error } = await supabaseAdmin.from("payments").insert(dados);
+    if (error) {
+      console.error("[confirm-payment] erro ao registrar pagamento:", error.message);
+      return { ok: false, inserted: false, error: error.message };
+    }
+    return { ok: true, inserted: true };
+  } catch (e: any) {
+    console.error("[confirm-payment] erro ao registrar pagamento:", e);
+    return { ok: false, inserted: false, error: e?.message || String(e) };
+  }
+}
+
 export async function confirmPayment(params: ConfirmParams) {
+  const result = await confirmarPagamento(params);
+
+  // Pagamento aprovado no gateway + confirmação que falhou = cliente pagou e
+  // ficou fora do grupo. Precisa ficar visível.
+  if (params.status === "approved" && !result?.success && !result?.already_confirmed) {
+    await registrarLiberacaoFalhada(params, result?.error);
+  }
+
+  return result;
+}
+
+async function confirmarPagamento(params: ConfirmParams) {
   const { gateway, group_id, user_id, payment_type, amount, status, gateway_payment_id, payment_method, billing_cycle, custom_cycle_days, custom_cycle_months } = params;
+
+  // Título do evento: a confirmação manual do admin fica marcada, para dar
+  // pra distinguir na hora o que foi automático do que foi feito na mão.
+  const tituloEvento = (base: string) =>
+    params.forced ? "Pagamento confirmado (forçado)" : base;
+  const marcaForcado = params.forced ? { forced: true } : {};
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const supabaseServiceKey = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
@@ -118,7 +358,7 @@ export async function confirmPayment(params: ConfirmParams) {
       .select("id, payment_type")
       .eq("transaction_code", gateway_payment_id)
       .eq("status", "paid")
-      .limit(1);
+      .limit(10);
 
     if (alreadyPaid && alreadyPaid.length > 0) {
       const alreadyTypes = alreadyPaid.map((p: any) => p.payment_type).join(",");
@@ -130,10 +370,29 @@ export async function confirmPayment(params: ConfirmParams) {
       const allPaid = expectedTypes.every((t) => alreadyTypes.includes(t));
 
       if (allPaid) {
+        // ─────────────────────────────────────────────────────────────────────
+        // "PAGO" não é a mesma coisa que "LIBERADO".
+        //
+        // A linha em `payments` pode existir sem que a liberação tenha
+        // acontecido (a confirmação falhou no meio do caminho). Quando isso
+        // acontecia, TODO replay era ignorado e o cliente ficava para sempre
+        // com a assinatura "Pendente" mesmo com o pagamento aprovado — sem
+        // nenhuma forma de se recuperar, porque o atalho "já pago" pulava a
+        // liberação.
+        //
+        // Agora o atalho só vale quando a liberação CONCLUÍU de fato; caso
+        // contrário a confirmação roda de novo (ela é idempotente).
+        // ─────────────────────────────────────────────────────────────────────
+        const liberado = await liberacaoConcluida(supabaseAdmin, group_id, user_id, payment_type);
+        if (liberado) {
+          console.log(
+            `[confirm-payment] ${gateway} tx=${gateway_payment_id} ja confirmado (${alreadyTypes}) — replay ignorado`,
+          );
+          return { success: true, already_confirmed: true };
+        }
         console.log(
-          `[confirm-payment] ${gateway} tx=${gateway_payment_id} ja confirmado (${alreadyTypes}) — replay ignorado`,
+          `[confirm-payment] ${gateway} tx=${gateway_payment_id} pagamento registrado mas liberacao incompleta — refazendo a liberacao`,
         );
-        return { success: true, already_confirmed: true };
       }
     }
   }
@@ -153,7 +412,7 @@ export async function confirmPayment(params: ConfirmParams) {
         }, { onConflict: "group_id, user_id" });
 
       // Record payment
-      await supabaseAdmin.from("payments").insert({
+      await registrarPagamento(supabaseAdmin, {
         user_id,
         amount,
         method: normalizePaymentMethod(payment_method),
@@ -171,9 +430,9 @@ export async function confirmPayment(params: ConfirmParams) {
         .from("users").select("name").eq("id", user_id).maybeSingle();
       await supabaseAdmin.from("platform_events").insert({
         event_type: "payment",
-        title: "Pagamento de adesão",
+        title: tituloEvento("Pagamento de adesão"),
         message: `${entranceUser?.name || "Usuário"} pagou taxa de adesão de R$ ${amount.toFixed(2)} no grupo "${entranceGroup?.name || group_id}" via ${gateway}.`,
-        metadata: JSON.stringify({ user_id, group_id, amount, gateway, payment_type: "entrance", gateway_payment_id, user_name: entranceUser?.name, group_name: entranceGroup?.name }),
+        metadata: JSON.stringify({ user_id, group_id, amount, gateway, payment_type: "entrance", gateway_payment_id, user_name: entranceUser?.name, group_name: entranceGroup?.name, ...marcaForcado }),
         created_by: user_id,
       });
 
@@ -213,6 +472,12 @@ export async function confirmPayment(params: ConfirmParams) {
       // Registrar cupom após confirmação do pagamento PIX (entrance)
       await registerCouponUsagePIX(supabaseAdmin, gateway_payment_id, user_id, "entrance");
 
+      // E-mails do cliente: "recebemos o seu pagamento" + "sua vaga foi
+      // liberada". Vêm DEPOIS de o vínculo estar gravado.
+      await enviarEmailsDoCliente(supabaseAdmin, {
+        user_id, group_id, amount, gateway_payment_id, payment_type: "entrance",
+      });
+
       return { success: true, payment_type: "entrance" };
 
     } else if (payment_type === "combined") {
@@ -225,7 +490,19 @@ export async function confirmPayment(params: ConfirmParams) {
         .single();
 
       const entranceAmount = group?.entrance_fee || 0;
-      const subscriptionAmount = group?.price_per_slot || 0;
+
+      // ─────────────────────────────────────────────────────────────────────
+      // SEPARANDO O QUE FOI PAGO (e o que vira recorrência)
+      //
+      // `amount` aqui é o TOTAL cobrado no gateway (adesão + mensalidade).
+      // A parte da assinatura é o total menos a taxa de adesão — esse é o
+      // valor que foi pago e o que vai na linha de `payments`.
+      //
+      // A RECORRÊNCIA usa o valor do CICLO (preço mensal x meses) e NUNCA a
+      // taxa de adesão: foi o que fazia o grupo cobrar a taxa todo mês.
+      // ─────────────────────────────────────────────────────────────────────
+      const chargedTotal = Number(amount || 0);
+      const paidSubscriptionPart = Math.max(0, chargedTotal - entranceAmount);
 
       // 1. Mark entrance as paid
       await supabaseAdmin
@@ -239,7 +516,7 @@ export async function confirmPayment(params: ConfirmParams) {
         }, { onConflict: "group_id, user_id" });
 
       // 2. Record entrance payment
-      await supabaseAdmin.from("payments").insert({
+      await registrarPagamento(supabaseAdmin, {
         user_id,
         amount: entranceAmount,
         method: normalizePaymentMethod(payment_method),
@@ -251,10 +528,10 @@ export async function confirmPayment(params: ConfirmParams) {
         notes: "Taxa de adesão (parte do pagamento combinado)",
       });
 
-      // 3. Create subscription with ONLY the monthly amount (not combined)
+      // 3. Create subscription with ONLY the cycle amount (not combined)
       const { data: subInfo } = await supabaseAdmin
         .from("user_subscriptions")
-        .select("id, billing_cycle, custom_cycle_months, custom_cycle_days, payment_method, card_id")
+        .select("id, amount, billing_cycle, custom_cycle_months, custom_cycle_days, payment_method, card_id")
         .eq("user_id", user_id).eq("group_id", group_id)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -264,8 +541,33 @@ export async function confirmPayment(params: ConfirmParams) {
       const days = custom_cycle_days || subInfo?.custom_cycle_days || null;
       const months = custom_cycle_months || subInfo?.custom_cycle_months || null;
 
+      // Valor do ciclo: preço mensal x meses (o que a renovação vai cobrar).
+      const cycleMonths = cycle === "quarterly" ? 3 : cycle === "semiannual" ? 6 : cycle === "annual" ? 12 : cycle === "custom" ? (months || 1) : 1;
+      const cycleTotal = cycle === "days"
+        ? Number(group?.price_per_slot || 0)
+        : Number(group?.price_per_slot || 0) * cycleMonths;
+
+      // O valor gravado é o que o create-payment já calculou (ciclo + cupom
+      // recorrente). Sem linha prévia, cai no total do ciclo.
+      const storedSubscriptionAmount = Number(subInfo?.amount || 0) > 0
+        ? Number(subInfo.amount)
+        : cycleTotal;
+
       let nextChargeAt: Date;
-      if (cycle === "days" && days) {
+      // Grupo "Via Parceiro" (revenda Pulse Coding): o produto tem PRAZO, não
+      // assinatura que renova sozinha. Sem este bloco, o job de cobrança
+      // recorrente (que NÃO passa pelo confirmPayment) voltaria a cobrar o
+      // cliente sem comprar nada na Pulse. Ver o mesmo bloco no ramo
+      // `subscription` para a explicação completa.
+      const viaParceiroCombinado = await resolverViaParceiro(supabaseAdmin, group_id);
+      const viaParceiroAtivoCombinado =
+        viaParceiroCombinado.viaParceiro &&
+        !!viaParceiroCombinado.mapeamento &&
+        viaParceiroCombinado.mapeamento.status === "ativo";
+
+      if (viaParceiroAtivoCombinado) {
+        nextChargeAt = new Date(instanteValidade(viaParceiroCombinado.durationDays));
+      } else if (cycle === "days" && days) {
         nextChargeAt = new Date();
         nextChargeAt.setDate(nextChargeAt.getDate() + days);
       } else {
@@ -281,7 +583,7 @@ export async function confirmPayment(params: ConfirmParams) {
             status: "active",
             gateway_status: "authorized",
             gateway_subscription_id: gateway_payment_id,
-            next_charge_at: nextChargeAt.toISOString(),
+            next_charge_at: viaParceiroAtivoCombinado ? null : nextChargeAt.toISOString(),
             // Pagamento aprovado: vencimento do ciclo = data + ciclo (fonte da
             // verdade da regra de status; nao anda a cada retry).
             renewal_due_at: nextChargeAt.toISOString(),
@@ -292,25 +594,34 @@ export async function confirmPayment(params: ConfirmParams) {
             billing_cycle: cycle,
             custom_cycle_days: days,
             custom_cycle_months: months,
-            amount: subscriptionAmount, // IMPORTANTE: apenas o valor da mensalidade
+            // IMPORTANTE: o valor do CICLO (nunca a taxa de adesão). É este
+            // campo que a renovação cobra — a taxa é única.
+            amount: storedSubscriptionAmount,
+            expires_at: viaParceiroAtivoCombinado ? dataValidade(viaParceiroCombinado.durationDays) : undefined,
           })
           .eq("id", subInfo.id);
       } else {
         await supabaseAdmin.from("user_subscriptions").insert({
           user_id, group_id, service_id: group?.service_id,
-          billing_cycle: cycle, amount: subscriptionAmount, // IMPORTANTE: apenas mensalidade
+          billing_cycle: cycle, amount: storedSubscriptionAmount, // IMPORTANTE: valor do ciclo, sem a taxa
           status: "active", gateway: gateway, gateway_subscription_id: gateway_payment_id,
           payment_method: payment_method || null,
-          next_charge_at: nextChargeAt.toISOString(),
+          next_charge_at: viaParceiroAtivoCombinado ? null : nextChargeAt.toISOString(),
           renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
           started_at: new Date().toISOString(),
           custom_cycle_days: days,
           custom_cycle_months: months,
+          expires_at: viaParceiroAtivoCombinado ? dataValidade(viaParceiroCombinado.durationDays) : undefined,
         });
       }
 
       // 4. Update member to active
+      //
+      // `subscription_deadline` = até quando o acesso está PAGO. Sem isso o
+      // vínculo não sabe o período válido e as regras de status (atrasada /
+      // cancelada) não têm como ser calculadas por membro — foi o que deixou
+      // gente com assinatura ativa aparecendo como "Cancelado" no grupo.
       await supabaseAdmin
         .from("group_members")
         .upsert({
@@ -318,13 +629,19 @@ export async function confirmPayment(params: ConfirmParams) {
           status: "active",
           payment_status: "active",
           joined_at: new Date().toISOString(),
+          subscription_deadline: nextChargeAt.toISOString(),
+          left_at: null,
+          updated_at: new Date().toISOString(),
         }, { onConflict: "group_id, user_id" });
 
       // 5. Record subscription payment (with savings tracking)
-      const savingsDataCombined = await getSavingsData(supabaseAdmin, group_id, gateway_payment_id, subscriptionAmount);
-      await supabaseAdmin.from("payments").insert({
+      //
+      // O valor aqui é a PARTE DA ASSINATURA do que foi pago (o total menos a
+      // taxa de adesão) — é o valor que aparece na fatura do cliente.
+      const savingsDataCombined = await getSavingsData(supabaseAdmin, group_id, gateway_payment_id, paidSubscriptionPart);
+      await registrarPagamento(supabaseAdmin, {
         user_id,
-        amount: subscriptionAmount,
+        amount: paidSubscriptionPart,
         official_price: savingsDataCombined.official_price,
         paid_amount: savingsDataCombined.paid_amount,
         method: normalizePaymentMethod(payment_method),
@@ -336,15 +653,70 @@ export async function confirmPayment(params: ConfirmParams) {
         notes: `1ª mensalidade (pagamento combinado com taxa de adesão)`,
       });
 
+      // Registrar cupom após confirmação do pagamento COMBINADO.
+      //
+      // O cupom incide sobre a MENSALIDADE (é desconto de assinatura), então
+      // o registro é do tipo "subscription" — igual ao ramo de assinatura
+      // pura.
+      //
+      // Sem esta chamada o cupom NUNCA era registrado no fluxo combinado:
+      // `coupon_uses` não recebia a linha, `coupons.used_count` não subia e
+      // o prêmio de campanha (ex.: AVALIE5) não era liberado — mesmo com o
+      // desconto visível no valor cobrado. `registerCouponUsagePIX` é
+      // idempotente (procura uso anterior antes de inserir), então chamar
+      // aqui é seguro mesmo se o polling e o webhook chegarem juntos.
+      await registerCouponUsagePIX(supabaseAdmin, gateway_payment_id, user_id, "subscription");
+
+      // ── VIA PARCEIRO (Pulse Coding): compra na Pulse ────────────────────
+      // Mesmo gancho do ramo `subscription`, aqui para o fluxo combinado
+      // (adesão + 1ª mensalidade na mesma transação). O grupo "Via Parceiro"
+      // nasce sem taxa de adesão, mas se um dia alguém incluir taxa num grupo
+      // importado, o cliente ainda tem que receber o acesso.
+      if (viaParceiroAtivoCombinado) {
+        try {
+          const { data: pagamentoCombinado } = await supabaseAdmin
+            .from("payments")
+            .select("id")
+            .eq("transaction_code", gateway_payment_id)
+            .eq("payment_type", "subscription")
+            .eq("status", "paid")
+            .limit(1)
+            .maybeSingle();
+
+          const { data: compradorCombinado } = await supabaseAdmin
+            .from("users")
+            .select("name, email, phone")
+            .eq("id", user_id)
+            .maybeSingle();
+
+          const resultadoCombinado = await processarCompraViaParceiro(supabaseAdmin, {
+            transaction_code: gateway_payment_id,
+            group_id,
+            user_id,
+            payment_id: pagamentoCombinado?.id ?? null,
+            amount: Number(paidSubscriptionPart) || null,
+            customer_name: compradorCombinado?.name ?? null,
+            customer_whatsapp: compradorCombinado?.phone ?? null,
+          });
+
+          console.log(
+            `[confirm-payment] via parceiro (combinado): pedido=${resultadoCombinado.externalId ?? "-"} ` +
+            `status=${resultadoCombinado.status ?? "-"} entregas=${resultadoCombinado.entregaAplicada ?? 0}`,
+          );
+        } catch (pulseErrCombinado: any) {
+          console.error("[confirm-payment] falha na compra Via Parceiro (combinado):", pulseErrCombinado?.message ?? pulseErrCombinado);
+        }
+      }
+
       // Platform events for combined
       const { data: combUser } = await supabaseAdmin.from("users").select("name").eq("id", user_id).maybeSingle();
       const { data: combGroup } = await supabaseAdmin.from("groups").select("name, owner_id").eq("id", group_id).maybeSingle();
 
       await supabaseAdmin.from("platform_events").insert({
         event_type: "payment",
-        title: "Pagamento combinado (adesão + assinatura)",
-        message: `${combUser?.name || "Usuário"} pagou taxa de adesão (R$ ${entranceAmount.toFixed(2)}) + 1ª mensalidade (R$ ${subscriptionAmount.toFixed(2)}) no grupo "${combGroup?.name || group_id}" via ${gateway}.`,
-        metadata: JSON.stringify({ user_id, group_id, total_amount: amount, entrance_amount: entranceAmount, subscription_amount: subscriptionAmount, gateway, payment_type: "combined", gateway_payment_id, user_name: combUser?.name, group_name: combGroup?.name }),
+        title: tituloEvento("Pagamento combinado (adesão + assinatura)"),
+        message: `${combUser?.name || "Usuário"} pagou taxa de adesão (R$ ${entranceAmount.toFixed(2)}) + 1ª mensalidade (R$ ${paidSubscriptionPart.toFixed(2)}) no grupo "${combGroup?.name || group_id}" via ${gateway}.`,
+        metadata: JSON.stringify({ user_id, group_id, total_amount: amount, entrance_amount: entranceAmount, subscription_amount: paidSubscriptionPart, cycle_amount: storedSubscriptionAmount, gateway, payment_type: "combined", gateway_payment_id, user_name: combUser?.name, group_name: combGroup?.name, ...marcaForcado }),
         created_by: user_id,
       });
 
@@ -352,7 +724,7 @@ export async function confirmPayment(params: ConfirmParams) {
         event_type: "member_joined",
         title: "Membro ingressou no grupo",
         message: `${combUser?.name || user_id} ingressou no grupo "${combGroup?.name || group_id}".`,
-        metadata: JSON.stringify({ user_id, group_id, amount: subscriptionAmount, gateway }),
+        metadata: JSON.stringify({ user_id, group_id, amount: paidSubscriptionPart, gateway }),
         created_by: user_id,
       });
 
@@ -413,7 +785,7 @@ export async function confirmPayment(params: ConfirmParams) {
 
           await supabaseAdmin.from("invoices").insert({
             user_id, group_id,
-            amount: subscriptionAmount,
+            amount: storedSubscriptionAmount,
             due_date: nextDue.toISOString().split("T")[0],
             status: "pending",
           });
@@ -459,6 +831,12 @@ export async function confirmPayment(params: ConfirmParams) {
       // assinatura), então o poll do front e o webhook do gateway não
       // mandam dois e-mails — e a renovação do ciclo seguinte também não
       // (a chave é a mesma).
+      // "Recebemos o seu pagamento" (vem antes).
+      await enviarEmailsDoCliente(supabaseAdmin, {
+        user_id, group_id, amount, gateway_payment_id, payment_type: "combined",
+      });
+
+      // "Sua assinatura foi criada" — com a taxa de adesão já paga.
       await notifySubscriptionCreated(supabaseAdmin, {
         userId: user_id,
         groupId: group_id,
@@ -487,8 +865,37 @@ export async function confirmPayment(params: ConfirmParams) {
       const days = custom_cycle_days || subInfo?.custom_cycle_days || null;
       const months = custom_cycle_months || subInfo?.custom_cycle_months || null;
 
+      // ─────────────────────────────────────────────────────────────────────
+      // GRUPO "VIA PARCEIRO" (Pulse Coding)
+      // ─────────────────────────────────────────────────────────────────────
+      // Um grupo importado da Pulse vende PRODUTO com prazo (1 mês, 3 meses,
+      // 12 meses...), não uma vaga em conta compartilhada. Isso muda três
+      // coisas em relação a um grupo normal:
+      //
+      //  1. A assinatura NÃO renova sozinha. `next_charge_at` fica NULL: o
+      //     job de cobrança recorrente filtra por `next_charge_at <= agora`
+      //     e o NULL é excluído pelo PostgREST. Sem isso, o cron cobrararia o
+      //     cliente de novo sem comprar nada na Pulse — porque esse job NÃO
+      //     passa pelo `confirmPayment`.
+      //
+      //  2. O acesso vale pelo período do pacote: renewal_due_at/expires_at
+      //     viram a data de validade. Passada a data, a assinatura fica
+      //     ATRASADA (7 dias de carência) e o cliente renova pelo fluxo
+      //     normal — que dispara uma nova compra na Pulse.
+      //
+      //  3. A compra na Pulse acontece DEPOIS do pagamento, no fim da
+      //     confirmação (ver `processarCompraViaParceiro`).
+      // ─────────────────────────────────────────────────────────────────────
+      const viaParceiro = await resolverViaParceiro(supabaseAdmin, group_id);
+      const viaParceiroAtivo =
+        viaParceiro.viaParceiro &&
+        !!viaParceiro.mapeamento &&
+        viaParceiro.mapeamento.status === "ativo";
+
       let nextChargeAt: Date;
-      if (cycle === "days" && days) {
+      if (viaParceiroAtivo) {
+        nextChargeAt = new Date(instanteValidade(viaParceiro.durationDays));
+      } else if (cycle === "days" && days) {
         nextChargeAt = new Date();
         nextChargeAt.setDate(nextChargeAt.getDate() + days);
       } else {
@@ -505,7 +912,9 @@ export async function confirmPayment(params: ConfirmParams) {
             status: "active",
             gateway_status: "authorized",
             gateway_subscription_id: gateway_payment_id,
-            next_charge_at: nextChargeAt.toISOString(),
+            // Via Parceiro: sem próxima cobrança automática (o produto tem
+            // prazo, e a renovação é manual — ver o bloco acima).
+            next_charge_at: viaParceiroAtivo ? null : nextChargeAt.toISOString(),
             // Pagamento aprovado: vencimento do ciclo = data + ciclo (fonte da
             // verdade da regra de status; nao anda a cada retry).
             renewal_due_at: nextChargeAt.toISOString(),
@@ -516,6 +925,8 @@ export async function confirmPayment(params: ConfirmParams) {
             billing_cycle: cycle,
             custom_cycle_days: days,
             custom_cycle_months: months,
+            // Grupo Via Parceiro: o acesso purchased vale até a data do pacote.
+            expires_at: viaParceiroAtivo ? dataValidade(viaParceiro.durationDays) : undefined,
           })
           .eq("id", subInfo.id);
 
@@ -531,12 +942,13 @@ export async function confirmPayment(params: ConfirmParams) {
           billing_cycle: cycle, amount: amount || grp?.price_per_slot || 0,
           status: "active", gateway: gateway, gateway_subscription_id: gateway_payment_id,
           payment_method: payment_method || null,
-          next_charge_at: nextChargeAt.toISOString(),
+          next_charge_at: viaParceiroAtivo ? null : nextChargeAt.toISOString(),
           renewal_due_at: nextChargeAt.toISOString(),
           billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
           started_at: new Date().toISOString(),
           custom_cycle_days: days,
           custom_cycle_months: months,
+          expires_at: viaParceiroAtivo ? dataValidade(viaParceiro.durationDays) : undefined,
         });
 
         if (insErr) {
@@ -604,6 +1016,12 @@ export async function confirmPayment(params: ConfirmParams) {
         // novo o vínculo é refeito — sem zerar, o membro ficaria com status
         // "ativo" e data de saída preenchida ao mesmo tempo.
         left_at: null,
+        // Até quando o acesso está PAGO. Sem esta data o vínculo não sabe o
+        // período válido e as regras de status (atrasada/cancelada) não têm
+        // como ser calculadas por membro — foi o que deixou gente com
+        // assinatura ativa aparecendo como "Cancelado" na lista do grupo.
+        subscription_deadline: nextChargeAt.toISOString(),
+        updated_at: new Date().toISOString(),
       };
 
       let memberError = null;
@@ -629,7 +1047,7 @@ export async function confirmPayment(params: ConfirmParams) {
 
       // Record payment (with savings tracking)
       const savingsDataSub = await getSavingsData(supabaseAdmin, group_id, gateway_payment_id, amount);
-      const { error: payErr } = await supabaseAdmin.from("payments").insert({
+      const regPagamento = await registrarPagamento(supabaseAdmin, {
         user_id,
         amount,
         official_price: savingsDataSub.official_price,
@@ -643,11 +1061,109 @@ export async function confirmPayment(params: ConfirmParams) {
         notes: "Assinatura recorrente paga",
       });
 
-      if (payErr) {
+      if (!regPagamento.ok) {
         // Sem a linha em `payments` o pagamento nao aparece no billing E a
         // trava de idempotencia nunca dispara (ela le `payments`).
-        console.error("[confirm-payment] pagamento nao registrado:", payErr.message);
-        return { success: false, error: "payments insert failed: " + payErr.message };
+        console.error("[confirm-payment] pagamento nao registrado:", regPagamento.error);
+        return { success: false, error: "payments insert failed: " + regPagamento.error };
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // VIA PARCEIRO (Pulse Coding): compra na Pulse AGORA que o pagamento
+      // está confirmado e registrado.
+      //
+      // A regra que vale aqui: o pedido real na Pulse só existe DEPOIS do
+      // pagamento do meu cliente — nunca antes. E, se a Pulse falhar, a
+      // confirmação do pagamento NÃO pode falhar junto: o cliente pagou e
+      // tem que entrar no grupo de qualquer jeito. A compra fica pendente e
+      // o webhook/polling tenta de novo.
+      // ─────────────────────────────────────────────────────────────────────
+      if (viaParceiroAtivo) {
+        try {
+          const { data: pagamentoRow } = await supabaseAdmin
+            .from("payments")
+            .select("id")
+            .eq("transaction_code", gateway_payment_id)
+            .eq("payment_type", "subscription")
+            .eq("status", "paid")
+            .limit(1)
+            .maybeSingle();
+
+          const { data: comprador } = await supabaseAdmin
+            .from("users")
+            .select("name, email, phone")
+            .eq("id", user_id)
+            .maybeSingle();
+
+          const resultado = await processarCompraViaParceiro(supabaseAdmin, {
+            transaction_code: gateway_payment_id,
+            group_id,
+            user_id,
+            payment_id: pagamentoRow?.id ?? null,
+            amount: Number(amount) || null,
+            customer_name: comprador?.name ?? null,
+            customer_whatsapp: comprador?.phone ?? null,
+          });
+
+          console.log(
+            `[confirm-payment] via parceiro: pedido=${resultado.externalId ?? "-"} status=${resultado.status ?? "-"} ` +
+            `entregas=${resultado.entregaAplicada ?? 0}${resultado.motivo ? ` (${resultado.motivo})` : ""}`,
+          );
+        } catch (pulseErr: any) {
+          // NUNCA derruba a confirmação por causa da Pulse.
+          console.error("[confirm-payment] falha na compra Via Parceiro:", pulseErr?.message ?? pulseErr);
+        }
+      }
+
+      // billing_cycles: a fila de cobrança do PRÓXIMO ciclo.
+      //
+      // Sem esta linha o job de cobrança recorrente não acha o ciclo para
+      // cobrar e a assinatura "renova" só no papel. O polling do navegador
+      // criava essa linha (na sua cópia da confirmação) e o webhook não — o
+      // mesmo pagamento dava um resultado diferente dependendo de por onde
+      // foi confirmado.
+      //
+      // Grupo "Via Pareiro" NÃO entra aqui: o produto tem prazo e a
+      // renovação é manual. Um ciclo pendente faria o job de recorrência
+      // cobrar o cliente de novo sem comprar nada na Pulse.
+      if (!viaParceiroAtivo) {
+      try {
+        const { data: cycleSubRows } = await supabaseAdmin
+          .from("user_subscriptions")
+          .select("id")
+          .eq("group_id", group_id)
+          .eq("user_id", user_id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        const cycleSub = (cycleSubRows && cycleSubRows[0]) || null;
+
+        if (cycleSub?.id) {
+          const { data: existingCycles } = await supabaseAdmin
+            .from("billing_cycles")
+            .select("id")
+            .eq("subscription_id", cycleSub.id)
+            .eq("status", "pending")
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+          if (!existingCycles || existingCycles.length === 0) {
+            const { error: bcErr } = await supabaseAdmin.from("billing_cycles").insert({
+              subscription_id: cycleSub.id,
+              user_id,
+              group_id,
+              amount,
+              charge_date: nextChargeAt.toISOString().split("T")[0],
+              status: "pending",
+              attempt_number: 0,
+            });
+            if (bcErr) {
+              console.error("[confirm-payment] billing_cycles error:", bcErr.message);
+            }
+          }
+        }
+      } catch (bcException: any) {
+        console.error("[confirm-payment] billing_cycles exception:", bcException);
+      }
       }
 
       // Platform event: payment + member_joined
@@ -658,9 +1174,9 @@ export async function confirmPayment(params: ConfirmParams) {
 
       await supabaseAdmin.from("platform_events").insert({
         event_type: "payment",
-        title: "Pagamento de assinatura",
+        title: tituloEvento("Pagamento de assinatura"),
         message: `${subUser?.name || "Usuário"} confirmou assinatura de R$ ${amount.toFixed(2)} no grupo "${subGroup?.name || group_id}" via ${gateway}.`,
-        metadata: JSON.stringify({ user_id, group_id, amount, gateway, payment_type: "subscription", gateway_payment_id, user_name: subUser?.name, group_name: subGroup?.name }),
+        metadata: JSON.stringify({ user_id, group_id, amount, gateway, payment_type: "subscription", gateway_payment_id, user_name: subUser?.name, group_name: subGroup?.name, ...marcaForcado }),
         created_by: user_id,
       });
 
@@ -799,6 +1315,14 @@ export async function confirmPayment(params: ConfirmParams) {
       // branch "combined"). A chave de dedup carrega o `created_at` da
       // assinatura: assinatura nova manda o e-mail, renovação do mesmo
       // ciclo não manda de novo.
+      // "Recebemos o seu pagamento" (vem antes: o cliente primeiro precisa
+      // saber que o dinheiro entrou).
+      await enviarEmailsDoCliente(supabaseAdmin, {
+        user_id, group_id, amount, gateway_payment_id, payment_type: "subscription",
+      });
+
+      // "Sua assinatura foi criada" — o e-mail que fecha o ciclo e diz que ela
+      // já entrou no grupo.
       await notifySubscriptionCreated(supabaseAdmin, {
         userId: user_id,
         groupId: group_id,
@@ -829,7 +1353,7 @@ export async function confirmPayment(params: ConfirmParams) {
       .eq("group_id", group_id)
       .eq("user_id", user_id);
 
-    await supabaseAdmin.from("payments").insert({
+    await registrarPagamento(supabaseAdmin, {
       user_id,
       amount,
       method: normalizePaymentMethod(payment_method),

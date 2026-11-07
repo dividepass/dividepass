@@ -3,14 +3,21 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Loader2, Save, Trash2, Users, DollarSign, Settings, Key,
   CheckCircle, X, AlertTriangle, Eye, EyeOff, Link, Hash, Mail, MessageSquare, CreditCard,
-  TrendingUp, ArrowDownRight, Calendar, QrCode, Info, Receipt, Wallet, Tag
+  TrendingUp, ArrowDownRight, Calendar, QrCode, Info, Receipt, Wallet, Tag, Hourglass,
+  ScrollText,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { simulateAmount, simulatePrice, brl, MIN_PRICE_PER_SLOT } from '../../lib/platformFee';
 import { solicitarSaque } from '../../lib/walletApi';
+import {
+  SUBSCRIPTION_ACTIVE, SUBSCRIPTION_PENDING, isMissingSubscriptionStatusColumn,
+} from '../../lib/groupSubscription';
 import { useAuth } from '../../hooks/useAuth';
 import EmailCodeSearch from '../../components/EmailCodeSearch';
+import ManagedEmailCard from '../../components/ManagedEmailCard';
 import AdsToggle from '../../components/AdsToggle';
+import RuleTypesField from '../../components/group-creation/RuleTypesField';
+import GroupRules from '../../components/GroupRules';
 import {
   PIX_TYPE_OPTIONS, pixTypeLabel, pixTypePlaceholder,
   maskPixKey, unmaskPixKey, remaskPixKey,
@@ -56,6 +63,7 @@ function ManageGroup() {
      true = Com anúncios, false = Sem anúncios, null = Não mostrar. */
   const [hasAds, setHasAds] = useState(null);
   const [hasAdsColumn, setHasAdsColumn] = useState(false);
+  const [activatingSubscription, setActivatingSubscription] = useState(false);
 
   /* Pedido de mudança do preço por vaga — não é uma edição direta: o valor
      passa pela equipe DividePass. */
@@ -92,6 +100,12 @@ function ManageGroup() {
   const [customCycleLabel, setCustomCycleLabel] = useState('');
   const [daysCycleDays, setDaysCycleDays] = useState('');
   const [daysCycleLabel, setDaysCycleLabel] = useState('');
+
+  /* Regrinhas do grupo — o MESMO editor da criação (component
+     RuleTypesField). O dono precisa poder mudar as regrinhas depois que o
+     grupo já existe: por exemplo, acrescentar "sem revenda" quando alguém
+     tentou revender a vaga, ou avisar que o grupo pode mudar as regras. */
+  const [rules, setRules] = useState('');
 
   const PLAN_TYPES = [
     'Conta Individual', 'Conta Padrão', 'Conta Premium', 'Conta VIP',
@@ -138,6 +152,10 @@ function ManageGroup() {
         setDaysCycleLabel(groupData.custom_cycle_days ? (groupData.custom_cycle_label || `${groupData.custom_cycle_days} dias`) : '');
         setPlanTypeCustom(groupData.plan_type_custom || '');
         setCustomPlanActive(!groupData.plan_type && !!groupData.plan_type_custom);
+        /* As regrinhas gravadas (uma por linha) voltam para o editor: o
+           catálogo é reconhecido pelo texto, então o que estava marcado
+           continua marcado e o que foi escrito à mão volta como texto livre. */
+        setRules(groupData.rules || '');
         setPixKey(maskPixKey(groupData.pix_key || '', groupData.pix_type || 'cpf'));
         setPixType(groupData.pix_type || 'cpf');
         /* A coluna `has_ads` só existe depois da migration
@@ -304,6 +322,11 @@ function ManageGroup() {
     ciclosSalvos.length !== availableCycles.length ||
     ciclosSalvos.some(c => !availableCycles.includes(c));
 
+  /* As regrinhas que estão no banco vs. as que estão no editor agora — o
+     botão "Salvar regras" só acende quando algo mudou de verdade. */
+  const regrasSalvas = group?.rules || '';
+  const rulesDirty = regrasSalvas !== rules;
+
   const handleSaveCredentials = async () => {
     setSaving(true);
     setError('');
@@ -444,6 +467,28 @@ function ManageGroup() {
     }
   };
 
+  /* Salva as regrinhas do grupo em `groups.rules` (uma regrinha por linha).
+     O membro vê a lista atualizada no detalhe do grupo, no checkout e na
+     tela de credenciais — não é só um texto do dono. */
+  const handleSaveRules = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const texto = rules.trim();
+      const { error } = await supabase
+        .from('groups')
+        .update({ rules: texto || null })
+        .eq('id', groupId);
+      if (error) throw error;
+      setGroup(prev => ({ ...prev, rules: texto || null }));
+      setToast('Regras do grupo salvas!');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSavePix = async () => {
     if (!hasPixColumn) {
       setError('A coluna pix_key ainda não existe no banco. Aplique a migration database/add-group-pix.sql para gravar a chave.');
@@ -509,7 +554,7 @@ function ManageGroup() {
         `Valor atual: R$ ${atual.toFixed(2).replace('.', ',')}`,
         `Valor pedido: R$ ${valor.toFixed(2).replace('.', ',')}`,
         '',
-        `Nesse valor, a plataforma retém R$ ${sim.platformFee.toFixed(2).replace('.', ',')} (${sim.percent}%) e eu recebo R$ ${sim.net.toFixed(2).replace('.', ',')} por pessoa.`,
+        `Nesse valor, a plataforma retém R$ ${sim.platformFee.toFixed(2).replace('.', ',')} e eu recebo R$ ${sim.net.toFixed(2).replace('.', ',')} por pessoa.`,
         priceReason.trim() ? `\nMotivo: ${priceReason.trim()}` : '',
       ].join('\n');
 
@@ -599,6 +644,39 @@ function ManageGroup() {
     }
   };
 
+  /* O dono Criou o grupo com "Vou Assinar" (assinatura pendente): o grupo
+     nasce em formacao e so abre para os membros quando ele confirma que
+     assinou a conta do servico. */
+  const activateSubscription = async () => {
+    if (!group) return;
+    setActivatingSubscription(true);
+    setError('');
+    try {
+      const { error: updErr } = await supabase
+        .from('groups')
+        .update({ subscription_status: SUBSCRIPTION_ACTIVE, status: 'open' })
+        .eq('id', group.id);
+
+      if (updErr) {
+        // a coluna subscription_status pode nao existir ainda (migration):
+        // abre o grupo mesmo assim, so o status muda.
+        if (isMissingSubscriptionStatusColumn(updErr)) {
+          const retry = await supabase.from('groups').update({ status: 'open' }).eq('id', group.id);
+          if (retry.error) throw retry.error;
+        } else {
+          throw updErr;
+        }
+      }
+
+      setGroup(prev => ({ ...prev, subscription_status: SUBSCRIPTION_ACTIVE, status: 'open' }));
+      setToast('Assinatura confirmada! O grupo está aberto para os membros.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActivatingSubscription(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="loading-state">
@@ -653,6 +731,33 @@ function ManageGroup() {
         <p>{group?.name}</p>
       </div>
 
+      {/* Assinatura pendente: o dono disse que vai assinar quando o grupo
+          fechar. Enquanto isso o grupo fica em formacao. */}
+      {group?.subscription_status === SUBSCRIPTION_PENDING && (
+        <div className="manage-subscription-banner">
+          <Hourglass size={20} />
+          <div className="manage-subscription-text">
+            <strong>Assinatura pendente</strong>
+            <span>
+              {members.length >= (group?.max_size || 0) && group?.max_size > 0
+                ? 'O grupo fechou as vagas. Confirme que você assinou a conta para abrir o grupo para os membros.'
+                : `O grupo fica em formação até você assinar a conta. Vagas preenchidas: ${members.length} de ${group?.max_size || 0}.`}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={activateSubscription}
+            disabled={activatingSubscription}
+          >
+            {activatingSubscription
+              ? <Loader2 size={16} className="spin" />
+              : <CheckCircle size={16} />}
+            Já assinei — abrir o grupo
+          </button>
+        </div>
+      )}
+
       <div className="manage-group-layout">
         <div className="manage-group-main">
           {/* Group Info Card */}
@@ -677,6 +782,11 @@ function ManageGroup() {
               {group?.approval_status === 'approved' && (
                 <span className="manage-approved-badge" title="Aprovado pela equipe">
                   <CheckCircle size={14} /> Aprovado
+                </span>
+              )}
+              {group?.subscription_status === SUBSCRIPTION_ACTIVE && (
+                <span className="manage-approved-badge" title="A conta do serviço já está assinada pelo dono">
+                  <CheckCircle size={14} /> Assinado
                 </span>
               )}
             </div>
@@ -705,6 +815,15 @@ function ManageGroup() {
               </div>
             </div>
           </div>
+
+          {/* E-mail gerenciado pela DividePass (com IA). Aparece quando o grupo
+              tem caixa gerenciada — ou quando o dono pediu e a criacao falhou:
+              nesse caso o card oferece o botao para criar de novo. */}
+          <ManagedEmailCard
+            groupId={groupId}
+            serviceName={service?.name || ''}
+            canProvision={group?.managed_email === true}
+          />
 
           {/* Busca de Código por E-mail — o dono/gestor puxa o código de acesso
               da conta compartilhada direto por aqui. */}
@@ -1033,7 +1152,7 @@ function ManageGroup() {
                     <strong className="sim-charged">R$ {brl(simulacao.price)}</strong>
                   </div>
                   <div className="sim-row">
-                    <span>Valor da plataforma ({simulacao.percent}%)</span>
+                    <span>Valor da plataforma</span>
                     <strong className="sim-fee">R$ {brl(simulacao.platformFee)}</strong>
                   </div>
                   <div className="sim-divider" />
@@ -1223,6 +1342,41 @@ function ManageGroup() {
             <button className="manage-save-btn" onClick={handleSaveCycles} disabled={!cyclesDirty || saving}>
               {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
               Salvar ciclos
+            </button>
+          </div>
+
+          {/* Regras do grupo — o dono muda as regrinhas depois que o grupo
+              foi criado, com o MESMO editor da criação (RuleTypesField).
+              A lista de cima mostra como o membro lê as regrinhas hoje. */}
+          <div className="manage-card">
+            <div className="manage-card-title">
+              <ScrollText size={18} />
+              <h3>Regras do grupo</h3>
+            </div>
+
+            <div className="manage-form-group">
+              <p className="section-desc" style={{ marginBottom: '0.75rem' }}>
+                As regrinhas que o membro precisa respeitar. Escolha os tipos
+                que valem para o grupo e escreva uma só sua, se quiser.
+              </p>
+
+              {regrasSalvas && (
+                <div className="manage-rules-preview">
+                  <span className="manage-rules-preview-title">Como o membro vê hoje</span>
+                  <GroupRules rules={regrasSalvas} />
+                </div>
+              )}
+
+              <RuleTypesField
+                value={rules}
+                onChange={(patch) => setRules(patch?.rules ?? '')}
+                hideLabel
+              />
+            </div>
+
+            <button className="manage-save-btn" onClick={handleSaveRules} disabled={!rulesDirty || saving}>
+              {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+              Salvar regras
             </button>
           </div>
 
@@ -1457,7 +1611,7 @@ function ManageGroup() {
                     <strong className="sim-charged">R$ {brl(simulacaoNovo.price)}</strong>
                   </div>
                   <div className="sim-row">
-                    <span>Valor da plataforma ({simulacaoNovo.percent}%)</span>
+                    <span>Valor da plataforma</span>
                     <strong className="sim-fee">R$ {brl(simulacaoNovo.platformFee)}</strong>
                   </div>
                   <div className="sim-divider" />
@@ -1533,16 +1687,29 @@ function ManageGroup() {
             </div>
 
             <div className="modal-body">
+              {/* O erro precisa aparecer DENTRO do modal: a exclusão bloqueada
+                  (grupo com pagamento confirmado) mantém o modal aberto, e o
+                  banner da página fica atrás da sobreposição. */}
+              {error && (
+                <div className="modal-alert">
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>Não foi possível excluir agora</strong>
+                    <span>{error}</span>
+                  </div>
+                </div>
+              )}
+
               {pagadores > 0 ? (
                 <div className="modal-alert">
                   <AlertTriangle size={18} />
                   <div>
                     <strong>{pagadores} pessoa(s) já pagaram neste grupo</strong>
                     <span>
-                      Total recebido: R$ {brl(totalRecebido)}. Todos os membros serão
-                      notificados, as assinaturas ativas serão canceladas e a equipe
-                      DividePass recebe o pedido para remover os membros e acertar os
-                      valores com quem pagou.
+                      Total recebido: R$ {brl(totalRecebido)}. Como há dinheiro
+                      recebido, a exclusão é feita pela equipe DividePass: ao
+                      confirmar, abrimos um chamado, a equipe remove os membros,
+                      cancela as assinaturas e acerta os valores com quem pagou.
                     </span>
                   </div>
                 </div>
@@ -1561,7 +1728,14 @@ function ManageGroup() {
               )}
 
               <ul className="modal-list">
-                <li>Todos os membros e assinaturas do grupo são removidos.</li>
+                {pagadores > 0 ? (
+                  <li>
+                    A exclusão é encaminhada para a equipe DividePass, que também
+                    acerta os valores de quem pagou.
+                  </li>
+                ) : (
+                  <li>Todos os membros e assinaturas do grupo são removidos.</li>
+                )}
                 <li>As credenciais de acesso do serviço são apagadas.</li>
                 <li>O grupo não pode ser recuperado depois.</li>
               </ul>
@@ -1594,7 +1768,7 @@ function ManageGroup() {
                 disabled={deleting || deleteConfirmText.trim() !== (group?.name || '')}
               >
                 {deleting ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
-                Deletar grupo
+                {pagadores > 0 ? 'Pedir encerramento' : 'Deletar grupo'}
               </button>
             </div>
           </div>

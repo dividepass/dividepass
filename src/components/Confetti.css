@@ -1,0 +1,29 @@
+/* Confete — camada descartável, sem clique e sem rolagem. */
+.confetti-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: 0;
+  display: block;
+  border-radius: 2px;
+  will-change: transform, opacity;
+}
+
+.confetti-piece.is-round {
+  border-radius: 50%;
+}
+
+/* Overlay de tela cheia: cadastro e onboarding. */
+.confetti-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  overflow: hidden;
+  pointer-events: none;
+}

@@ -1,0 +1,201 @@
+/* ==========================================================================
+   Card de convite do Grupo Oficial da DividePass no WhatsApp
+   --------------------------------------------------------------------------
+   Fica no dashboard, acima do card de feedback. A ideia é chamar atenção:
+   fundo no verde oficial do WhatsApp, ícone da marca em destaque e um botão
+   branco (máximo contraste sobre o verde) com a chamada principal.
+   ========================================================================== */
+
+.wa-group-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+  padding: 1.25rem 1.4rem;
+  border-radius: 1.1rem;
+  background:
+    radial-gradient(circle at 88% -10%, rgba(37, 211, 102, 0.3), transparent 55%),
+    linear-gradient(135deg, #0a4f2b 0%, #0d6b34 42%, #12803f 100%);
+  border: 1px solid rgba(37, 211, 102, 0.55);
+  box-shadow: 0 20px 42px -22px rgba(9, 94, 49, 0.95);
+  color: #fff;
+}
+
+/* Marca d'água da marca: preenche o lado direito do card sem competir
+   com o texto (fica em 8% de opacidade). */
+.wa-group-watermark {
+  position: absolute;
+  top: 50%;
+  right: -18px;
+  transform: translateY(-50%) rotate(-12deg);
+  color: #fff;
+  opacity: 0.09;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Brilhos decorativos no fundo do card. */
+.wa-group-glow {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.wa-group-glow-a {
+  top: -60px;
+  right: -40px;
+  width: 200px;
+  height: 200px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.18) 0%, transparent 70%);
+}
+
+.wa-group-glow-b {
+  bottom: -80px;
+  left: -50px;
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(circle, rgba(37, 211, 102, 0.35) 0%, transparent 70%);
+}
+
+/* Ícone oficial do WhatsApp dentro de um bloco de vidro. */
+.wa-group-icon {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
+  box-shadow: 0 12px 24px -14px rgba(0, 0, 0, 0.75);
+}
+
+/* Anel pulsando — é o que puxa o olho para o ícone. */
+.wa-group-icon::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  animation: wa-group-pulse 2.4s ease-out infinite;
+}
+
+@keyframes wa-group-pulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.85;
+  }
+  70% {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+}
+
+.wa-group-body {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+}
+
+.wa-group-title {
+  display: block;
+  font-size: 1.08rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+
+.wa-group-desc {
+  margin: 0.3rem 0 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* Botão branco sobre o verde: é o ponto de maior contraste do card. */
+.wa-group-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  padding: 0.75rem 1.3rem;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #0f7a43;
+  font-size: 0.92rem;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 0 12px 26px -14px rgba(0, 0, 0, 0.7);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.wa-group-btn:hover {
+  transform: translateY(-2px);
+  background: #f2fff7;
+  color: #0b5c31;
+  box-shadow: 0 18px 32px -14px rgba(0, 0, 0, 0.8);
+}
+
+.wa-group-btn svg {
+  flex-shrink: 0;
+}
+
+.wa-group-btn-arrow {
+  transition: transform 0.18s ease;
+}
+
+.wa-group-btn:hover .wa-group-btn-arrow {
+  transform: translateX(3px);
+}
+
+@media (max-width: 640px) {
+  .wa-group-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.9rem;
+    padding: 1.1rem 1.15rem;
+  }
+
+  .wa-group-watermark {
+    display: none;
+  }
+
+  .wa-group-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Quem pede menos movimento não recebe pulso nem levitação. */
+@media (prefers-reduced-motion: reduce) {
+  .wa-group-icon::after {
+    animation: none;
+  }
+
+  .wa-group-btn,
+  .wa-group-btn-arrow {
+    transition: none;
+  }
+
+  .wa-group-btn:hover {
+    transform: none;
+  }
+
+  .wa-group-btn:hover .wa-group-btn-arrow {
+    transform: none;
+  }
+}

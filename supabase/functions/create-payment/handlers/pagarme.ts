@@ -234,7 +234,10 @@ export default async function handlePagarMe(req: Request, ctx: HandlerContext) {
       const txId = txData.id;
       const lastTx = txData.last_transaction || {};
 
-      await supabaseAdmin.from("group_members").update({ status: "active", payment_status: "active" }).eq("group_id", group_id).eq("user_id", user_id);
+      // NÃO marcar o vínculo como "active" aqui: a ordem ainda não foi paga.
+      // Esse estado mentiroso fazia o polling responder "já confirmei" sem
+      // liberar o grupo (o cliente pagava e a assinatura ficava pendente).
+      // Quem ativa o vínculo é a confirmação do pagamento.
 
       let pixQrBase64 = null;
       let pixCopyPaste = null;

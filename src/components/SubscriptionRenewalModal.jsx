@@ -12,7 +12,7 @@ import './SubscriptionRenewalModal.css';
 const SUPABASE_URL = supabase.supabaseUrl;
 const SUPABASE_ANON_KEY = supabase.supabaseKey;
 
-const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe'];
+const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe', 'woovi'];
 const GATEWAYS_WITH_CARD = ['iopay', 'pagarme'];
 
 const formatCurrency = (value) =>
@@ -165,10 +165,24 @@ export default function SubscriptionRenewalModal({
     return () => { cancelled = true; };
   }, [open, subscription?.group_id]);
 
-  /* Gateway ativo — define os métodos disponíveis. */
+  /* Gateway da ASSINATURA — define os métodos disponíveis.
+   *
+   * Uma renovação NÃO troca de gateway: a assinatura já tem um
+   * `gateway_subscription_id` no gateway original e, se o gateway mudasse
+   * agora, ficariam DUAS cobranças vivas (a antiga no gateway antigo e a
+   * nova no gateway novo). Então aqui vale o gateway que a assinatura já
+   * usa; o `active_gateway` só é o plano B (assinatura sem gateway salvo).
+   *
+   * No servidor a mesma regra é aplicada — o `create-payment` lê o gateway
+   * da assinatura quando `renewal: true` e ignora o que o navegador manda. */
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+    const daAssinatura = subscription?.gateway;
+    if (daAssinatura) {
+      setGateway(daAssinatura);
+      return () => { cancelled = true; };
+    }
     supabase
       .from('app_settings')
       .select('value')
@@ -179,7 +193,7 @@ export default function SubscriptionRenewalModal({
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [open]);
+  }, [open, subscription?.gateway]);
 
   /* Cartões salvos — só quando o gateway aceita cartão.
      A listagem da IOPay é um GET: enviar POST cai no branch de acoes da

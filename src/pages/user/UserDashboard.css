@@ -487,6 +487,77 @@
   margin-bottom: 3rem;
 }
 
+/* ══ Topo do dashboard: saudação + Grupo VIP ═════════════════════════
+   O card do WhatsApp era um bloco grande no meio da tela. Virou um botão
+   compacto no cabeçalho — o verde oficial do WhatsApp continua sendo a única
+   exceção de cor do dashboard (o resto é roxo), então o clique continua
+   instantaneamente reconhecível. */
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.dashboard-header h1 {
+  margin-bottom: 0;
+}
+
+.whatsapp-vip-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  padding: 0.55rem 0.95rem;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 88% 10%, rgba(255, 255, 255, 0.2), transparent 45%),
+    linear-gradient(135deg, #0f7a43 0%, #17a94e 45%, #25d366 100%);
+  border: 1px solid rgba(37, 211, 102, 0.5);
+  box-shadow: 0 12px 26px -14px rgba(15, 122, 67, 0.85);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.whatsapp-vip-chip:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 32px -14px rgba(15, 122, 67, 0.95);
+  color: #fff;
+}
+
+.whatsapp-vip-chip svg {
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  /* No celular o cabeçalho empilha: saudação em cima, Grupo VIP em largura
+     total abaixo (alvo de toque grande, e o verde chama o olho). */
+  .dashboard-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+    margin-bottom: 1rem;
+  }
+
+  .whatsapp-vip-chip {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .whatsapp-vip-chip {
+    padding: 0.45rem 0.75rem;
+    font-size: 0.78rem;
+  }
+}
+
 /* Feedback CTA — convite para o usuário sugerir o que falta na plataforma */
 .feedback-cta-card {
   display: flex;
@@ -3361,6 +3432,12 @@
   .savings-collapsed-card:hover,
   .dashboard-category-pill:hover,
   .install-app-btn:hover {
+    transform: none !important;
+    transition: none !important;
+  }
+
+  /* Grupo VIP: sem levitar para quem pede menos movimento. */
+  .whatsapp-vip-chip:hover {
     transform: none !important;
     transition: none !important;
   }

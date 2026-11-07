@@ -3,7 +3,10 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './contexts/AuthProvider';
 import { AppDataProvider } from './contexts/AppDataContext';
 import { ProtectedRoute, PublicRoute } from './components/ProtectedRoute';
+import AvatarGate from './components/AvatarGate';
 import ErrorBoundary from './components/ErrorBoundary';
+import { TooltipProvider } from './components/ui/tooltip';
+import { Toaster } from './components/ui/sonner';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -21,6 +24,8 @@ import UserDashboard from './pages/user/UserDashboard';
 import OnboardingPage from './pages/user/OnboardingPage';
 import Catalog from './pages/user/Catalog';
 import MyCredentials from './pages/user/MyCredentials';
+// Entregas da revenda (Pulse Coding): a conta que o cliente comprou.
+import MyDeliveries from './pages/user/MyDeliveries';
 import Billing from './pages/user/Billing';
 import Checkout from './pages/user/Checkout';
 import CheckoutLink from './pages/public/CheckoutLink';
@@ -56,6 +61,7 @@ import GroupForm from './pages/admin/GroupForm';
 import Support from './pages/admin/Support';
 import AdminTicketDetail from './pages/admin/AdminTicketDetail';
 import Announcements from './pages/admin/Announcements';
+import SponsoredOffers from './pages/admin/SponsoredOffers';
 import InterestList from './pages/admin/InterestList';
 import Settings from './pages/admin/Settings';
 import AdminWallets from './pages/admin/Wallets';
@@ -75,6 +81,9 @@ import ServicePlans from './pages/admin/ServicePlans';
 import Expenses from './pages/admin/Expenses';
 import Evolution from './pages/admin/Evolution';
 import EmailManagement from './pages/admin/EmailManagement';
+// Pulse Coding (revenda): catálogo importado + pedidos
+import PulseCatalog from './pages/admin/PulseCatalog';
+import PulseOrderDetail from './pages/admin/PulseOrderDetail';
 
 // Pesquisa (public)
 import Pesquisa from './pages/user/Pesquisa';
@@ -91,7 +100,14 @@ function App() {
     <AuthProvider>
       <AppDataProvider>
         <Router>
+          {/* TooltipProvider: exigido pelo Radix Tooltip (delay 0 para
+              resposta imediata). */}
+          <TooltipProvider>
           <ErrorBoundary>
+          {/* Avatar obrigatório: entra antes das rotas para cobrir QUALQUER
+              página logo após o login (inclusive a home e o onboarding).
+              O gate em si só aparece para quem ainda não tem avatar. */}
+          <AvatarGate />
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
@@ -100,6 +116,9 @@ function App() {
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/payment/return" element={<PaymentReturn />} />
             <Route path="/checkout/:groupSlug" element={<Checkout />} />
+            {/* Checkout V2 — o de TESTE da integração Woovi. O /checkout acima
+                continua exatamente como está (é o que está em produção). */}
+            <Route path="/v2/checkout/:groupSlug" element={<Checkout variante="v2" />} />
             <Route path="/checkout-link/:referenceCode" element={<CheckoutLink />} />
             <Route path="/pesquisa/:slug" element={<Pesquisa />} />
 
@@ -118,8 +137,12 @@ function App() {
               <Route path="catalog" element={<Catalog />} />
               <Route path="catalog/:serviceId" element={<Catalog />} />
               <Route path="checkout/:groupSlug" element={<Checkout />} />
+              {/* Checkout V2 (teste) — mesma tela, mas com a divisão de
+                  gateway por método. */}
+              <Route path="v2/checkout/:groupSlug" element={<Checkout variante="v2" />} />
               <Route path="credentials" element={<MyCredentials />} />
               <Route path="credentials/:serviceId" element={<ServiceCredentials />} />
+              <Route path="entregas" element={<MyDeliveries />} />
               <Route path="billing" element={<Billing />} />
               <Route path="wallet" element={<Wallet />} />
               <Route path="my-cards" element={<MyCards />} />
@@ -146,7 +169,10 @@ function App() {
             <Route path="users/:userId" element={<UserDetail />} />
             <Route path="platforms" element={<Platforms />} />
             <Route path="platforms/new" element={<PlatformForm />} />
-            <Route path="platforms/:platformId/edit" element={<PlatformForm />} />
+            {/* A plataforma é identificada pelo SLUG na URL (netflix, spotify);
+                o id uuid continua valendo para links antigos. */}
+            <Route path="platforms/:platformKey/new" element={<PlatformForm />} />
+            <Route path="platforms/:platformKey/edit" element={<PlatformForm />} />
             <Route path="subscriptions" element={<Subscriptions />} />
             <Route path="subscriptions/:id/edit" element={<SubscriptionEdit />} />
             <Route path="groups" element={<Navigate to="/admin/platforms" replace />} />
@@ -155,6 +181,7 @@ function App() {
             <Route path="support" element={<Support />} />
             <Route path="support/:ticketId" element={<AdminTicketDetail />} />
             <Route path="announcements" element={<Announcements />} />
+            <Route path="sponsored-offers" element={<SponsoredOffers />} />
             <Route path="interest" element={<InterestList />} />
             <Route path="wallets" element={<AdminWallets />} />
             <Route path="settings" element={<Settings />} />
@@ -175,6 +202,10 @@ function App() {
             <Route path="expenses" element={<Expenses />} />
             <Route path="evolution" element={<Evolution />} />
             <Route path="emails" element={<EmailManagement />} />
+            {/* Pulse Coding: o detalhe do pedido é PÁGINA com id na URL
+                (nunca drawer), para o operador saber onde está. */}
+            <Route path="pulse" element={<PulseCatalog />} />
+            <Route path="pulse/pedidos/:id" element={<PulseOrderDetail />} />
             </Route>
 
             {/* Platform SEO pages - any single-segment path matches here */}
@@ -183,6 +214,11 @@ function App() {
             <Route path="*" element={<NotFound />} />
           </Routes>
           </ErrorBoundary>
+          {/* Toasts: fica fora do ErrorBoundary para que uma falha em uma
+              tela nao derrube as notificacoes. O tema segue o atributo
+              `data-theme` do app (ver `useAppTheme`). */}
+          <Toaster position="top-right" richColors closeButton />
+          </TooltipProvider>
         </Router>
       </AppDataProvider>
     </AuthProvider>

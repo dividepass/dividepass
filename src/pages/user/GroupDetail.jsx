@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { logPlatformEvent } from '../../lib/platformEventLogger';
 import GroupTags from '../../components/GroupTags';
+import GroupRules from '../../components/GroupRules';
 import './GroupDetail.css';
 
 const CYCLE_LABELS = {
@@ -282,11 +283,7 @@ function GroupDetail() {
             {group?.rules && (
               <>
                 <h3>Regrinhas</h3>
-                <div className="gd-rules">
-                  {group.rules.split('\n').map((rule, i) => (
-                    <p key={i}>{rule}</p>
-                  ))}
-                </div>
+                <GroupRules rules={group.rules} />
               </>
             )}
 

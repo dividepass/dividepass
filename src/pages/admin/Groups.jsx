@@ -17,6 +17,7 @@ import {
   Shield
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import GroupRules from '../../components/GroupRules';
 import InterestList from './InterestList';
 import './Groups.css';
 
@@ -82,7 +83,12 @@ function Groups() {
   }, []);
 
   const handleDelete = async (id) => {
-    if (!confirm('Tem certeza que deseja excluir este grupo?')) return;
+    const ok = confirm(
+      'Excluir este grupo?\n\n' +
+      'Os membros são notificados e as assinaturas ativas são canceladas.\n' +
+      'Os pagamentos já feitos continuam registrados no painel para o acerto com quem pagou.'
+    );
+    if (!ok) return;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-group`, {
@@ -447,7 +453,8 @@ function Groups() {
                   </div>
                   {group.rules && (
                     <div className="pending-group-rules">
-                      <strong>Regras:</strong> {group.rules}
+                      <strong>Regras:</strong>
+                      <GroupRules rules={group.rules} />
                     </div>
                   )}
                   <div className="pending-group-actions">

@@ -1716,6 +1716,432 @@ continua funcionando.
 
 ---
 
+## 18. Catálogo: recomendados, ofertas patrocinadas, lista de espera e votos (2026-10-30)
+
+Rodada que abre uma **fonte de receita** (espaço patrocinado no catálogo) e
+melhora a descoberta de serviço no dashboard.
+
+### O que entrou no dashboard (nesta ordem)
+
+1. **Topo: saudação + Grupo VIP** — o card do WhatsApp subiu para o cabeçalho
+   e virou um botão compacto ("Entre no Grupo VIP 💜"). A frase "Escolha um
+   serviço no catálogo para começar." saiu.
+2. **Recomendados para você** (`RecommendedServices`) — faixa compacta em
+   scroll horizontal, logo acima de "Grupos disponíveis para assinar", com as
+   frases "Encontre mais. Pague menos." e "Descubra serviços digitais que
+   combinam com você." **As ofertas patrocinadas entram no MEIO dessa faixa.**
+3. Grupos disponíveis para assinar (já existia)
+4. **Ofertas e oportunidades** (`OpportunitiesSection`) — "Novas vagas",
+   "Ofertas de parceiros" e "Alternativas para economizar"
+5. **O que você gostaria de compartilhar?** (`InterestPollCard`) — voto de
+   interesse por serviço
+
+No **catálogo** (`/dashboard/catalog`), as ofertas patrocinadas entram no topo,
+antes da busca e do grid de serviços.
+
+### A faixa compacta do topo (2ª revisão do mesmo dia)
+
+A primeira versão do "Recomendados" era um **grid de cards grandes** com logo,
+nome, motivo ("Você já usa"), "3 grupos • 4 vagas" e "Ver grupos". No celular
+isso comia a tela inteira e empurrava tudo para baixo.
+
+Virou **uma faixa horizontal**: cada item é só **logo + nome**, o motivo virou
+tooltip (`title`) e a faixa rola com o polegar (sem barra visível). As ofertas
+patrocinadas entram **no meio** da mesma faixa, com:
+
+- borda laranja + halo (`offer-glow`) e um brilho que atravessa no hover;
+- selo "Patrocinado" (curto: um badge longo como "Oferta em destaque" vazava
+  por cima do vizinho);
+- **sem duplicar**: se o serviço patrocinado também é recomendado, o chip
+  comum sai e só fica a versão com destaque.
+
+O bloco grande de "Ofertas patrocinadas" saiu do **dashboard** (continua no
+**catálogo**, que é onde o anúncio tem espaço para o texto completo). No
+dashboard, o detalhe do anúncio continua em "Ofertas e evidências →
+Ofertas de parceiros".
+
+O `placement` padrão no admin passou para `both` (catálogo **e** faixa do
+dashboard): quem paga quer ser visto nos dois lugares.
+
+O cabeçalho do dashboard ganhou a classe `.dashboard-header` — antes ele
+dependia de uma regra global de `.page-header` que vinha de outra folha
+(`Support.css`) e não é garantida aqui.
+
+### As duas tabelas novas
+
+`database/add-sponsored-offers.sql`:
+
+- **`sponsored_offers`** — o espaço que se vende. Guarda o quê (serviço e/ou
+  grupo), quem patrocinou, o texto do anúncio, onde ele aparece
+  (`catalog` | `recommendation` | `both`), o período, o valor pago e as
+  métricas de clique. A policy de leitura pública só devolve o que está
+  `active` **e** dentro do período — o filtro acontece no banco, não no front.
+- **`service_votes`** — o voto de "O que você gostaria de compartilhar?".
+  `UNIQUE (user_id, service_id)`: um voto por pessoa por serviço.
+
+Mais duas views: `service_vote_counts` (total por serviço) e
+`service_watchlist` (quem espera vaga em cada serviço).
+
+### A lista de espera não é uma tabela nova
+
+"Avise-me quando houver uma vaga" **reaproveita `group_interest`** — a mesma
+tabela que o admin já acompanha em "Lista de espera". Consequência prática:
+a lista de espera e o "queria um grupo novo" do modal do catálogo são o
+mesmo dado, e não existe o risco de as duas listas divergirem.
+
+`group_interest` é `UNIQUE (service_id, user_id)`, então "entrar na lista" e
+"avisar quando abrir vaga" são a mesma linha.
+
+### "Recomendados para você": a ordem é explicável
+
+`buildRecommendations` (`src/lib/catalogEngagement.js`) pontua cada serviço e
+**carrega o motivo** de cada indicação. Pesos:
+
+| Sinal | Peso |
+|---|---|
+| Interesse do onboarding (`current`) | +6 |
+| Interesse do onboarding (`interested`) | +5 |
+| Lista de espera (avisar quando abrir vaga) | +4 |
+| Voto em "o que gostaria de compartilhar" | +3 |
+| Oferta patrocinada ativa | +4 |
+| Tem grupo com vaga | +3 |
+| Categoria que a pessoa já assina | +2 |
+| Popularidade (grupos) | até +3 |
+
+Serviço que a pessoa **já assina** sai da lista. O motivo aparece como chip
+no card ("Você já usa", "Você pediu aviso de vaga", "Oferta de parceiro"…).
+
+A lista de espera pesa mais que o voto de propósito: "me avisa quando abrir"
+é uma intenção mais forte do que "gostei desse".
+
+### "Ofertas patrocinadas": onde o dinheiro entra
+
+O admin registra a venda em `/admin/sponsored-offers` (menu **Plataforma →
+Ofertas patrocinadas**): serviço e/ou grupo, patrocinador, título, descrição,
+selo, link, banner, posição, valor pago, período, prioridade e status.
+
+O efeito no app é duplo, e é esse o motor de receita:
+
+1. o serviço aparece **no topo do catálogo** (e dentro de "Ofertas e
+   oportunidades");
+2. o serviço e os grupos de quem patrocinou **sobem nos "Recomendados"**
+   (`boostServiceIds`).
+
+Ou seja: quem paga, aparece — e o grupo do patrocinador é recomendando junto.
+
+O valor pago é **registro comercial**, não processamento de pagamento: a
+tabela não cobra ninguém.
+
+### O aviso de vaga (edge function)
+
+`supabase/functions/notify-service-watchers` — quando um grupo é aprovado
+(`Platforms.jsx`) ou criado pelo admin (`GroupForm.jsx`), dispara o aviso
+para quem está na lista de espera daquele serviço. Reaproveita
+`dispatchNotification` de `_shared/send-notification.ts` com
+`audience: { type: 'users', user_ids: [...] }` — ou seja, in-app + push.
+
+Quem já tem o serviço não recebe o aviso. O chamador precisa ser admin ou o
+dono do grupo.
+
+### Degradação: as telas não quebram antes da migration
+
+Toda leitura nova trata **PGRST205** (tabela inexistente) como "vazio", e
+não como erro. Consequência: **a migration pode ser aplicada depois do
+deploy** sem quebrar ninguém. Se a tabela não existir:
+
+- as ofertas patrocinadas simplesmente não aparecem;
+- o card de votação não aparece (não há votos nem fila contável);
+- "Recomendados para você" e "Ofertas e oportunidades" funcionam normal,
+  porque usam tabelas que já existem.
+
+### Estado compartilhado sem requisição duplicada
+
+`src/hooks/useEngagement.js` é um store de módulo (com `useSyncExternalStore`)
+que carrega votos, lista de espera, interesses e ofertas **uma vez** para os
+vários componentes que precisam dos mesmos dados — sem 4x a mesma consulta.
+
+A atualização é **otimista** (o botão responde na hora) com rollback se a
+gravação falhar.
+
+### Verificação
+
+- `node .tmp-verify/test-engagement.mjs` — **25/25**: pesos da
+  recomendação, ordem dos candidatos do voto, cálculo de vagas, economia
+  (plano ativo mais barato), e o comportamento com dados reais do banco.
+- `node .tmp-verify/visual-engagement.mjs` — **30/30**: as quatro seções
+  aparecem no dashboard **na ordem pedida**, as duas frases de efeito estão
+  lá, o catálogo tem o bloco patrocinado no topo, o botão de aviso de vaga
+  alterna de estado gravando em `group_interest`, a tela do admin lista a
+  oferta com valor e período, não há estouro horizontal em 390px e não há
+  erro de console.
+- `node .tmp-verify/visual-faixa-topo.mjs` — **29/29** (faixa compacta): a
+  frase "Escolha um serviço no catálogo para começar." saiu, o card do WhatsApp
+  está no topo com "Entre no Grupo VIP 💜" (o antigo saiu), o grid antigo de
+  recomendados não existe mais, cada item da faixa tem **só logo + nome**
+  (sem "grupos"/"vagas"/"Ver grupos"), a faixa rola na horizontal, o item
+  patrocinado fica **no meio**, tem selo e efeito animado (`offer-glow`), a
+  seção inteira ficou com menos de 260px de altura, e no celular (390px) não
+  há estouro de página e os itens encolhem.
+
+Como as tabelas novas ainda não existem no banco, o script **intercepta as
+respostas REST** de `sponsored_offers` / `service_votes` e devolve dados de
+exemplo — o componente, o CSS e o caminho de código são os reais.
+
+A conta de teste criada para a verificação foi **excluída** ao final (edge
+function `delete-account`; confirmado com `GET /auth/v1/user` → 403
+`user_not_found`). A linha de `group_interest` dessa conta ficou órfã porque
+a função **deployada** é a versão antiga — por isso a limpeza está no
+`database/apply-pending-2026-10-30.sql` (ver o bug de FK acima).
+
+### Bug de FK descoberto na verificação: `group_interest` x re-cadastro
+
+Ao criar a conta de teste da rodada anterior, o cadastro voltou:
+
+```
+23503: update or delete on table "users" violates foreign key
+       constraint "group_interest_user_id_fkey" on table "group_interest"
+```
+
+A causa não é a lista de espera: é o trigger `public.handle_new_user()`, que
+faz `UPDATE public.users SET id = NEW.id WHERE email = ...` — ele **troca a
+chave primária** do profile no re-cadastro. Toda FK que aponta para
+`users(id)` precisa de `ON UPDATE CASCADE` (o `ON DELETE CASCADE` do
+`group_interest` **não** cobre update de id). Sem isso, qualquer conta que
+tenha ficado na lista de espera (ou em qualquer outra tabela filha de
+`users`) não consegue mais se cadastrar de novo com o mesmo e-mail.
+
+Dois problemas se somaram:
+
+1. a edge function `delete-account` **deployada** era uma versão antiga, que
+   não limpava `group_interest` antes de apagar o profile — então o
+   `DELETE FROM public.users` falhava por FK e a exclusão terminava em
+   silêncio (o auth sumia, o profile e a lista de espera ficavam);
+2. a FK do `group_interest` não tinha `ON UPDATE CASCADE`.
+
+O **código** da `delete-account` já foi corrigido (limpa `group_interest` e
+`service_votes` antes do profile e **falha alto** com 500 se o profile não
+sair). O que falta é o deploy.
+
+O conserto no banco está pronto em
+**`database/apply-pending-2026-10-30.sql`** (um único paste no SQL Editor):
+
+1. limpa as 2 contas de teste órfãs (filhas + profile);
+2. recria **todas** as FKs que apontam para `users(id)` com
+   `ON UPDATE CASCADE`, preservando o `ON DELETE` original de cada uma;
+3. aplica a migration das ofertas patrocinadas.
+
+### Arquivos tocados nesta rodada
+
+Novos:
+
+- `database/add-sponsored-offers.sql`
+- `database/apply-pending-2026-10-30.sql`
+- `src/lib/catalogEngagement.js`
+- `src/hooks/useEngagement.js`
+- `src/components/SponsoredOffers.jsx`
+- `src/components/RecommendedServices.jsx`
+- `src/components/OpportunitiesSection.jsx`
+- `src/components/InterestPollCard.jsx`
+- `src/components/WatchlistButton.jsx`
+- `src/components/ServiceLogo.jsx`
+- `src/components/engagement.css`
+- `src/pages/admin/SponsoredOffers.jsx` + `.css`
+- `supabase/functions/notify-service-watchers/index.ts`
+
+Modificados: `src/App.jsx` (rota), `src/pages/admin/AdminLayout.jsx` (menu),
+`src/pages/user/UserDashboard.jsx` (seções), `src/pages/user/Catalog.jsx`
+(ofertas no topo + alerta de vaga), `src/pages/user/Catalog.css`,
+`src/pages/admin/Platforms.jsx` e `src/pages/admin/GroupForm.jsx` (chamada
+da edge function), `supabase/config.toml` (registro da função).
+
+### Bug do card de votação invisível (achado no smoke test de produção)
+
+No primeiro deploy, o card "O que você gostaria de compartilhar?" **não
+aparecia em produção** — mas aparecia na verificação local. Motivo:
+`fetchInterestCounts` lia a tabela base `group_interest`, e o **RLS entrega
+só as linhas do próprio usuário**. Então "ninguém na fila" significava
+"ninguém **que eu possa ver** na fila" — e como o card só aparece quando há
+voto ou fila, ele nascia invisível para quem não estava na fila de ninguém.
+Como ninguém via o card, ninguém votava, e ele continuava invisível.
+
+A correção é ler a **view `service_watchlist`** (uma linha por pessoa na
+fila), que é pública para autenticados — o mesmo caminho que
+`service_vote_counts` já usava para os votos. No banco de produção há **24
+pessoas na fila**, então o card passa a aparecer para todo mundo.
+
+> A verificação local não pegou isso porque o script de visual intercepta a
+> resposta REST de `service_vote_counts` e devolve votos de exemplo — o mock
+> mascarava o problema. O smoke test contra o site publicado (dados reais)
+> que expôs.
+
+> Nota de privacidade: `service_watchlist` é uma view do Postgres e, sem
+> `security_invoker`, ela **ignora o RLS da tabela base** — por isso dá para
+> ler as 24 linhas até com a anon key. Ela só expõe `service_id`, `user_id` e
+> `since` (nenhum dado pessoal), mas vale saber.
+
+### Deploy (2026-10-30)
+
+**Front publicado em produção** pela Vercel (o caminho real está em
+`DEPLOYMENT.md`, seção "Option 1b"):
+
+- produção: **https://dividepass.com** (alias), build
+  `https://dividepass-8y2yzfmjn-divide-pass.vercel.app`;
+- build do lado da Vercel: 2041 módulos, verde;
+- conferido no bundle em produção: "Recomendados para você", "Entre no Grupo
+  VIP", "Ofertas e oportunidades", "O que você gostaria de compartilhar?",
+  "Patrocinado", rota `admin/sponsored-offers`, `@keyframes offer-glow`,
+  `.highlight-strip`, `.highlight-chip--offer`, `.opp-grid`, `.sf-footer`
+  (rodapé) — tudo presente;
+- rotas `/login`, `/dashboard`, `/dashboard/catalog`,
+  `/dashboard/my-groups/create`, `/admin/sponsored-offers`, `/admin/groups/new`
+  respondem 200.
+
+**Smoke test contra o site publicado** (`node .tmp-verify/visual-producao.mjs`
+— 14/14): cria conta descartável, confere o topo novo no dashboard real,
+mede o estouro horizontal em 390px, confere que não há erro de console e
+**apaga a conta no fim** (`GET /auth/v1/user` → 403 `user_not_found`).
+
+> O script **não** interage com a lista de espera de propósito: a edge
+> function `delete-account` deployada ainda é a versão antiga e deixaria
+> órfão em `group_interest`. Depois do deploy dela, a limpeza do
+> `apply-pending-2026-10-30.sql` resolve.
+
+A árvore continua **sem commit** (a Vercel compila o que está no disco).
+
+### Pendente para o movimento
+
+1. **Aplicar o SQL do banco**: cole `database/apply-pending-2026-10-30.sql`
+   inteiro no SQL Editor do Supabase (projeto `lasoouwboxspstqvjbsv`). Ele
+   aplica a migration `add-sponsored-offers.sql` **e** corrige as FKs de
+   `users(id)` com `ON UPDATE CASCADE` (sem isso o re-cadastro de quem está
+   na lista de espera fica quebrado). É idempotente.
+2. **Deploy das edge functions**: `notify-service-watchers` (nova — sem ela o
+   aviso de vaga não sai, o botão salvar funciona) **e** `delete-account`
+   (corrigida — limpa a lista de espera antes de apagar o profile e falha
+   alto em vez de excluir em silêncio).
+3. Cadastrar a primeira oferta em `/admin/sponsored-offers`.
+
+> A CLI do `supabase` neste ambiente está autenticada em **outra org** (403 em
+> `functions list`) e não há `SUPABASE_ACCESS_TOKEN`/`SUPABASE_SERVICE_KEY` no
+> ambiente — por isso a migration **não** foi aplicada aqui. O `exec_sql` RPC
+> também não existe neste projeto (`PGRST202`).
+>
+> Depois do deploy da `delete-account`, **rode o SQL do item 1**: ele limpa as
+> 2 contas de teste que ficaram órfãs nas rodadas de verificação.
+
+---
+
+## 19. Regrinhas com tipo: a regrinha que nasce junto com o grupo (2026-10-30)
+
+Rodada pedida em `/dashboard/my-groups/create`: o dono do grupo precisa
+**criar uma regrinha na hora de criar o grupo**, mas escrevendo "não
+compartilhar a senha; usar apenas 1 tela" num textarea é trabalho que quase
+ninguém faz — o campo nascia vazio e o grupo saía sem nenhum aviso para o
+membro.
+
+A solução: **tipos de regrinha**. O dono marca as regrinhas prontas que valem
+para o grupo e, se quiser, escreve uma só dele. O texto final continua
+indo para a **mesma coluna `groups.rules`** (TEXT, uma regrinha por linha) —
+**nenhuma migration é necessária**.
+
+### O catálogo (`src/lib/groupRuleTypes.js`)
+
+8 tipos, cada um com `id` estável, `label`, `hint` e `text`:
+
+`nao_compartilhar_senha` · `um_dispositivo_por_membro` · `sem_revenda` ·
+`aviso_de_cancelamento` · `pagamento_em_dia` · `sem_conteudo_ilegal` ·
+`credencial_confidencial` · `grupo_pode_mudar_as_regras`
+
+O **`text`** é o que vai para `groups.rules`; o **`id`** serve para
+reconhecer a regrinha quando o rascunho é retomado.
+
+### A regrinha que já vem marcada
+
+`DEFAULT_RULE_TYPE_IDS = ['nao_compartilhar_senha']` — o rascunho nasce com
+"Não compartilhe a senha nem o link de acesso fora deste grupo." marcada. O
+grupo **sempre nasce com pelo menos um aviso** para o membro, e o dono
+desmarca se não quiser. Vale para o usuário (`EMPTY_DRAFT`), para o rascunho
+retomado (`rules: g.rules || DEFAULT_RULE_TEXT`) e para o admin.
+
+### O texto gravado é a fonte da verdade
+
+Não existe coluna de "tipos marcados": o que está em `groups.rules` é o
+texto. Para reconstruir a tela, `parseRuleText` quebra o texto em linhas e
+reconhece as que batem com o catálogo (comparando sem acento e sem caixa —
+`normalizeRuleText`), devolvendo `selectedIds` + o texto livre. Uma regrinha
+escrita à mão **não vira** tipo, e uma regrinha cujo texto do catálogo mudar
+no futuro continua valendo como texto livre (não some do grupo).
+
+`buildRuleText` monta o texto na volta: tipos do catálogo (na ordem do
+catálogo) e depois o texto livre — sem linha duplicada e sem linha vazia.
+
+### Onde aparece
+
+- **Wizard do usuário** (`/dashboard/my-groups/create`) e **wizard do admin**:
+  etapa "Cobrança" (`BillingStep`) — o seletor compartilhado
+  `RuleTypesField`. O admin, ao **editar** um grupo, usa o mesmo seletor no
+  formulário legado.
+- **Resumo** dos dois wizards: linha "Regrinhas" com a contagem e as
+  primeiras (`rulesSummary`).
+- **Leitura pelo membro**: `GroupRules` (novo componente, lista compartilhada)
+  no detalhe do grupo, no checkout (2 pontos) e na tela de credenciais; o
+  admin vê a mesma lista nas telas de grupos pendentes.
+
+> A classe nova é `.group-rules-list` — **não** `.group-rules`, que já existe
+> no `App.css` num seletor global (colisão mudaria o visual).
+
+### Verificação
+
+- `node .tmp-verify/teste-regrinhas.mjs` — **17/17** em node puro: ids
+  únicos, texto sem `\n`, normalização sem acento/caixa, ida e volta
+  (`buildRuleText` → `parseRuleText` → `buildRuleText`) preservando o texto,
+  texto livre não vira tipo, regra duplicada não se repete.
+- `node .tmp-verify/qa-regrinhas.mjs` — **12/12** no Chrome (harness em
+  `.tmp-verify/preview/regras.html` com o `BillingStep` real e o tema real):
+  a regrinha padrão vem marcada, marcar outra soma uma, o texto livre entra
+  no fim e sai com a lixeira, o membro vê a lista, limpar tudo esvazia
+  `groups.rules`, voltar ao padrão remarka, **sem estouro horizontal em
+  390px** e sem erro de console.
+- `node .tmp-verify/qa-regrinhas-e2e.mjs` — **13/13 na rota REAL**
+  `/dashboard/my-groups/create` (conta descartável criada pela API de auth e
+  apagada no final pela edge function `delete-account`): a etapa de cobrança
+  mostra os tipos, o título é o da etapa certa, a regrinha padrão vem
+  marcada, marcar outra soma uma, a livre entra por último, **o rascunho
+  gravado no banco tem as três regrinhas** e o resumo mostra "Regrinhas 3".
+  Sem estouro em 390px e sem erro de javascript.
+- `npm run build` — OK. `npx eslint` nos arquivos novos — limpo (os erros
+  restantes em `GroupForm.jsx`/`ServiceCredentials.jsx`/`GroupDetail.jsx` são
+  **pré-existentes**, confirmados contra `HEAD`).
+
+> Atenção ao dirigir o wizard num script: **não conte as etapas**. A contagem
+> muda a cada refactor (esta rodada rodou com 9 etapas) e um `count()`
+> instantâneo passa reto pela etapa que você quer. Use
+> `waitFor({ state: 'visible' })` no seletor da etapa.
+
+### Arquivos tocados nesta rodada
+
+Novos:
+
+- `src/lib/groupRuleTypes.js`
+- `src/components/group-creation/RuleTypesField.jsx`
+- `src/components/GroupRules.jsx` + `src/components/GroupRules.css`
+
+Modificados: `src/components/group-creation/BillingStep.jsx`,
+`src/components/group-creation/GroupCreation.css`,
+`src/pages/user/CreateGroup.jsx`, `src/pages/admin/GroupForm.jsx`,
+`src/pages/user/Checkout.jsx`, `src/pages/user/ServiceCredentials.jsx`,
+`src/pages/user/GroupDetail.jsx` (+ `.css`), `src/pages/admin/Groups.jsx`,
+`src/pages/admin/Platforms.jsx`.
+
+### Pendente
+
+1. **Nada no banco** — a coluna `groups.rules` já existe; a rodada roda
+   assim que o front for deployado.
+2. Se quiser os tipos **editáveis pelo admin** (tabela `group_rule_types` em
+   vez de catálogo no código), dá para fazer na próxima rodada.
+
+---
+
 ## Apêndice — como reproduzir as confirmações
 
 ```powershell
@@ -1728,3 +2154,1311 @@ continua funcionando.
 ```
 
 **Estado final:** o bloco P0 está **aplicado e verificado em produção** — `verify-p0.mjs` passou de **3/30** para **30/30**. Todas as contas e grupos de teste criados durante a verificação foram removidos e as escritas anônimas de teste foram revertidas. Commit `67ce49c` no branch `main` → deploy de produção do front `dpl_8S6oaFjVjQTaAnADCCBkfeShjCUY` (READY).
+
+---
+
+## 20. Monetização das ofertas patrocinadas: a métrica estava morta (2026-11-01)
+
+O pedido foi o conjunto de features da rodada 18 (recomendados, lista de
+espera, ofertas e oportunidades, votação, ofertas patrocinadas) mais a
+**monetização**: um parceiro paga para o serviço dele ficar destacado no topo
+do catálogo e nos recomendados.
+
+**O código de tudo isso já existia e está no ar.** O que a auditoria de
+produção do dia 01/11 encontrou foi que **duas peças da engrenagem não
+funcionavam** — e uma delas é justamente o que faz a monetização valer
+alguma coisa.
+
+### 20.1 O clique no anúncio nunca era contado
+
+`registerSponsorClick` (`src/lib/catalogEngagement.js`) fazia isto:
+
+```js
+await supabase.from('sponsored_offers').update({ clicks: 1 }).eq('id', offerId);
+```
+
+Dois defeitos no mesmo lugar:
+
+1. **`clicks: 1` em vez de `+ 1`** — a métrica nunca passaria de 1 mesmo que a
+   escrita passasse;
+2. **a escrita é bloqueada pelo RLS.** A policy de escrita de
+   `sponsored_offers` é `public.is_admin()`. Um `PATCH` do navegador do
+   usuário comum é engolido: o PostgREST devolve **`200 []`** — sucesso falso,
+   sem erro no console. Verificado em produção:
+   `PATCH /rest/v1/sponsored_offers` com a anon key → `200 []`.
+
+Ou seja: o painel do admin mostrava "0 cliques" para sempre, e o parceiro
+pagava por um destaque que **não rendia nada mensurável**. `impressions` era
+pior: era lida no painel e **nunca era escrita por ninguém**.
+
+**Correção:** a métrica passou a ser somada por uma RPC `SECURITY DEFINER`
+(`increment_sponsor_metric`), que é a única escrita pública na tabela e só
+conta oferta **ativa e dentro do período**:
+
+- `database/apply-pending-2026-11-01.sql` — o SQL isolado para colar no SQL
+  Editor (idempotente);
+- `database/add-sponsored-offers.sql` — o mesmo SQL na migration canônica,
+  para instalação do zero;
+- `src/lib/catalogEngagement.js` — `registerSponsorMetric(offerId, metric)`;
+- `src/components/SponsoredOffers.jsx` — **impressão** contada com
+  `IntersectionObserver` (conta só o anúncio que entrou na tela, uma vez).
+
+### 20.2 Três edge functions do front NÃO estão no ar
+
+Sondagem das 26 funções que o front chama (`POST` na URL da função; **404
+"Requested function was not found" = ausente**, 401 = existe e exige sessão):
+
+| Função | Chamada por | Estado |
+| --- | --- | --- |
+| `notify-service-watchers` | `admin/GroupForm.jsx`, `admin/Platforms.jsx` | **AUSENTE** |
+| `provision-group-mailbox` | `lib/managedGroupEmail.js` | **AUSENTE** |
+| `send-welcome-email` | `lib/welcomeEmail.js` | **AUSENTE** |
+
+As outras 23 estão no ar.
+
+**`notify-service-watchers` é o botão "Avise-me quando houver uma vaga".**
+Sem ela, o botão **salva** a pessoa na lista de espera (`group_interest`) e
+nada mais: ninguém é avisado quando a vaga abre. É a feature do pedido que
+dependia dela para ter efeito — e é exatamente a função que a rodada 18
+deixou pendente.
+
+> A CLI do `supabase` deste ambiente continua com o token da outra org
+> (`byefit`): `supabase functions deploy notify-service-watchers --project-ref
+> lasoouwboxspstqvjbsv` sobe os assets e morre em **403 "Your account does
+> not have the necessary privileges"**. O caminho é o empacotador, que gera o
+> arquivo único para colar no painel.
+
+### 20.3 Como publicar as três (dashboard do Supabase)
+
+Arquivos prontos em `.tmp-verify/painel/` (validados por
+`scripts/validar-arquivos-painel.mjs` — **17/17 OK**):
+
+| Função | Arquivo | "No Verify JWT" |
+| --- | --- | --- |
+| `notify-service-watchers` | `notify-service-watchers.ts` (32.991 bytes) | **ligado** (`verify_jwt = false`) |
+| `send-welcome-email` | `send-welcome-email.ts` (37.743 bytes) | **ligado** (`verify_jwt = false`) |
+| `provision-group-mailbox` | `provision-group-mailbox.ts` (18.140 bytes) | **desligado** (`verify_jwt = true`) |
+
+No painel do Supabase (projeto `lasoouwboxspstqvjbsv`): **Edge Functions →
+Nova função** → nome da função → **Create new function** → **Substituir**
+(colar o arquivo inteiro) → **Deploy**. Se a função já existir, **Edit →
+substituir o conteúdo → Deploy**.
+
+### 20.4 O resto do pedido: estado verificado em produção
+
+- `sponsored_offers`, `service_votes` e as views `service_vote_counts` /
+  `service_watchlist` **existem** (migration de 30/10 aplicada);
+- `service_vote_counts` devolve **2 serviços com votos** e `service_watchlist`
+  devolve as linhas da fila de espera — as duas views funcionam (elas ignoram
+  o RLS da tabela base, que é o que se quer aqui);
+- **`sponsored_offers` está VAZIA** — a área de ofertas patrocinadas não
+  aparece para ninguém até cadastrar a primeira oferta em
+  `/admin/sponsored-offers` (menu **Plataforma → Ofertas patrocinadas**);
+- o front publicado tem todas as seções: "Recomendados para você"
+  (logo acima de "Grupos disponíveis para assinar"), "Ofertas e
+  oportunidades", "O que você gostaria de compartilhar?", "Avise-me quando
+  houver uma vaga" e a rota `admin/sponsored-offers`.
+
+Copy alinhado nesta rodada (texto exato do pedido): *"Salve serviços que
+ainda não têm grupos disponíveis e receba alertas quando aparecer uma
+oportunidade."* — em `src/pages/user/Catalog.jsx`.
+
+### 20.5 Pendências (nenhuma delas roda deste ambiente)
+
+1. **Colar `database/apply-pending-2026-11-01.sql` no SQL Editor** (projeto
+   `lasoouwboxspstqvjbsv`) — **um paste só faz as duas coisas**:
+   - cria a RPC `increment_sponsor_metric` (sem ela a métrica de
+     clique/impressão continua zerada — o front chama a RPC; se ela não
+     existir, o `logSilently` engole o erro e nada quebra, só não conta);
+   - limpa os **4 perfis órfãos** `dp.prod.*` que ficaram de rodadas
+     anteriores (o `delete-account` implantado apaga o auth mas o
+     `DELETE FROM public.users` falha por FK em `platform_events.created_by`
+     — bug já mapeado na seção 18; a rotina é dinâmica porque o schema de
+     produção diverge do repo).
+2. **Publicar as 3 edge functions** pelo painel (tabela acima).
+3. **Cadastrar a primeira oferta** em `/admin/sponsored-offers`.
+
+### 20.6 Deploy (2026-11-01)
+
+Front publicado pela Vercel (caminho em `DEPLOYMENT.md`, "Option 1b"):
+
+- produção: **https://dividepass.com** (alias);
+- build: 2054 módulos, verde;
+- conferido no bundle em produção: `increment_sponsor_metric`, `p_metric`,
+  "impressões", "Salve serviços que ainda não têm grupos disponíveis",
+  "Recomendados para você", "Ofertas e oportunidades", "O que você
+  gostaria de compartilhar?";
+- **smoke test contra o site publicado** (`node .tmp-verify/visual-producao.mjs`)
+  → **14 ok, 0 fail**: faixa compacta de recomendados com logo + nome, frase
+  "Encontre mais. Pague menos.", seção "Ofertas e oportunidades", card de
+  votação presente, sem estouro horizontal no mobile e **sem erro de
+  console**.
+
+> Antes de aplicar o SQL da RPC, o `supabase.rpc('increment_sponsor_metric')`
+> responde `PGRST202` (função inexistente). O front trata isso como estado
+> esperado e **não** polui o console — `logSilently` agora silencia
+> `PGRST202` junto com `PGRST205`.
+
+
+
+---
+
+## 21. Regrinha: o dono volta a poder mudar as regras depois de criar o grupo (2026-11-01)
+
+A rodada 19 (30/10) entregou os **tipos de regrinha** na criação do grupo
+(`/dashboard/my-groups/create`): 8 tipos prontos, a regrinha padrão já
+marcada e a lista que o membro lê no detalhe, no checkout e nas credenciais.
+
+**O que faltava:** as regrinhas ficavam **congeladas no momento da criação**.
+A tela "Gerenciar Grupo" (`/dashboard/my-groups/:groupId/manage`) — onde o
+dono muda tipo de conta, ciclos, chave PIX e credenciais — **não tinha nenhum
+editor de regras**. Se o grupo já estava no ar e o dono precisasse avisar
+"não revenda a vaga" (ou acrescentar "avise antes de cancelar"), não havia
+como: o texto nascia na criação e morria ali.
+
+### 21.1 O que foi feito
+
+- `src/pages/user/ManageGroup.jsx` — novo card **"Regras do grupo"** na
+  lateral, com o **mesmo componente da criação** (`RuleTypesField`), uma
+  prévia **"Como o membro vê hoje"** (o `GroupRules`, exatamente a lista que
+  o membro lê) e o botão **"Salvar regras"** que grava em `groups.rules`.
+  O botão só acende quando o texto realmente mudou (`rulesDirty`).
+- `src/components/group-creation/RuleTypesField.jsx` — nova prop opcional
+  `hideLabel`: quando a tela já tem título e explicação do bloco, o
+  componente esconde o rótulo e a dica para **não repetir o mesmo texto
+  duas vezes** na tela. O wizard de criação continua com o rótulo.
+- `src/pages/user/ManageGroup.css` — estilo da prévia (`.manage-rules-preview`).
+
+**Sem migration:** o texto continua indo para a mesma coluna `groups.rules`
+(uma regrinha por linha). O texto gravado é a fonte da verdade — ao
+reabrir o editor, o catálogo é reconhecido pelo texto (comparando sem acento
+e sem caixa) e os tipos marcados voltam marcados.
+
+### 21.2 Verificação
+
+- `node .tmp-verify/teste-regrinhas.mjs` — **17/17** (lógica do catálogo,
+  ida e volta do texto, texto livre, normalização).
+- `node .tmp-verify/qa-regrinhas-manage.mjs` — **19/19 na rota REAL**
+  `/dashboard/my-groups/:groupId/manage` (conta descartável pela API de
+  auth, apagada no final pela edge `delete-account`): o card existe, a prévia
+  mostra as regrinhas de hoje, os 2 tipos marcados voltam marcados, a
+  regrinha livre volta como texto livre, o botão começa desabilitado,
+  marcar outro tipo habilita, **o banco recebe a regrinha nova** e ela
+  continua marcada depois de recarregar a página. Sem estouro em 390px e
+  sem erro de javascript.
+- `node .tmp-verify/qa-regrinhas-e2e.mjs` — **13/13** (regressão da
+  criação: a etapa de cobrança mostra os tipos, o rascunho no banco tem as
+  regrinhas e o resumo conta 3).
+- `npm run build` — OK. `npx eslint` nos arquivos tocados — limpo.
+
+> **Lição de QA (vale para os scripts que criam conta de teste):** o gate de
+> avatar (rodada do avatar obrigatório) aparece **por cima de tudo** para
+> quem entra sem avatar e **bloqueia o clique** — o Playwright falha com
+> "avatar-gate-backdrop intercepts pointer events". A conta de teste precisa
+> nascer com `avatar_url` (`PATCH /rest/v1/users` com
+> `avatar_url: '/avatars/avatar-02.svg'`), senão nenhum E2E de tela passa.
+
+### 21.3 Pendência de limpeza no banco (rodada 01/11)
+
+O E2E rodou com conta descartável e apagou tudo pela edge `delete-account`
+(HTTP 200), **mas sobrou lixo**, como já acontece nesta projeto (ver seção
+de memória "conta deletada deixa perfil órfão"):
+
+- **9 perfis órfãos** em `public.users` (`regrinhas.*@divteste.com`,
+  `sonda.orfao.*@divteste.com`) — o auth foi apagado, o perfil não;
+- **2 grupos "draft"** ("Spotify Individual") das rodadas de E2E.
+
+Sonda feita nesta rodada (`sonda-orfao.mjs`): **o próprio usuário NÃO
+consegue apagar o próprio perfil** — `DELETE /rest/v1/users?id=eq.{uid}`
+devolve **204 sem efeito** (RLS sem policy de DELETE para si). E a edge
+`delete-account` **em produção** é a versão antiga (não limpa
+`platform_events`), então o `DELETE FROM public.users` dela morre na FK. A
+versão corrigida já está no repo (`supabase/functions/delete-account/index.ts`,
+linha 104) — **falta publicar**.
+
+**Como limpar (precisa do SQL Editor do Supabase):** o script
+`database/cleanup-orphan-qa-accounts.sql` foi ampliado nesta rodada para
+pegar também `regrinhas.%@divteste.com`, `sonda.orfao.%@divteste.com`,
+`limpeza-regrinhas-%` e `diag-regrinhas-%` (além do `qa.%@example.com` de
+antes). A rotina é dinâmica: ela lê as FKs **reais** do banco e apaga as
+linhas filhas antes do perfil — por isso ela leva junto os grupos "draft".
+
+## 22. Card do Grupo Oficial da DividePass no WhatsApp (2026-11-01)
+
+Pedido: chamar atenção no `/dashboard` para o **grupo oficial do WhatsApp**,
+com o card **acima do card de feedback**, ícone **oficial da marca** e o texto
+do convite embaixo. A ideia é transformar o grupo no canal onde a pessoa
+descobre as vagas assim que elas abrem.
+
+### 22.1 O que foi feito
+
+- `src/components/WhatsAppIcon.jsx` — **ícone oficial do WhatsApp** em SVG
+  inline (traçado da marca, `viewBox` 24x24, `fill="currentColor"`). O
+  `lucide-react` **não tem** ícone de WhatsApp (a marca foi removida da
+  biblioteca), então ele não seria importável. O componente serve para o card
+  e para o chip do cabeçalho.
+- `src/components/WhatsAppGroupCard.jsx` + `WhatsAppGroupCard.css` — o card
+  novo: fundo no **verde oficial** do WhatsApp com gradiente, marca d'água do
+  glifo, ícone da marca com **anel pulsando** (puxa o olho), título, o texto
+  do convite com o 💜 e o botão **branco** "Entrar no grupo" (máximo contraste
+  sobre o verde) com `target="_blank"`. Em 390px o card empilha e o botão
+  fica com largura total. `prefers-reduced-motion` desliga o pulso e a
+  levitação.
+- `src/pages/user/UserDashboard.jsx` — o `<WhatsAppGroupCard />` entra
+  **imediatamente antes** do `.feedback-cta-card` (o card de feedback), com
+  comentário explicando a ordem: o WhatsApp é o canal que dá retorno
+  imediato, o feedback é a caixinha de sugestão.
+
+**O link:** vem de `WHATSAPP_VIP_URL` (`src/lib/siteLinks.js`) — o **único**
+convite de grupo do projeto (o mesmo do chip do cabeçalho, do rodapé e da
+home). Se o "Grupo Oficial" for um convite diferente do grupo da comunidade,
+basta trocar a constante em um lugar só.
+
+### 22.2 Verificação
+
+- `node scripts/qa-card-whatsapp.cjs` — **13/13** na rota real `/dashboard`:
+  o card existe, usa o SVG da marca (o `path` começa em `17.472 14.382`), fica
+  **acima** do card de feedback na ordem real do DOM (`waY=1391` vs
+  `fbY=1568`), o botão aponta para `chat.whatsapp.com` e abre em nova aba, o
+  texto do convite é o pedido literal e começa com o 💜, e não há erro de JS no
+  console. Prints em `qa-out/` (card isolado, contexto com o feedback e mobile).
+- `npm run build` — OK (2054 módulos). `npx eslint` nos arquivos novos — limpo.
+  (Os 10 erros que o `eslint` aponta em `UserDashboard.jsx` — `servicesMap` e
+  `MONTHS_PT` sem uso e `setState` dentro de efeito — são **pré-existentes**,
+  em linhas que esta rodada não tocou.)
+
+### 22.3 Lição de QA: a conta QA não enxerga o `/dashboard`
+
+A conta QA única (`qa.mavis@divteste.com`) **nunca terminou o onboarding**
+(ela existe para sondagem). Com `users.onboarding_completed_at` nulo, o
+`UserLayout.jsx:32` redireciona para `/onboarding` e o `/dashboard` **nem
+chega a renderizar** — o card "não existe" e o QA passa fooled. E, sem
+`avatar_url`, o `AvatarGate` toma a tela por cima.
+
+**Como contornar sem sujar a produção:** remendar **só a leitura** do perfil
+no Playwright — interceptar `GET /rest/v1/users` e devolver o mesmo objeto
+com `onboarding_completed_at` e `avatar_url` preenchidos. Nenhum POST sai, o
+resto da tela continua **real** (grupos, planos e serviços do banco). É o
+complemento da lição do gate de avatar da seção 21.2: lá o jeito era a conta
+nascer com avatar; aqui, para a conta QA que já existe, o conserto é no mock
+de leitura.
+
+---
+
+## 23. Auditoria da rodada "novas features" + o painel que vende o espaço (2026-11-01, tarde)
+
+O pedido voltou como lista de features (recomendados, lista de espera,
+oportunidades, votação e **ofertas patrocinadas no catálogo**). Antes de
+escrever qualquer linha de código, a auditoria conferiu o que já estava no ar
+e o que estava morto.
+
+### 23.1 O pedido inteiro já está no ar (verificado em produção)
+
+Sonda contra o projeto `lasoouwboxspstqvjbsv` e contra o bundle publicado em
+`https://dividepass.com`:
+
+| Feature do pedido | Onde está | Estado |
+| --- | --- | --- |
+| "Recomendados para você" (logo + nome, scroll) | `src/components/RecommendedServices.jsx` | no ar, **acima** de "Grupos disponíveis para assinar" (`UserDashboard.jsx:572`) |
+| "Encontre mais. Pague menos." / "Descubra serviços digitais que combinam com você." | idem, no cabeçalho da faixa | no ar |
+| "Avise-me quando houver uma vaga" + "Salve serviços que ainda não têm grupos disponíveis…" | `src/components/WatchlistButton.jsx` + `src/pages/user/Catalog.jsx` | no ar (o botão salva; o **aviso** depende da edge, ver 23.3) |
+| "Ofertas e oportunidades" (vagas novas, ofertas de parceiros, alternativas para economizar) | `src/components/OpportunitiesSection.jsx` | no ar |
+| "O que você gostaria de compartilhar?" (voto) | `src/components/InterestPollCard.jsx` | no ar |
+| "Oferta em destaque" (área patrocinada no catálogo) | `src/components/SponsoredOffers.jsx` + `/admin/sponsored-offers` | **no ar, mas sem ninguém cadastrado** |
+
+Ou seja: **nenhuma feature nova precisou ser escrita**. O que faltava era
+"acender" as engrenagens de produção.
+
+### 23.2 O que a sonda mostrou de quebrado
+
+- `sponsored_offers` existe, a view `service_vote_counts` devolve 2 serviços com
+  voto, `service_watchlist` devolve 24 linhas da fila de espera e o `select`
+  exato do painel admin (com embed de serviço e grupo) responde **200** — o
+  painel do admin abre com o embed certo;
+- **`sponsored_offers` está VAZIA** — a área de ofertas não aparece para
+  ninguém até existir a primeira oferta;
+- a RPC `increment_sponsor_metric` **não existe** (`PGRST202`) — então o
+  clique/impressão do anúncio nunca é somado (o front engole o erro de
+  propósito);
+- 4 edge functions **ausentes** (404 "Requested function was not found"):
+  `notify-service-watchers`, `reconcile-payments`, `provision-group-mailbox`,
+  `send-welcome-email`. A `delete-account` está no ar, mas na **versão antiga**
+  (a que deixa o perfil órfão).
+
+Os perfis órfãos `dp.prod.*` **já foram limpos** (a sonda devolve 0 linhas) —
+a parte de limpeza do `apply-pending-2026-11-01.sql` já rodou; a RPC, não.
+
+### 23.3 Bug real encontrado no painel que vende o espaço
+
+O QA do painel admin de ofertas (`scripts/qa-admin-ofertas-patrocinadas.mjs`)
+estourou no preenchimento do campo "Valor pago (R$)":
+
+> `Error: Cannot type text into input[type=number]`
+
+O campo era `type="number"`, e **o navegador rejeita vírgula** em input
+numérico (o valor sanitizado volta vazio). O rótulo pede "(R$)" e o admin
+brasileiro digita "199,90" — o campo ficava em branco e
+`Number("199,90")` é `NaN`, que virava `null` no payload: **a oferta entrava
+sem valor nenhum**, e a métrica "Patrocínio" do painel mostrava R$ 0,00.
+
+Correção (`src/pages/admin/SponsoredOffers.jsx`): o campo passou a `type="text"`
+com `inputMode="decimal"`, e o payload usa a função `valorPago()`, que troca a
+vírgula por ponto e devolve 0 em vez de `NaN`. Ao editar, o valor volta
+formatado no padrão brasileiro ("250,00").
+
+### 23.4 `config.toml`: duas funções sem entrada (deploy quebrado)
+
+`reconcile-payments` e `delete-account` **não existiam** no `config.toml`.
+Sem a entrada, o `supabase functions deploy` sobe com o padrão
+`verify_jwt = true` — e a reconciliação é chamada pelo cron com um **segredo**
+guardado em `app_settings`, que não é JWT: o gateway responderia 401 antes do
+código rodar (é exatamente o bug que o próprio `config.toml` documenta nas
+funções de billing).
+
+Entradas adicionadas:
+
+```toml
+[functions.reconcile-payments]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/reconcile-payments/index.ts"
+
+[functions.delete-account]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/delete-account/index.ts"
+```
+
+O empacotador (`scripts/empacotar-function-painel.mjs`) também ganhou
+`delete-account` — a versão corrigida (que limpa `platform_events` antes do
+`DELETE`) agora entra no pacote do painel.
+
+### 23.5 O script que publica tudo de uma vez
+
+`scripts/publicar-pendencias-supabase.mjs` — a CLI do `supabase` deste
+ambiente está ligada na **outra** organização (`byefit`) e o `composio` não tem
+conexão com o Supabase; o painel do Supabase trava o navegador (a página do
+dashboard não termina de carregar). Com **um token de acesso pessoal**
+(`sbp_...`) o script resolve tudo:
+
+```
+node scripts/publicar-pendencias-supabase.mjs            # SQL + cron + functions
+node scripts/publicar-pendencias-supabase.mjs --status   # só diagnostica (não precisa de token)
+```
+
+- o SQL entra pela Management API (`POST /v1/projects/{ref}/database/query`);
+- as functions sobem pela CLI com `SUPABASE_ACCESS_TOKEN` no ambiente da
+  chamada (sem trocar o login global da máquina);
+- `database/add-reconcile-cron.sql` (novo) agenda a reconciliação a cada 15 min
+  e cria o segredo `reconcile_payments_cron_secret` em `app_settings`.
+
+**Onde o token fica:** `.env.local` (gitignored) ou
+`.tmp-verify/sbp-dividepass.txt`. Nunca no chat.
+
+### 23.6 Verificação
+
+- `node scripts/qa-admin-ofertas-patrocinadas.mjs` — **22/22** na rota real
+  `/admin/sponsored-offers`: resumo (cadastradas / no ar / patrocínio /
+  cliques), lista com selo e período encerrado, formulário com todos os campos
+  de venda, validação do título obrigatório e **o payload do INSERT** (placement
+  `both`, `amount_paid` 199.9 a partir de "199,90", período, badge padrão).
+  Print em `qa-out/admin-ofertas-patrocinadas.png`. Nada é gravado: as
+  escritas em `sponsored_offers` são interceptadas.
+- `database/apply-pending-2026-11-01.sql` rodado no **Postgres local** (schema
+  de teste `scripts/test-rpc-sponsor-metric-schema.sql`): a RPC soma 1 em
+  oferta **ativa** e devolve **0** na pausada — o comportamento esperado.
+- `database/add-reconcile-cron.sql` rodado no Postgres local
+  (`scripts/test-cron-reconciliacao-schema.sql`): cria o segredo, agenda o job
+  e é **idempotente** (rodar duas vezes não duplica o job).
+- `npm run build` — OK. `npx eslint` nos arquivos tocados — limpo.
+
+### 23.7 Pendências (dependem do acesso do Gabriel)
+
+O SQL Editor do painel é o caminho que ele escolheu, então a entrega é **um
+arquivo só**:
+`database/EXECUTAR-2026-11-01-ofertas-patrocinadas.sql`.
+
+**1. No painel do Supabase** (SQL Editor → New query → colar tudo → Run):
+
+| Bloco do arquivo | O que faz |
+| --- | --- |
+| 1. id curto + `increment_sponsor_metric` | a coluna `id` da oferta vira TEXT (8 caracteres, letras e números) e a RPC que soma clique/impressão passa a receber `p_offer_id TEXT` (SECURITY DEFINER, só `authenticated`/`service_role` podem chamar) |
+| 2. segredo + `cron.schedule` | agenda a reconciliação de pagamentos a cada 15 min (guarda: se o `pg_cron` estiver desligado, **avisa e segue** — não quebra o resto do arquivo) |
+| 3. oferta de demonstração | `dddddddd` — Netflix, 7 dias, `placement = 'both'`, R$ 49,90, prioridade 10. É o que faz a área patrocinada aparecer para o usuário |
+| 4. conferências | 3 `SELECT` que provam que a RPC, a oferta e o cron ficaram no lugar |
+
+O arquivo é **idempotente**: pode colar e rodar quantas vezes quiser.
+
+**2. As edge functions** (SQL não publica função) — no terminal, com o login da
+conta que tem o projeto:
+
+```bash
+npx supabase login
+node scripts/publicar-edge-functions.mjs
+```
+
+Sobe as 5 (`notify-service-watchers`, `reconcile-payments`,
+`provision-group-mailbox`, `send-welcome-email`, `delete-account`) e depois
+**confere**: 404 = ainda ausente, 401 = no ar exigindo sessão (normal). O
+script avisa e para se a CLI não estiver logada na conta certa.
+
+**Validação do SQL antes de chegar na produção** (Postgres local, banco
+`dp_exec_test`, schema `scripts/test-sql-publico-schema.sql`):
+
+- o arquivo roda inteiro sem erro: `CREATE FUNCTION` → `GRANT` → segredo →
+  cron → `INSERT` da oferta → conferências;
+- caminho **sem** `pg_cron`: aviso e o resto segue (é o que acontece se a
+  extensão estiver desligada no projeto);
+- caminho **com** `pg_cron` (testado com uma cópia sem o guard): "Job
+  reconcile-payments agendado: a cada 15 minutos";
+- a oferta demo é **contável**: `increment_sponsor_metric(..., 'impression')` →
+  1 e `..., 'click'` → 1, porque ela nasce ativa e dentro do período;
+- rodar o arquivo de novo não duplica nada (segredo mantido, job recriado,
+  oferta atualizada).
+
+**3. Conferir depois** (a partir daqui, sem token):
+
+```bash
+node scripts/publicar-pendencias-supabase.mjs --status
+```
+
+### 23.8 Deploy do front (2026-11-01, 18:26)
+
+A correção do campo "Valor pago (R$)" (23.3) só vale no ar depois do deploy:
+
+- `vercel --prod --yes --token $t` (o token de projeto está em `.vercel_token`);
+- build na Vercel: **2054 módulos, verde**; alias em **https://dividepass.com**;
+- conferido no bundle publicado: `type:`text`,inputMode:`decimal`,placeholder:`0,00``
+  no campo do valor pago (o minificador usa crase, então o marcador do QA
+  procurava aspas duplas e dava "FALTA" à toa — o grep do bundle tem que
+  olhar a forma minificada);
+- o resto dos marcadores da rodada está no bundle: "Recomendados para você",
+  "Encontre mais. Pague menos.", "Descubra serviços digitais que combinam com
+  você", "Avise-me quando houver uma vaga", "Salve serviços que ainda não têm
+  grupos disponíveis", "Ofertas e oportunidades", "O que você gostaria de
+  compartilhar?", "Oferta em destaque", "increment_sponsor_metric".
+
+> "Parceiro de Teste" **não** aparece no bundle — e está certo: a oferta de
+> demonstração é criada pelo SQL (23.7), não pelo front.
+
+
+## 24. Rodapé do card no catálogo: foto de perfil dos membros (2026-11-01)
+
+### O pedido
+
+Na rota `/dashboard/catalog/:slug_plataforma` (a listagem dos grupos que já
+existem para a plataforma), o rodapé do card mostra os retratos dos membros.
+A regra pedida: **foto de perfil** para quem tem foto (fica mais bonito) e
+**ícone de letra** (inicial do nome) para quem não tem.
+
+### O que o código faz
+
+- `src/components/MemberAvatar.jsx` — componente único do retrato: foto quando
+  existe, inicial do nome quando não, e **inicial também quando a foto não
+  carrega** (URL quebrada / storage removido), via `onError`.
+- `src/pages/user/Catalog.jsx` — ordena os membros ativos colocando **quem tem
+  foto primeiro**, corta em 4 retratos e vira o resto no badge `+N`
+  (`gc-member-more`). Sem membros, mostra o placeholder `?`.
+- `src/hooks/useAppData.js` — o `select` dos grupos embute o usuário para o
+  rodapé ter a foto: `members:group_members (*, user:user_id (id, name, avatar_url))`.
+  **Sem esse embed o card cai em letra para todo mundo** (foi o bug do
+  rodapé "só com letras"): o `m.user` chega `undefined` e a foto não existe
+  para o React.
+- A mesma query existe na busca de apoio do próprio `Catalog.jsx` (usada
+  quando o contexto ainda não carregou os grupos).
+
+### Verificação
+
+- `node scripts/qa-catalog-avatares.cjs` — **12/12** no dev local
+  (`http://127.0.0.1:5173`) e **12/12 em produção**
+  (`QA_BASE_URL=https://dividepass.com node scripts/qa-catalog-avatares.cjs`).
+  O script lê os membros do grupo pela REST (conta QA única), monta o esperado
+  (fotos primeiro, no máximo 4) e compara com o DOM: fotos **antes** das
+  letras, URL da foto igual à do banco, inicial igual à do banco, foto
+  realmente carregada (`naturalWidth > 0`) e badge `+N` dos membros ocultos.
+  Grupo usado: "Max" (5 membros ativos — 2 com foto, 3 sem) em
+  `/dashboard/catalog/max`.
+  Prints: `qa-out/catalogo-listagem.png`, `qa-out/catalogo-card-rodape.png`.
+  Nada é gravado: só leitura (o `GET /rest/v1/users` da conta QA é remendado
+  para passar do gate de onboarding/avatar, sem nenhum POST).
+
+---
+
+## 24. Id curto na oferta patrocinada: `dddddddd` em vez de UUID (2026-11-01, 18:40)
+
+Pedido: *"arrume este id gigante com a mesma letra, use máximo de id 8 letras
+e números"*. O id em questão era o da oferta de demonstração do script de
+publicação — `dddddddd-dddd-4ddd-8ddd-dddddddddddd` (36 caracteres, UUID).
+
+### 24.1 O obstacle: a coluna era UUID
+
+Confirmado em produção (read-only, pelo PostgREST):
+
+```
+GET /rest/v1/sponsored_offers?select=id&id=eq.dddddddd
+→ 400 {"code":"22P02","message":"invalid input syntax for type uuid: \"dddddddd\""}
+```
+
+Ou seja: **"8 letras e números" não cabia** — a coluna era `UUID PRIMARY KEY`.
+A resposta não foi só encurtar a string: a coluna passou a ser `TEXT`, com
+default que gera 8 caracteres (letras e números) para toda oferta nova.
+
+```sql
+-- a conversão (rodar de novo é seguro: text -> text não tem efeito)
+ALTER TABLE public.sponsored_offers ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE public.sponsored_offers ALTER COLUMN id TYPE TEXT USING id::text;
+ALTER TABLE public.sponsored_offers
+  ALTER COLUMN id SET DEFAULT substr(md5(random()::text || clock_timestamp()::text), 1, 8);
+```
+
+Seguro porque: a tabela está vazia, **nenhuma** outra tabela tem FK apontando
+para `sponsored_offers.id`, e o front nunca formata o id (ele só o repassa
+para a RPC e usa como `key` do React).
+
+### 24.2 A RPC mudou de assinatura
+
+`increment_sponsor_metric(p_offer_id UUID, p_metric TEXT)` → **`TEXT`**.
+A versão antiga é removida antes de criar a nova:
+
+```sql
+DROP FUNCTION IF EXISTS public.increment_sponsor_metric(UUID, TEXT);
+```
+
+Sem esse DROP ficariam duas funções de mesmo nome e o PostgREST não saberia
+qual chamar (a que sobrou no banco hoje é a de UUID).
+
+O front **não muda**: `supabase.rpc('increment_sponsor_metric', { p_offer_id: offerId, p_metric: 'click' })`
+— o PostgREST casa a função pelo NOME dos argumentos, não pelo tipo.
+
+### 24.3 A armadilha do `information_schema` (pega no teste local)
+
+A primeira versão do script era assim:
+
+```sql
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_name = 'sponsored_offers' AND data_type = 'uuid') THEN
+    ALTER TABLE ... TYPE TEXT ...;
+    RAISE NOTICE 'convertida';
+  ELSE
+    RAISE NOTICE 'já é text';
+  END IF;
+END $$;
+```
+
+No teste local (rodando o arquivo DUAS vezes) o script **anunciou a conversão
+as duas vezes** — mesmo com a coluna já em `text`. Motivo: dentro de um bloco
+`DO`, o `information_schema` devolve o **tipo antigo**: o plano da view fica
+cacheado com o snapshot do catálogo de quando foi compilado. Um SELECT
+"comum" na mesma sessão mostra `text`; dentro do plpgsql, `uuid`.
+
+**Lição:** nunca usar `information_schema` como guard de DDL dentro de
+plpgsql. Ou consulta o catálogo direto (`pg_attribute` + `pg_type`), ou —
+melhor — escreve o `ALTER` de forma idempotente e deixa ele ser idempotente
+de verdade (`text -> text` não tem efeito, então rodar de novo não quebra).
+
+### 24.4 Verificação (Postgres local, banco `dp_exec_test`)
+
+- 1ª execução: `uuid -> text`, RPC recriada em TEXT, segredo criado, oferta
+  `dddddddd` inserida;
+- 2ª execução: **sem erro e sem duplicar** (segredo mantido, job do cron
+  recriado, oferta atualizada no `ON CONFLICT`);
+- ids novos gerados pelo default: `6308cdbd`, `a57d4c0d`, `c4ceab1c`,
+  `c948d466`, `1d3725cc` — 8 caracteres, letra e número;
+- métrica na oferta `dddddddd`: `impression` → 1, `click` → 1;
+- `pg_proc` confirma **1 só** função `increment_sponsor_metric` (a de UUID foi
+  removida);
+- `node scripts/qa-admin-ofertas-patrocinadas.mjs` — **22/22** com os ids
+  curtos (o front não mudou).
+
+> O SQL que o Gabriel executa é `database/EXECUTAR-2026-11-01-ofertas-patrocinadas.sql`
+> (seção 1.1 faz a conversão). Rodar o arquivo é o que leva o id curto para
+> produção.
+
+
+
+
+---
+
+## 25. Wizard de criação de grupo em 6 etapas (2026-11-01, noite)
+
+Pedido: reestruturar a criação de grupo ("muitas coisas faltando, informações que
+passam a ser irrelevantes"), com **planos padrão por plataforma** (com teto
+mínimo/máximo de cobrança), busca de plataforma na primeira etapa e a
+confirmação final com as políticas de responsabilidade.
+
+### 25.1 O que a produção tinha (e o que foi removido)
+
+O fluxo em produção (`/dashboard/my-groups/create` e `/admin/groups/new`) tinha
+6 etapas, mas elas não eram as 6 do pedido:
+
+| # | Etapa antiga | Problema apontado |
+|---|---|---|
+| 1 | Plataforma | sem busca, sem ordem por uso |
+| 2 | **Identidade** (nome, descrição, capa) | "remover a etapa 2" — nome passa a ser automático, descrição e capa saem |
+| 3 | Plano | tipo de conta solto, sem vínculo com plano da plataforma |
+| 4 | Cobrança | — |
+| 5 | Credenciais | — |
+| 6 | **Pagamento + resumo misturados** | "separa os Pagamentos, o resumo tem que ser a última step" |
+
+### 25.2 A trilha nova (6 etapas, idêntica nos dois wizards)
+
+1. **Plataforma** — campo de busca, "Mais usadas" fixada no topo e **popup de
+   confirmação** ("é esta plataforma? Continuar / Voltar à lista").
+2. **Plano** — os planos cadastrados da plataforma (preço oficial, qualidade,
+   telas simultâneas, faixa de cobrança) **+ vagas + status da assinatura**.
+3. **Grupo** — **visibilidade** (Público / Privado) **+ regras do grupo**
+   (opcional) — é aqui que as regras ocupam o lugar da descrição.
+4. **Credenciais** — como os membros acessam a conta (+ chat e e-mail gerenciado).
+5. **Pagamentos** — ciclos de cobrança, chave PIX, taxa de adesão e o valor do
+   grupo (com o teto do plano).
+6. **Resumo** — resumo + **políticas** + botão de criar o grupo.
+
+Arquivos: `src/pages/user/CreateGroup.jsx` e `src/pages/admin/GroupForm.jsx`
+(mesma ordem de etapas, mesma validação). As etapas são montadas com os
+componentes de `src/components/group-creation/`.
+
+### 25.3 Nome automático
+
+`buildGroupName()` (`src/lib/platformPlanPricing.js`): **[plataforma] + [plano]**
+ou, sem plano, **[plataforma] + [id curto do grupo]** (6 primeiros caracteres do
+UUID em maiúsculo). O nome é refazido depois que o rascunho ganha id.
+
+### 25.4 Planos padrão da plataforma (tabela `service_plans`)
+
+O editor fica em **`/admin/platforms/new`** (`PlatformPlansEditor.jsx`) e grava em
+`service_plans` — a tabela que já existia, com as colunas novas:
+
+| Campo | Coluna | Papel |
+|---|---|---|
+| Nome do plano | `name` | identificação |
+| Valor cobrado pela plataforma | `official_price` | o preço oficial do plano |
+| Quantidade máxima | `max_members` | teto de vagas do grupo |
+| Valor sugerido | `suggested_price` | pré-preenchido no wizard (por pessoa) |
+| Valor mínimo sugerido | `min_price` | **teto inferior** por pessoa |
+| Valor máximo | `max_price` | **teto superior** por pessoa |
+| Telas simultâneas | `max_screens` | aparece no card do plano |
+| Qualidade / observações | `quality`, `details` | aparecem no card do plano |
+
+**O teto é POR PESSOA** (`groups.price_per_slot`), não do total: o dono não pode
+cobrar de cada membro mais (nem menos) que a faixa do plano. Sem plano
+cadastrado, o grupo nasce **sem vínculo de plano** e sem teto (só o mínimo
+global por vaga).
+
+### 25.5 Visibilidade e regras
+
+`groups.visibility` (`public` | `private`): o privado **não aparece no
+catálogo** — entra por convite ou pelo link. As regras do grupo
+(`groups.rules`) foram para a etapa 3 e são opcionais.
+
+### 25.6 Políticas da etapa final
+
+`src/lib/groupPolicies.js`: a DividePass é **somente uma facilitadora de
+acesso**, sem responsabilidade sobre a conta e as credenciais; **quem cria o
+grupo assume total responsabilidade** por compartilhar as credenciais com os
+membros. Sem aceitar, o grupo não é criado.
+
+### 25.7 Banco
+
+`database/add-platform-plans-and-group-visibility.sql` — **já aplicado em
+produção** (conferido por REST em 01/11/2026: as colunas respondem). O arquivo
+é idempotente e pode ser rodado de novo. Ele faz: campos novos de
+`service_plans` + RLS (leitura pública, escrita só admin), `groups.visibility`,
+`groups.plan_id`, `groups.chat_enabled` e `groups.subscription_status`.
+
+### 25.8 QA
+
+- `node scripts/qa-wizard-planos.cjs` → **27/27** (usuário): busca, "Mais
+  usadas", popup, planos com telas/qualidade, teto bloqueando total fora da
+  faixa, resumo na etapa 6 de 6 com as políticas.
+- `node scripts/qa-admin-planos.cjs` → **14/14** (admin): editor de planos em
+  `/admin/platforms/new` com todos os campos pedidos + a mesma trilha de 6.
+- `node scripts/qa-teto-planos.mjs` → 9 planos com teto conferido, 0 falhas.
+
+Os dois QAs leem os planos REAIS de produção (Netflix: Básico com anúncios
+R$ 6,00–9,90 por pessoa, sugestão R$ 7,90; Padrão R$ 9,90–17,90; Premium
+R$ 12,90–23,96) e mockam só o que grava (`groups`, `group_credentials`).
+
+## 26. O painel admin no celular — o contrato de densidade
+
+O admin é usado pelo operador **no celular**. Em 01/11/2026 o painel foi
+redesenhado para o polegar: antes, os 9 indicadores do `/admin` ocupavam
+mais de mil pixels de rolagem empilhados, os filtros do `/admin/users`
+quebravam em 4 linhas de largura inteira e a lista de usuários era uma
+tabela de 7 colunas que só se lia arrastando para o lado.
+
+O contrato está em **`src/pages/admin/admin-responsive.css`** (importado por
+`AdminLayout.jsx`, vale para todas as páginas do painel) e vale em três
+regras:
+
+1. **Tabela vira cartão.** A tabela recebe a classe `ad-card-table` e cada
+   `<td>` recebe `data-label="Nome da coluna"`. No celular (≤720px) o
+   cabeçalho some e a linha vira um cartão empilhado: `CONTATO` à esquerda,
+   valor à direita; a identidade (`.ad-lead`) ocupa a linha inteira; a
+   seleção em lote (`.ad-pick`) vira o quadrado no canto; as ações
+   (`.ad-actions`) viram o rodapé com fio divisório. A variante
+   `ad-card-table--grid` (a lista de usuários) põe os metadados em 2 colunas
+   por linha. **Regra de ouro: o cartão nunca exige rolagem lateral.**
+2. **Filtro não empilha.** O wrapper recebe `ad-filter-grid` (grade de 2
+   colunas) ou `ad-scroll-row` (faixa rolável horizontal, para abas e
+   chips).
+3. **Nenhum scroll aninhado.** Painel com rolagem própria dentro da página
+   obriga o operador a rolar dois eixos; no celular a lista cresce e a
+   página rola uma vez só.
+
+### 26.1 O que mudou em cada tela
+
+| Tela | Antes | Agora |
+|---|---|---|
+| `/admin` | 9 indicadores em 1 coluna (~1200px) | 2 colunas, tile compacto (432px no total) |
+| `/admin` | lista de atividade com rolagem interna | a página rola uma vez só |
+| `/admin/users` | 4 filtros empilhados, tabela de 7 colunas | filtros em 2×2, lista em cartões |
+| `/admin/users/[id]` | 7 abas empilhadas (7 linhas) | faixa de abas rolável no topo |
+| `/admin/events` | chips quebrando em 5 linhas | 2 faixas roláveis (38px cada) |
+| `/admin/onboarding` | indicadores em 1 coluna, gráfico espremido | 2 colunas, rótulo acima da barra |
+
+### 26.2 O link do grupo na aba Assinaturas
+
+Em `/admin/users/[id]?tab=subscriptions` o nome do grupo virou **link**
+(`/admin/groups/{group_id}/edit`) — clicar leva direto ao grupo no admin.
+O grupo vem de `user_subscriptions.group_id` (a coluna existe na assinatura;
+o *embed* `group:group_id(name)` só traz o nome, por isso o id vem da
+própria assinatura).
+
+### 26.3 classes CSS globais do painel: cuidado
+
+`.actions-cell`, `.action-btn`, `.date-cell` e `.status-badge` são classes
+**globais** repetidas em 5+ arquivos do admin. Uma regra de celular em um
+arquivo vaza para as outras telas: foi exatamente o que aconteceu com
+`Announcements.css` (`flex-direction: column` no mobile), que empilhava os
+botões de ação da lista de usuários. **Ao mexer numa dessas classes,
+use o seletor da página (`.announcement-actions-cell`), não a classe global.**
+
+### 26.4 QA
+
+`node scripts/qa-admin-mobile.mjs` → **22/22**. Roda em viewport de celular
+(390×844) e conferiu: nenhuma rolagem horizontal, indicadores em 2 colunas,
+filtros em grade, tabela virada em cartão (rótulos presentes, cartão sem
+estouro de largura), botões de ação em uma linha só, abas e chips em faixa
+rolável, link do grupo na assinatura e — no desktop — a tabela continuando
+tabela com as 7 colunas e os filtros em uma linha. Screenshots em
+`qa-out/mobile/`.
+
+---
+
+## 26. "Acesso Negado" para quem pagou: o caso da Carolina (02/11/2026)
+
+Relato do dono: *"a cliente está reclamando que não está conseguindo ter
+acesso, mais o grupo que ela assinou... no painel admin está tudo certo com a
+assinatura e ela está dentro do grupo e ativo, mas a cliente entra, clica no
+grupo dela e fala acesso negado."*
+
+### 26.1 O que o banco mostrava (e o que NÃO mostrava)
+
+Cliente: `carolinasantos0594@gmail.com` (id `7aba6969-…-1472db68f360`).
+
+| Fonte | Resultado |
+|---|---|
+| `users` | conta ativa |
+| `group_members` (grupo `8a4e94ca` — "Netflix C/ Anúncio") | `status=active`, `payment_status=active`, `subscription_deadline=2027-01-27` |
+| `user_subscriptions` (visão do admin) | 1 linha: Netflix, R$ 59,40, semestral, **Ativa**, próx. cobrança 26/01/2027 |
+| `sync-members` (service role) | `total_subscriptions=6`, `already_ok=6`, `orphan_members=0` |
+
+Ou seja: **a base está sadia**. A assinatura está ativa, o vínculo está
+sincronizado e não há nenhum membro órfão no grupo.
+
+### 26.2 Os três caminhos que negavam o acesso (e por que mentiam)
+
+A tela de credenciais (`src/pages/user/ServiceCredentials.jsx`) negava o
+acesso em três situações, e nas três a mensagem era a mesma — "seu acesso ao
+Netflix foi encerrado, sua assinatura foi cancelada ou você saiu do grupo":
+
+1. **Falha na consulta** (rede/banco). O código fazia *fail-closed*: negava
+   e ainda culpava a cliente. Um erro passageiro trancava quem tinha pago.
+2. **Link apontando para outro grupo** (`?group=` de um link antigo). As duas
+   consultas voltavam vazias → negava. A cliente tinha assinatura ativa —
+   só não *daquele* grupo — e a tela dizia que ela "saiu do grupo".
+3. **Espelho do grupo defasado** (`group_members.status` = `inactive` /
+   `cancelled` / `left`) sem assinatura visível. O `status` do espelho é lixo
+   de um fluxo antigo; o que prova o pagamento é `payment_status` + prazo.
+
+O bundle em produção (v1.0.42) já tinha a correção de 01/11 ("a assinatura
+manda"), mas as outras duas portas continuavam abertas — e o conserto de 01/11
+só valia enquanto houvesse assinatura visível.
+
+### 26.3 A regra nova (o pagamento manda)
+
+```
+assinatura existe  -> estado da assinatura manda (ativa/atrasada/cancelada)
+sem assinatura     -> pagamento_status='active' E prazo vigente (ou prazo
+                      ausente com o espelho ativo) -> LIBERA
+falha de consulta  -> "Não foi possível verificar" + "Tentar de novo"
+grupo sem assinatura -> "Você não tem assinatura ativa do X neste grupo"
+                       + botão "Abrir meu grupo" (o grupo que ela tem)
+```
+
+O espelho deixou de decidir o acesso: ele virou o que sempre devia ter sido —
+um espelho. O `group_members` continua sendo curado pelo banco (painel +
+cron), mas **ninguém mais fica trancado fora por causa dele**.
+
+### 26.4 Prevenção (para não acontecer com mais ninguém)
+
+- `sync-members` agora grava também a data "paga até" no vínculo
+  (`subscription_deadline`) e zera o `left_at` — sem ela, ninguém consegue
+  dizer se o período ainda vale.
+- `update-subscription-statuses` (cron diário) passou a curar o espelho
+  **mesmo quando a data "paga até" está vazia**. Antes ele exigia o prazo
+  preenchido, e um vínculo sem prazo ficava defasado para sempre.
+- `database/EXECUTAR-2026-11-02-reparo-acesso-credenciais.sql`: cura o
+  passado de todo mundo (diagnóstico + reparo + conferência), **sem cancelar
+  assinatura e sem desvincular ninguém**. Testado no Postgres local
+  (`scripts/test-reparo-acesso-schema.sql` + `…-verifica.sql`): 5 casos,
+  idempotente na segunda rodada.
+
+### 26.5 QA
+
+`node scripts/qa-acesso-credenciais.cjs` → **13/13**. Reproduz os cenários com
+o PostgREST mockado (nada é gravado no banco):
+
+| Cenário | Esperado |
+|---|---|
+| A) pagou e está em dia | entra |
+| B) espelho legado + pagamento ativo | entra |
+| C) falha na consulta | "não foi possível verificar" + "Tentar de novo" |
+| D) link de outro grupo | aviso certo + "Abrir meu grupo" |
+| E) assinatura cancelada de verdade | "Pague de novo para reativar" |
+| F) pagou mas sem a data "paga até" gravada | entra |
+
+### 26.6 O que responder à cliente
+
+O pedido de acesso dela está correto no banco: assinatura ativa até 26/01/2027
+e vínculo ativo no grupo. Publicando o front, a tela passa a abrir direto —
+e, se ela chegar por um link antigo de outro grupo, o botão "Abrir meu grupo"
+leva ao grupo certo.
+
+---
+
+## 27. Onboarding novo: 11 perguntas → 6, com bifurcação (02/11/2026)
+
+O pedido: "tem muita coisa que deixa o usuário cansativo de responder". O
+questionário antigo tinha 11 perguntas (quantas assinaturas, gasta quanto,
+já compartilha, com quem, dificuldade, 5 perguntas de plataforma e as
+indicações). O fluxo novo tem **6 no caminho padrão e 5 no mais curto**.
+
+### 27.1 O caminho
+
+```
+avatar → boas-vindas → maior dificuldade → 2 convidados
+       → criar / entrar / ambos
+       → [serviços para CRIAR] → [serviços para ENTRAR] → texto livre
+```
+
+A bifurcação é **por resposta**, declarada no questionário — não é um `if`
+espalhado no componente:
+
+| Onde | O quê |
+|---|---|
+| `options[].next` | a opção escolhida aponta o próximo passo ("criar" → `share_platforms`) |
+| `nextWhen(answers)` | o próximo depende de outra resposta ("criar" pula a pergunta de entrar) |
+| `thenNext` | próximo passo fixo |
+
+`buildOnboardingPath(answers)` resolve isso e devolve a sequência; o
+componente só anda no índice. Mudar o fluxo é mexer em
+`src/lib/onboardingQuestions.js` — o relatório admin lê a MESMA constante,
+então pergunta e gráfico nunca divergem.
+
+**Resultado dos caminhos:**
+
+| Resposta | Passos | Perguntas |
+|---|---|---|
+| "Quero criar meu grupo" | criar → texto livre | 5 |
+| "Entrar em grupo existente" | entrar → texto livre | 5 |
+| "Ambos" | criar → entrar → texto livre | 6 |
+
+### 27.2 Regras que o usuário pediu
+
+- **Mínimo de 2 convidados.** O botão de continuar fica *desabilitado* (não
+  "erro depois do clique") e a dica diz quantas faltam.
+- **Última pergunta aberta** ("O que você espera encontrar na plataforma? E o
+  que te faria usar a nossa plataforma?"), com `textarea`. É **opcional** —
+  forçar texto no celular seria o oposto de reduzir o atrito.
+- **"Onde nos conheceu" no admin.** A pergunta é feita no *cadastro*
+  (`users.lead_source`), não no onboarding — duplicar seria pedir a mesma
+  coisa duas vezes. No admin ela vira: card "Onde nos conhecem" (com "X de Y
+  cadastros"), chip por pessoa e item no detalhe da resposta.
+
+### 27.2.1 Depois: 1 indicação e o próprio número bloqueado (03/11/2026)
+
+No primeiro acesso em produção apareceu o que as pessoas faziam: **digitavam o
+próprio número duas vezes** só para cumprir a etapa, e o fluxo perde gente
+justamente nela. Duas regras novas:
+
+| Regra | Como funciona |
+|---|---|
+| Mínimo 1 indicação (era 2) | `minInvites: 1` no questionário; o botão libera com uma pessoa |
+| O próprio número não vale | `mesmoTelefone(phone, profile.phone)` → "Este número é idêntico ao seu do cadastro. Indique outra pessoa." |
+
+**Comparar telefone exige tirar o DDI.** O cadastro grava com o código do
+país ("55 11 98888-7777") e a pessoa digita com DDD ("11 98888-7777"), então
+comparar a string ou os últimos 10 dígitos não funciona: os últimos 10
+confundem dois números de DDD diferente com o mesmo sufixo (11 e 21 com os
+mesmos 8 dígitos). A regra certa é **tirar o 55 e comparar o national
+inteiro**. E o DDI nem é digitável no formulário: `maskPhone` trava em 11
+dígitos.
+
+No caminho de retomada, a indicação salva com o próprio número **sai da
+lista** — assim ela não conta para o mínimo e não trava a etapa.
+
+### 27.2.2 A aba de qualificação com a cara do relatório (03/11/2026)
+
+`/admin/users/[id]?tab=onboarding` mostrava os nomes crus das plataformas
+("netflix"), sem ícone, sem categoria e sem dizer se a pessoa quer criar ou
+entrar num grupo. Agora usa a **mesma linguagem visual** do
+`/admin/onboarding`:
+
+- 6 indicadores no topo (`.ob-report-stats`): onde nos conheceu, quer criar
+  grupo, quer entrar em grupo, pessoas indicadas, serviços para criar,
+  serviços para entrar;
+- cards (`.chart-card`) com o perfil de qualificação, a resposta aberta em
+  citação, os serviços de cada intenção **agrupados por categoria** e as
+  pessoas convidadas (com link de WhatsApp);
+- a origem do cadastro no indicador e no detalhe.
+
+A lógica de leitura das plataformas (casar pelo id ou pelo nome, trazer
+ícone, cor e categoria) saiu do relatório e foi para
+`src/lib/onboardingPlatforms.js` — as duas telas leem o mesmo lugar, então
+não podem divergir.
+
+### 27.3 O `kind` das plataformas
+
+Cada pergunta de plataforma tem um `kind` **próprio**:
+
+- `share` → serviços que a pessoa quer **criar** um grupo
+- `join` → serviços que a pessoa quer **entrar** num grupo
+
+Antes, 4 perguntas dividiam o mesmo `kind` e o banco não guardava em qual
+pergunta a plataforma tinha sido marcada (o card de "filmes e séries" acabava
+mostrando Spotify junto). Os valores antigos (`current`, `interested`) seguem
+aceitos no CHECK para não quebrar dado já gravado.
+
+### 27.4 Migration (aplicada em produção)
+
+`database/EXECUTAR-2026-11-02-onboarding-novo-fluxo.sql` — 1 bloco, idempotente:
+
+- `user_onboarding_profiles` += `group_intent text`, `expectations text`
+- `user_onboarding_interests.kind` aceita `share` e `join`
+- GRANTs de `anon`/`authenticated` (guardados: não quebram se o papel não
+  existir) + índice de `group_intent`
+- Conferência no fim: "colunas novas: OK" / "kind aceita share e join: OK"
+
+Testado no Postgres 18 local (`scripts/test-onboarding-novo-fluxo.sh`): **8/8**,
+inclusive a idempotência na segunda rodada.
+
+**Enquanto a migration não roda, o app NÃO trava**: `persistProgress` cai
+para as colunas antigas quando o PostgREST responde `PGRST204` / `42703`
+(coluna fora do schema cache) e o `kind` que o CHECK rejeita é pulado. O
+usuário termina o onboarding; só as respostas novas ficam de fora.
+
+### 27.5 O seletor de plataformas
+
+O catálogo tem **103 serviços ativos**. Uma lista única seria pior que o
+questionário antigo — então o `PlatformPicker` ganhou **busca por nome** e
+**blocos por categoria** (10 blocos: Filmes e séries, Música, Saúde,
+Educação, IA, Ferramentas, Produtividade, Leitura, Games, Segurança).
+"Nenhuma destas" fica no topo, e o "Outra plataforma" continua no rodapé.
+
+### 27.6 QA
+
+`scripts/qa-onboarding-novo-fluxo.mjs` → **29/29** (local e produção):
+
+| Bloco | O que confere |
+|---|---|
+| convidados | botão travado sem ninguém, libera com 1, recusa o próprio número (com e sem DDI no cadastro) |
+| criar | cai em "criar um grupo" e **não** passa por "entrar" |
+| entrar | cai em "entrar em grupos" e **não** passa por "criar" |
+| ambos | as duas perguntas, nesta ordem |
+| última | eyebrow "Última pergunta" + `textarea` + tela "Tudo pronto!" |
+| banco | barreira, intenção, resposta aberta, plataforma `share`, a indicação, `onboarding_completed_at` |
+| contagem | "Pergunta 1 de 6" (o antigo era 11) |
+
+`scripts/qa-admin-origem.mjs` → **13/13**: card "Onde nos conhecem", chip de
+origem por pessoa, chip da resposta aberta, a citação no detalhe e a aba de
+qualificação da ficha (indicadores, plataformas por categoria, citação).
+
+### 27.7 Armadilhas
+
+- **Erro de coluna ausente no PostgREST é `PGRST204`**, não `42703`:
+  `{"code":"PGRST204","message":"Could not find the 'group_intent' column of
+  'user_onboarding_profiles' in the schema cache"}`. Tratar só `42703` faz o
+  fallback não disparar — e o "Concluir" falha, prendendo o usuário no
+  primeiro acesso.
+- **A tela "Tudo pronto!" era código morto**: o `refreshProfile()` do fim
+  trazia `onboarding_completed_at` preenchido e o `OnboardingPage` redirecionava
+  para o dashboard antes da confirmação. Agora o estado "terminou" sobe para
+  a página (`onFinished`), que segura o redirect.
+- **O `helper` da etapa de plataforma aparecia duas vezes** (uma no passo,
+  outra no `PlatformPicker`).
+- **Comparar telefone pelos últimos dígitos não funciona**: o DDD é o que
+  diferencia duas pessoas. Tire o DDI e compare o national inteiro.
+- **`maskPhone` trava em 11 dígitos**: o DDI não é digitável no formulário.
+  O caso real é o inverso — o *cadastro* tem o 55 e a pessoa digita sem.
+
+---
+
+## 28. A landing page em movimento (04/11/2026)
+
+O pedido: dar **sensação de economia e de prazer** na primeira tela, e
+sinalizar de forma grata os momentos de conquista (cadastro, onboarding).
+
+### 28.1 O card do preço virou uma demonstração
+
+O `SplitDemo` do hero mostrava sempre a **primeira** plataforma com preço
+(`lista.find(...)` → Disney Plus) e o preço já dividido em 4, parado. Agora:
+
+- **a plataforma é sorteada a cada visita**, dentro do catálogo que tem
+  `official_price` real (`services` → `lista[Math.floor(Math.random()*len)]`).
+  Um `ref` garante uma escolha só por carregamento, mesmo com o catálogo
+  chegando depois;
+- **as pessoas entram uma a uma** (1 → 4, 1,5s entre elas), e o preço de
+  cada uma cai junto: `share = official_price / pessoas`. As vagas vazias
+  ficam visíveis (borda tracejada) e se preenchem;
+- **o número "conta"** até o valor novo — `useMotionValue` + `useSpring` +
+  `useMotionValueEvent` (sem estado no meio do caminho);
+- **quando o grupo fecha com 4 pessoas**, o confete dispara e o card dá um
+  pulo (`animate={{ scale: [1, 1.015, 1] }}`).
+
+O texto também muda: com 1 pessoa, "Por enquanto é só você no grupo: paga o
+valor cheio" (economia zero não pode aparecer como se fosse economia).
+
+### 28.2 Confete em 3 lugares
+
+`src/components/Confetti.jsx` — **sem dependência nova**: o projeto já usa
+`motion` (Framer Motion v14). O gatilho é o `fire` (um contador): trocar o
+valor dispara de novo, e a `key` no container remonta as peças.
+
+| Onde | Como entra |
+|---|---|
+| Card do hero | camada **contida** no card (`position: relative` + `overflow: hidden`) |
+| Cadastro (`/register`) | overlay fixo de tela cheia ao aparecer "Conta criada!" |
+| Onboarding | overlay fixo ao aparecer "Tudo pronto!" |
+
+Cores: as da marca (indigo, violeta, laranja, âmbar, verde, rosa).
+`useReducedMotion` desliga tudo — quem pediu menos movimento no sistema
+operacional não ganha confete.
+
+### 28.3 Animação de rolagem
+
+`src/components/Reveal.jsx` — envolve a seção e usa `whileInView`. A
+animação é **só de transform** (y + scale), nunca `opacity: 0` no estado
+inicial: a regra do projeto é que, se o navegador pausar o `requestAnimation
+Frame` (aba em segundo plano), o conteúdo não pode ficar invisível. Com
+transform, o pior caso é o bloco parado 20px abaixo.
+
+### 28.4 QA
+
+`scripts/qa-landing-animacoes.mjs` → **11/11** (celular): sorteio da
+plataforma a cada carregamento, entrada das pessoas, queda do preço, confete
+no 4º, animação de scroll e confete do cadastro (com o `signup`
+interceptado — nenhum usuário real é criado).
+
+`scripts/qa-landing-desktop.mjs` → **7/7**: 4 pessoas no card, confete, sem
+estouro de largura, FAQ e CTA aparecem na rolagem, sem rolagem horizontal.
+
+`scripts/qa-onboarding-novo-fluxo.mjs` → **30/30**: inclui o confete da tela
+"Tudo pronto!".
+
+**Armadilha de medir confete.** No primeiro frame as peças já estão no DOM
+com `opacity: 0`. Contar peças não prova que o confete apareceu — conte só
+as que têm `opacity > 0.2`, e faça isso **durante** a animação (a do
+onboarding dura ~3s e só começa ~2s depois do clique, porque a gravação no
+banco vem antes da troca de tela).
+
+---
+
+## 29. Card de pagamentos no painel admin (04/11/2026)
+
+O pedido: "quando tiver qualquer pagamento deve ter um card informando os
+valores pagos e a quantidade; clico aqui e abre o toggle com as informações
+de quem pagou, qual grupo, valor e status".
+
+### 29.1 O que o card mostra
+
+| Estado | Tela |
+|---|---|
+| Fechado (padrão) | "Pagamentos de novembro" · **R$ 83,85** · "5 pagamentos · 2 confirmados · ver quem pagou" + chevron |
+| Aberto | a lista dos pagamentos, um por linha |
+
+Cada linha mostra **quem pagou** (nome + e-mail), **o grupo** (nome + serviço),
+**o valor** e o **status** (Pago / Pendente / Falhou / Estornado / Cancelado,
+com bolinha colorida e etiqueta).
+
+### 29.2 Decisões
+
+- **O card só aparece se houver pagamento** do mês. Sem dado, ele é só
+  ruído no painel.
+- **O total é só o que está com status `paid`**; a lista mostra **todos**
+  (inclusive pendente e falhado) — o operador precisa ver o que ainda não
+  entrou, não só o que entrou.
+- **Escopo: o mês corrente**, o mesmo período do card "Receita do mês".
+- **Join na query**: `user:user_id (id, name, email)` e
+  `group:group_id (id, name, service:service_id (id, name))`. Sem isso o
+  operador teria que abrir pagamento por pagamento para descobrir de quem
+  era — que é exatamente o trabalho que o card veio eliminar.
+- O cabeçalho é um `<button>` com `aria-expanded`/`aria-controls`: teclado
+  funciona e leitor de tela anuncia o estado.
+
+### 29.3 CSS
+
+Prefixo `pay-` **escopado em `.admin-dashboard`** — as classes do admin são
+globais e vazam para as outras telas (regra do projeto). No celular a linha
+vira duas linhas (quem + valor na primeira, grupo na segunda); no desktop
+fica em uma só (70px de altura).
+
+### 29.4 QA
+
+`scripts/qa-admin-pagamentos.mjs` → **14/14** (celular + desktop):
+
+| Bloco | O que confere |
+|---|---|
+| sem pagamento | o card **não** aparece (dados reais, tabela vazia) |
+| com pagamento | card, total (R$ 83,85), quantidade (5 · 2 confirmados) |
+| toggle | abre, fecha, e a lista tem uma linha por pagamento |
+| lista | quem pagou, grupo + serviço, valor e status de cada um |
+| celular | não estoura a largura (366px de 390px) |
+| desktop | uma linha só por pagamento, sem rolagem horizontal |
+
+**A lista é injetada na resposta da API** — a tabela `payments` está vazia em
+produção, e o teste é da TELA, não do dado. O caso "sem pagamento" é
+conferido com os dados reais.
+
+**Armadilha do teste.** O `select` do PostgREST vem codificado
+(`user%3Auser_id`), então o filtro da rota precisa do `decodeURIComponent`.
+E o `Intl.NumberFormat` usa espaço **não separável** (U+00A0) entre "R$" e
+o número: comparar com espaço normal dá falso negativo.
+
+---
+
+## 30. Revenda via Pulse Coding: o catálogo da Pulse dentro do DividePass (06/11/2026)
+
+O DividePass passou a vender produtos de **terceiro** (a revenda da Pulse
+Coding): o cliente paga no gateway do DividePass, o DividePass compra na
+Pulse e entrega o acesso. A documentação completa está em
+`docs/pulse-parceiro.md`. Aqui ficam as **decisões e as armadilhas**.
+
+### 30.1 O modelo
+
+Cada pacote da Pulse vira um **grupo** do DividePass com a tag
+`"Via Parceiro"`, dentro da plataforma correspondente (Netflix, ChatGPT,
+Claude...). Como a Pulse vende **conta privada por compra**, cada compra gera
+**uma credencial só do comprador** — 1 compra = 1 cliente.
+
+O grupo é a vitrine, não o rateio:
+
+- `has_slot_limit = false` ("vagas ilimitadas") — cada comprador leva a SUA
+  conta;
+- `is_official = true` e `owner_id` = admin → **sem repasse** de carteira (o
+  custo é da plataforma);
+- `has_entrance_fee = false` e `chat_enabled = false`.
+
+### 30.2 Decisões do dono
+
+| Decisão | Valor |
+|---|---|
+| Preço de venda | `original_price` + **20%** de markup (editável por grupo) |
+| Pacote indisponível na Pulse | importado, mas **fora da vitrine** |
+| Categoria "Serviços" | **excluída** do import automático |
+| Renovação | **manual** (nova compra na Pulse pelo fluxo normal) |
+
+### 30.3 A API mente sobre os status HTTP
+
+A documentação diz 410 para pacote antigo e 402 para saldo insuficiente.
+**Não é assim** (testado em 06/11/2026):
+
+| Real | HTTP | `code` |
+|---|---|---|
+| Saldo insuficiente | **400** | `saldo_insuficiente` |
+| Sem estoque | 409 | `sem_estoque` |
+| Pacote inexistente | **404** | `pacote_inexistente` |
+| Pedido inexistente | 404 | **sem `code`** |
+
+Um 400 pode ser "dado inválido" ou "saldo"; um 404 pode ser "pacote sumiu" ou
+"pedido não existe". **O `code` do corpo é o discriminador** — o status HTTP
+sozinho quebraria a lógica de remapeamento. O `pulseClient` traduz tudo em
+`PulseError.code`.
+
+### 30.4 A armadilha do `next_charge_at`
+
+`process-recurring-billing` **NÃO** chama `confirmPayment`: ele grava o
+pagamento e a assinatura por conta própria. Se a assinatura "Via Parceiro"
+fosse criada com `next_charge_at` preenchido, o job de recorrência
+**cobraria o cliente de novo sem comprar nada na Pulse** — porque o gancho
+que compra na Pulse está no `confirm-payment`.
+
+Por isso, para grupo "Via Parceiro":
+
+- `next_charge_at = NULL` (o job filtra por `next_charge_at <= agora` e o
+  NULL é excluído pelo PostgREST);
+- `renewal_due_at` / `expires_at` = data de validade do pacote;
+- **não** cria `billing_cycles` pendente.
+
+A renovação é manual: o `SubscriptionRenewalModal` já existente →
+`create-payment` → `confirm-payment` → nova compra na Pulse.
+
+### 30.5 Por que a entrega NÃO vai para `group_credentials`
+
+`group_credentials` é lida pelo navegador via RLS e tem o trigger
+`release_credential`: quando o membro sai do grupo, a credencial é
+desalocada (`assigned_to = NULL`) e, pela policy que aceita `assigned_to IS
+NULL`, **a conta privada passaria a ser visível para os outros membros do
+grupo**.
+
+Por isso a entrega da Pulse vive em `pulse_entregas` (RLS: só o dono, via
+edge function). E, de brinde, o `ServiceCredentials.jsx` tinha um bug real:
+pegava `group.credentials[0]` — mostrava a conta de **outro** cliente em
+grupo com várias credenciais. Agora ele escolhe a credencial **atribuída a
+mim** (`MyCredentials.jsx` já fazia certo).
+
+### 30.6 Idempotência
+
+`external_id` = 8 caracteres (letras e números), gerado **uma vez** por pedido
+e **nunca** muda. Repetição de rede/timeout usa o **mesmo** `external_id` (a
+Pulse devolve `duplicate: true` e não cobra de novo) e
+`pulse_pedidos` tem `UNIQUE (transaction_code, group_id)`, então o replay do
+webhook do gateway não cria um segundo pedido.
+
+### 30.7 O que a API tem no catálogo (e a doc não)
+
+`price` (o que EU pago), `original_price` (preço de venda ao consumidor),
+`stock`, `automatic_stock`, `purchase_capacity`, `available_stock`,
+`availability`, `delivery`, `orderable_via_api`, `credits`, `features`.
+
+No dia: **81 pacotes, 63 compráveis, 18 indisponíveis** (Netflix, Spotify,
+YouTube Premium, ChatGPT Plus Conta Privada...). **21 dos 63 têm margem zero**
+(`price` == `original_price`) — o painel marca esses como "sem margem".
+
+E o **saldo da conta está em R$ 0,00**: até recarregar, nenhum `dry_run`
+passa (400 `saldo_insuficiente`) e nenhum pedido real sai.
+
+### 30.8 Os arquivos
+
+- `supabase/functions/_shared/pulse.ts` — o `pulseClient` (6 ações, timeout
+  30 s, erro por `code`, HMAC do webhook);
+- `supabase/functions/_shared/pulse-catalog.ts` — plataforma de destino,
+  ciclo, markup, margem, exclusões;
+- `supabase/functions/_shared/pulse-orders.ts` — idempotência e gravação;
+- `supabase/functions/_shared/pulse-import.ts` — o importador de catálogo;
+- `supabase/functions/pulse-admin|pulse-webhook|pulse-entrega|pulse-poll/`;
+- `database/EXECUTAR-2026-11-06-pulse-parceiro.sql` — 5 tabelas, view, RLS,
+  guarda do trigger e o cron do polling;
+- `src/pages/admin/PulseCatalog.jsx` + `PulseOrderDetail.jsx` (o detalhe é
+  **página com id na URL**: `/admin/pulse/pedidos/:id`);
+- `src/pages/user/MyDeliveries.jsx` → `/dashboard/entregas`;
+- `scripts/pulse-teste.mjs` (65 asserções, sem rede) e
+  `scripts/pulse-dry-run.mjs` (cadeia real, `dry_run`, não cobra).
+
+### 30.9 Bug pego pelo teste
+
+"Combo Play — Spotify Premium + YouTube Premium | 3 Meses Cada" caía na
+plataforma **Spotify** (a regra do serviço batia antes da regra do combo).
+Agora a regra "combo" vem **primeiro** na lista.

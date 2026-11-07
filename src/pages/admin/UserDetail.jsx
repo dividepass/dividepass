@@ -3,13 +3,19 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, Save, Lock, Mail, Phone, User, Shield,
   CreditCard, FileText, Clock, Calendar, AlertTriangle, CheckCircle,
-  RefreshCw, Plus, XCircle, Timer, Zap, Edit2, ClipboardList, Activity
+  RefreshCw, Plus, XCircle, Timer, Zap, Edit2, ClipboardList, Activity,
+  ExternalLink, MapPin, Share2, UserPlus, Users, Layers, MessageCircle
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { maskPhone, onlyDigits, phoneToNational, phoneToWhatsApp } from '../../lib/maskPhone';
 import { ONBOARDING_STEPS, labelForValue } from '../../lib/onboardingQuestions';
+import { buildServiceLookup, groupPlatformsByCategory } from '../../lib/onboardingPlatforms';
 import EventLog from './EventLog';
 import './UserDetail.css';
+/* A aba de qualificação usa a mesma linguagem visual do relatório — por
+   isso o CSS dele entra junto (a ficha é aberta direto, sem passar pela
+   página do relatório). */
+import './OnboardingReport.css';
 
 const ROLE_OPTIONS = [
   { value: 'user', label: 'Usuário' },
@@ -443,7 +449,7 @@ function UserDetail() {
         </div>
       </div>
 
-      <div className="user-tabs">
+      <div className="user-tabs ad-scroll-row">
         {USER_TABS.map(tab => (
           <button
             key={tab.id}
@@ -521,7 +527,7 @@ function UserDetail() {
           {subscriptions.length === 0 ? (
             <div className="empty-table"><p>Nenhuma assinatura encontrada.</p></div>
           ) : (
-            <table className="history-table">
+            <table className="history-table ad-card-table">
               <thead>
                 <tr>
                   <th>Serviço</th>
@@ -536,17 +542,36 @@ function UserDetail() {
               <tbody>
                 {subscriptions.map(sub => (
                   <tr key={sub.id}>
-                    <td>{sub.service?.name || '—'}</td>
-                    <td>{sub.group?.name || '—'}</td>
-                    <td>R$ {Number(sub.amount || 0).toFixed(2)}</td>
-                    <td>{({
-                      monthly: 'Mensal', quarterly: 'Trimestral', semiannual: 'Semestral', annual: 'Anual',
-                      custom: sub.custom_cycle_months ? `${sub.custom_cycle_months} meses` : 'Personalizado',
-                      days: sub.custom_cycle_days ? `${sub.custom_cycle_days} dias` : 'Diário'
-                    }[sub.billing_cycle] || sub.billing_cycle)}</td>
-                    <td><span className={`status-badge ${sub.status}`}>{statusBadge(sub.status)}</span></td>
-                    <td>{sub.next_charge_at ? new Date(sub.next_charge_at).toLocaleDateString('pt-BR') : sub.expires_at ? new Date(sub.expires_at).toLocaleDateString('pt-BR') : '—'}</td>
-                    <td>
+                    <td data-label="Serviço">{sub.service?.name || '—'}</td>
+                    <td data-label="Grupo">
+                      {sub.group_id ? (
+                        <Link
+                          to={`/admin/groups/${sub.group_id}/edit`}
+                          className="user-sub-group-link"
+                          title={`Abrir o grupo ${sub.group?.name || ''} no painel`}
+                        >
+                          <span className="user-sub-group-name">{sub.group?.name || 'Ver grupo'}</span>
+                          <ExternalLink size={13} />
+                        </Link>
+                      ) : (
+                        (sub.group?.name || '—')
+                      )}
+                    </td>
+                    <td data-label="Valor">R$ {Number(sub.amount || 0).toFixed(2)}</td>
+                    <td data-label="Ciclo">
+                      {({
+                        monthly: 'Mensal', quarterly: 'Trimestral', semiannual: 'Semestral', annual: 'Anual',
+                        custom: sub.custom_cycle_months ? `${sub.custom_cycle_months} meses` : 'Personalizado',
+                        days: sub.custom_cycle_days ? `${sub.custom_cycle_days} dias` : 'Diário'
+                      }[sub.billing_cycle] || sub.billing_cycle)}
+                    </td>
+                    <td data-label="Status">
+                      <span className={`status-badge ${sub.status}`}>{statusBadge(sub.status)}</span>
+                    </td>
+                    <td data-label="Próx. Cobrança">
+                      {sub.next_charge_at ? new Date(sub.next_charge_at).toLocaleDateString('pt-BR') : sub.expires_at ? new Date(sub.expires_at).toLocaleDateString('pt-BR') : '—'}
+                    </td>
+                    <td className="ad-actions">
                       <button
                         className="action-btn"
                         onClick={() => navigate(`/admin/subscriptions/${sub.id}/edit`)}
@@ -568,7 +593,7 @@ function UserDetail() {
           {invoices.length === 0 ? (
             <div className="empty-table"><p>Nenhuma fatura encontrada.</p></div>
           ) : (
-            <table className="history-table">
+            <table className="history-table ad-card-table">
               <thead>
                 <tr>
                   <th>Vencimento</th>
@@ -580,10 +605,10 @@ function UserDetail() {
               <tbody>
                 {invoices.map(inv => (
                   <tr key={inv.id}>
-                    <td>{new Date(inv.due_date).toLocaleDateString('pt-BR')}</td>
-                    <td>R$ {Number(inv.amount || 0).toFixed(2)}</td>
-                    <td><span className={`status-badge ${inv.status}`}>{statusBadge(inv.status)}</span></td>
-                    <td>{inv.paid_at ? new Date(inv.paid_at).toLocaleString('pt-BR') : '—'}</td>
+                    <td data-label="Vencimento">{new Date(inv.due_date).toLocaleDateString('pt-BR')}</td>
+                    <td data-label="Valor">R$ {Number(inv.amount || 0).toFixed(2)}</td>
+                    <td data-label="Status"><span className={`status-badge ${inv.status}`}>{statusBadge(inv.status)}</span></td>
+                    <td data-label="Pago em">{inv.paid_at ? new Date(inv.paid_at).toLocaleString('pt-BR') : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -597,7 +622,7 @@ function UserDetail() {
           {payments.length === 0 ? (
             <div className="empty-table"><p>Nenhum pagamento encontrado.</p></div>
           ) : (
-            <table className="history-table">
+            <table className="history-table ad-card-table">
               <thead>
                 <tr>
                   <th>Data</th>
@@ -610,11 +635,11 @@ function UserDetail() {
               <tbody>
                 {payments.map(pay => (
                   <tr key={pay.id}>
-                    <td>{new Date(pay.created_at).toLocaleString('pt-BR')}</td>
-                    <td>R$ {Number(pay.amount || 0).toFixed(2)}</td>
-                    <td>{pay.method}</td>
-                    <td><span className={`status-badge ${pay.status}`}>{statusBadge(pay.status)}</span></td>
-                    <td>{pay.transaction_code || '—'}</td>
+                    <td data-label="Data">{new Date(pay.created_at).toLocaleString('pt-BR')}</td>
+                    <td data-label="Valor">R$ {Number(pay.amount || 0).toFixed(2)}</td>
+                    <td data-label="Método">{pay.method}</td>
+                    <td data-label="Status"><span className={`status-badge ${pay.status}`}>{statusBadge(pay.status)}</span></td>
+                    <td data-label="Transação">{pay.transaction_code || '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1019,14 +1044,20 @@ function UserDetail() {
 }
 
 /**
- * Aba de qualificação: mostra as respostas do onboarding do usuário na
- * mesma ordem do questionário, com os rótulos legíveis vindos de
- * onboardingQuestions — nunca os valores crus do banco.
+ * Aba de qualificação: as respostas do onboarding do usuário.
+ *
+ * Usa a MESMA linguagem visual do relatório (/admin/onboarding): indicadores
+ * no topo, cards com o catálogo de serviços agrupado por categoria e a
+ * resposta aberta em citação. Antes esta aba listava os nomes crus das
+ * plataformas, sem ícone e sem categoria — o operador via "netflix" e não
+ * sabia se a pessoa queria criar ou entrar num grupo.
  */
 function OnboardingAnswers({ userId, completedAt }) {
   const [profile, setProfile] = useState(null);
   const [interests, setInterests] = useState([]);
   const [invites, setInvites] = useState([]);
+  const [origin, setOrigin] = useState(null);
+  const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1035,15 +1066,32 @@ function OnboardingAnswers({ userId, completedAt }) {
 
     (async () => {
       setLoading(true);
-      const [pRes, iRes, invRes] = await Promise.all([
+      const [pRes, iRes, invRes, svcRes] = await Promise.all([
         supabase.from('user_onboarding_profiles').select('*').eq('user_id', userId).maybeSingle(),
         supabase.from('user_onboarding_interests').select('*').eq('user_id', userId),
         supabase.from('user_onboarding_invites').select('*').eq('user_id', userId),
+        // Catálogo: é ele que dá o ícone, a cor e a categoria de cada
+        // plataforma marcada (inclusive das digitadas à mão).
+        supabase.from('streaming_services').select('id, name, icon_url, color, category'),
       ]);
       if (cancelled) return;
       setProfile(pRes.data || null);
       setInterests(iRes.data || []);
       setInvites(invRes.data || []);
+      setServices(svcRes.data || []);
+
+      /* A origem do cadastro ("onde a pessoa nos conheceu") vem numa query
+         separada: se o grant de lead_source faltar no banco, misturar as
+         duas derrubaria o retorno inteiro com 42501 e a aba ficaria
+         sem nada. */
+      const originRes = await supabase
+        .from('users')
+        .select('lead_source, lead_source_other')
+        .eq('id', userId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (!originRes.error) setOrigin(originRes.data || null);
+
       setLoading(false);
     })();
 
@@ -1060,9 +1108,22 @@ function OnboardingAnswers({ userId, completedAt }) {
 
   if (!profile) {
     return (
-      <div className="admin-card">
-        <div className="empty-table">
-          <p>
+      <div className="ob-answers-tab">
+        <div className="ob-report-stats">
+          <div className="ob-report-stat orange">
+            <MapPin size={18} />
+            <div>
+              <span className="ob-report-stat-value is-text">{origemLabel(origin)}</span>
+              <span className="ob-report-stat-label">Onde nos conheceu</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="chart-card">
+          <div className="chart-header">
+            <h3>Qualificação</h3>
+          </div>
+          <p className="ob-report-empty">
             Este usuário ainda não respondeu o onboarding
             {completedAt ? ' (o registro está com data, mas sem respostas salvas).' : '.'}
           </p>
@@ -1071,120 +1132,250 @@ function OnboardingAnswers({ userId, completedAt }) {
     );
   }
 
-  const current = interests.filter((i) => i.kind === 'current');
-  const interested = interests.filter((i) => i.kind === 'interested');
-  const sharesWithStep = ONBOARDING_STEPS.find((s) => s.column === 'shares_with');
+  const share = interests.filter((i) => i.kind === 'share');
+  const join = interests.filter((i) => i.kind === 'join');
 
-  const answered = ONBOARDING_STEPS.filter((s) => s.column && s.type !== 'info').filter((s) => {
+  const lookup = buildServiceLookup(services);
+  const shareGroups = groupPlatformsByCategory(share, lookup);
+  const joinGroups = groupPlatformsByCategory(join, lookup);
+
+  const intentStep = ONBOARDING_STEPS.find((s) => s.column === 'group_intent');
+  const intentLabel = profile.group_intent
+    ? labelForValue(intentStep, profile.group_intent)
+    : null;
+  const querCriar = ['criar', 'ambos'].includes(profile.group_intent);
+  const querEntrar = ['entrar', 'ambos'].includes(profile.group_intent);
+
+  /* A resposta aberta tem card próprio (citação) e a intenção de grupo tem
+     rótulo curto — as duas saem da grade de detalhes para não repetir. */
+  const temValor = (s) => {
     const v = profile[s.column];
     return v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && !v.length);
-  });
+  };
+  const respondidas = ONBOARDING_STEPS.filter((s) => s.column && s.type !== 'info').filter(temValor);
+  const answered = respondidas.filter(
+    (s) => s.column !== 'expectations' && s.column !== 'group_intent'
+  );
+  const totalPerguntas = ONBOARDING_STEPS.filter((s) => s.column).length;
 
-  return (
-    <div className="ob-answers-tab">
-      <div className="admin-card">
-        <div className="crons-section-header">
-          <h3>Perfil de qualificação</h3>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-            {answered.length} de {ONBOARDING_STEPS.filter((s) => s.column).length} perguntas respondidas
-          </span>
-        </div>
+  /* Indicadores no mesmo formato do relatório: o operador lê a ficha sem
+     precisar abrir card nenhum. */
+  const stats = [
+    {
+      label: 'Onde nos conheceu',
+      value: origemLabel(origin),
+      icon: <MapPin size={18} />,
+      tone: 'orange',
+      text: true,
+    },
+    {
+      label: 'Quer criar grupo',
+      value: querCriar ? 'Sim' : 'Não',
+      icon: <Share2 size={18} />,
+      tone: 'purple',
+    },
+    {
+      label: 'Quer entrar em grupo',
+      value: querEntrar ? 'Sim' : 'Não',
+      icon: <UserPlus size={18} />,
+      tone: 'blue',
+    },
+    {
+      label: 'Pessoas indicadas',
+      value: invites.length,
+      icon: <Users size={18} />,
+      tone: 'green',
+    },
+    {
+      label: 'Serviços para criar',
+      value: share.length,
+      icon: <Layers size={18} />,
+      tone: 'purple',
+    },
+    {
+      label: 'Serviços para entrar',
+      value: join.length,
+      icon: <Layers size={18} />,
+      tone: 'blue',
+    },
+  ];
 
-        <div className="ob-answer-grid">
-          {answered.map((step) => {
-            const raw = profile[step.column];
-            const display = Array.isArray(raw)
-              ? raw.map((v) => labelForValue(sharesWithStep, v)).join(', ')
-              : step.type === 'yes_no'
-                ? raw ? 'Sim' : 'Não'
-                : labelForValue(step, raw);
-
-            return (
-              <div className="ob-answer-item" key={step.id}>
-                <span className="ob-answer-label">{step.title}</span>
-                <span className="ob-answer-value">{display}</span>
-              </div>
-            );
-          })}
-
-          {profile.main_barrier_other && (
-            <div className="ob-answer-item">
-              <span className="ob-answer-label">Outro motivo</span>
-              <span className="ob-answer-value">{profile.main_barrier_other}</span>
-            </div>
-          )}
-
-          {profile.would_recommend && (
-            <div className="ob-answer-item">
-              <span className="ob-answer-label">Indicaria / criaria grupo</span>
-              <span className="ob-answer-value">{profile.would_recommend}</span>
-            </div>
-          )}
-        </div>
+  /* Cartão de plataformas por categoria — o mesmo bloco do relatório. */
+  const cartaoPlataformas = (titulo, grupos, total, muted) => (
+    <div className="chart-card" key={titulo}>
+      <div className="chart-header">
+        <h3>{titulo}</h3>
+        <span className="chart-total">
+          {total === 1 ? '1 serviço' : `${total} serviços`}
+        </span>
       </div>
-
-      <div className="admin-card">
-        <div className="crons-section-header">
-          <h3>Pessoas que ele convidaria para um grupo</h3>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{invites.length}</span>
-        </div>
-        {invites.length === 0 ? (
-          <div className="empty-table"><p>Ninguém informado.</p></div>
-        ) : (
-          <div className="ob-invite-list">
-            {invites.map((iv) => {
-              /* O número é gravado sem o código do país — o link do WhatsApp
-                 precisa dele, senão o wa.me abre a conversa errada. */
-              const waNumber = phoneToWhatsApp(iv.phone);
-              const national = phoneToNational(iv.phone);
-              return (
-                <div className="ob-invite-row" key={iv.id}>
-                  <div className="ob-invite-avatar">{iv.name.charAt(0).toUpperCase()}</div>
-                  <div className="ob-invite-info">
-                    <strong>{iv.name}</strong>
-                    <span>{maskPhone(national) || 'sem telefone'}</span>
-                  </div>
-                  {waNumber && (
-                    <a
-                      className="ob-invite-wa"
-                      href={`https://wa.me/${waNumber}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={`Falar com ${iv.name} no WhatsApp`}
-                    >
-                      <Phone size={13} /> Falar
-                    </a>
+      {grupos.length === 0 ? (
+        <p className="ob-report-empty">Nenhum serviço marcado nesta pergunta.</p>
+      ) : (
+        grupos.map((g) => (
+          <div className="ob-platform-group" key={g.key}>
+            <span className="ob-platform-group-label">{g.label}</span>
+            <div className="ob-platform-list">
+              {g.items.map((p) => (
+                <span className={`ob-platform-chip ${muted ? 'is-muted' : ''}`} key={p.name}>
+                  {p.icon ? (
+                    <img src={p.icon} alt="" />
+                  ) : (
+                    <span className="ob-platform-initial" style={{ background: p.color || '#64748B' }}>
+                      {p.name.charAt(0)}
+                    </span>
                   )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {[['current', current], ['interested', interested]].map(([kind, list]) => (
-        <div className="admin-card" key={kind}>
-          <div className="crons-section-header">
-            <h3>
-              {kind === 'current' ? 'Plataformas que já usa' : 'Plataformas que quer dividir'}
-            </h3>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{list.length}</span>
-          </div>
-          {list.length === 0 ? (
-            <div className="empty-table"><p>Nenhuma plataforma marcada.</p></div>
-          ) : (
-            <div className="ob-interest-tags">
-              {list.map((i) => (
-                <span key={i.id} className={`ob-interest-tag ${i.is_custom ? 'custom' : ''}`}>
-                  {i.platform_name}
+                  {p.name}
+                  {p.custom && <em className="ob-custom-tag">outra</em>}
                 </span>
               ))}
             </div>
-          )}
-        </div>
-      ))}
+          </div>
+        ))
+      )}
     </div>
   );
+
+  return (
+    <div className="ob-answers-tab">
+      <div className="ob-report-stats">
+        {stats.map((s) => (
+          <div className={`ob-report-stat ${s.tone}`} key={s.label}>
+            {s.icon}
+            <div>
+              <span className={`ob-report-stat-value ${s.text ? 'is-text' : ''}`}>{s.value}</span>
+              <span className="ob-report-stat-label">{s.label}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="charts-section">
+        {/* Perfil de qualificação: as respostas, na ordem do questionário. */}
+        <div className="chart-card">
+          <div className="chart-header">
+            <h3>Perfil de qualificação</h3>
+            <span className="chart-total">
+              {respondidas.length} de {totalPerguntas} perguntas respondidas
+            </span>
+          </div>
+          <p className="ob-card-intro">
+            As respostas do questionário, com os rótulos de cada pergunta.
+          </p>
+
+          <div className="ob-detail-grid">
+            {answered.map((step) => {
+              const raw = profile[step.column];
+              const display = Array.isArray(raw)
+                ? raw.join(', ')
+                : step.type === 'yes_no'
+                  ? raw ? 'Sim' : 'Não'
+                  : labelForValue(step, raw);
+
+              return (
+                <div className="ob-detail-item" key={step.id}>
+                  <span className="ob-detail-q">{step.title}</span>
+                  <span className="ob-detail-a">{display}</span>
+                </div>
+              );
+            })}
+
+            {intentLabel && (
+              <div className="ob-detail-item">
+                <span className="ob-detail-q">Criar ou entrar em grupo</span>
+                <span className="ob-detail-a">{intentLabel}</span>
+              </div>
+            )}
+
+            {profile.main_barrier_other && (
+              <div className="ob-detail-item">
+                <span className="ob-detail-q">Outra barreira</span>
+                <span className="ob-detail-a">{profile.main_barrier_other}</span>
+              </div>
+            )}
+
+            {origin?.lead_source && (
+              <div className="ob-detail-item">
+                <span className="ob-detail-q">Onde nos encontraram</span>
+                <span className="ob-detail-a">{origemLabel(origin)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* A resposta aberta — a última pergunta do onboarding. */}
+        {profile.expectations && (
+          <div className="chart-card ob-open-card">
+            <div className="chart-header">
+              <h3>O que a pessoa espera da plataforma</h3>
+              <span className="chart-total">última pergunta</span>
+            </div>
+            <p className="ob-open-text">“{profile.expectations}”</p>
+          </div>
+        )}
+
+        {cartaoPlataformas('Quer criar grupo', shareGroups, share.length, false)}
+        {cartaoPlataformas('Quer entrar em grupo', joinGroups, join.length, true)}
+
+        {/* Pessoas que ele convidou para um grupo. */}
+        <div className="chart-card">
+          <div className="chart-header">
+            <h3>Pessoas que ele convidou</h3>
+            <span className="chart-total">
+              {invites.length === 1 ? '1 pessoa' : `${invites.length} pessoas`}
+            </span>
+          </div>
+          {invites.length === 0 ? (
+            <p className="ob-report-empty">Ninguém informado.</p>
+          ) : (
+            <div className="ob-platform-list">
+              {invites.map((iv) => {
+                /* O número é gravado sem o código do país — o link do WhatsApp
+                   precisa dele, senão o wa.me abre a conversa errada. */
+                const waNumber = phoneToWhatsApp(iv.phone);
+                const nacional = phoneToNational(iv.phone);
+
+                if (!waNumber) {
+                  return (
+                    <span key={iv.id} className="ob-invite-chip is-static">
+                      {iv.name}
+                    </span>
+                  );
+                }
+                return (
+                  <a
+                    key={iv.id}
+                    href={`https://wa.me/${waNumber}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ob-invite-chip"
+                    title={`Falar com ${iv.name} no WhatsApp`}
+                  >
+                    <MessageCircle size={12} />
+                    {iv.name}
+                    <span className="ob-invite-phone">{maskPhone(nacional) || ''}</span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Texto da origem do cadastro. "Outro" guarda o que a pessoa digitou em
+ * `lead_source_other` — é a resposta mais informativa das opções livres.
+ */
+function origemLabel(origin) {
+  if (!origin?.lead_source) return '—';
+  const src = String(origin.lead_source).trim();
+  if (src === 'Outro' && origin.lead_source_other) {
+    return `${src} — ${String(origin.lead_source_other).trim()}`;
+  }
+  return src;
 }
 
 export default UserDetail;

@@ -1,0 +1,196 @@
+/* ============================================
+   RODAPÉ DO SITE (páginas públicas)
+   Prefixo `sf-` para não colidir com o `.footer` antigo do Home.css.
+   ============================================ */
+
+.sf-footer {
+  /* Tokens próprios: o rodapé funciona tanto no tema claro/escuro do app
+     quanto nas páginas públicas de SEO (que são sempre escuras). */
+  --sf-bg: var(--surface);
+  --sf-border: var(--border);
+  --sf-title: var(--text-main);
+  --sf-muted: var(--text-muted);
+  --sf-hover: var(--primary);
+
+  position: relative;
+  z-index: 1;
+  background: var(--sf-bg);
+  border-top: 1px solid var(--sf-border);
+  color: var(--sf-muted);
+  padding: 3.5rem 1.5rem 1.75rem;
+}
+
+/* Variante das páginas de SEO (fundo fixo escuro). */
+.sf-footer-dark {
+  --sf-bg: rgba(255, 255, 255, 0.02);
+  --sf-border: rgba(255, 255, 255, 0.07);
+  --sf-title: #ffffff;
+  --sf-muted: rgba(255, 255, 255, 0.45);
+  --sf-hover: #818cf8;
+}
+
+.sf-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.sf-grid {
+  display: grid;
+  grid-template-columns: 2fr repeat(3, 1fr);
+  gap: 3rem;
+}
+
+/* ---------- Marca ---------- */
+.sf-brand-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-title), 'Inter', sans-serif;
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--sf-title);
+  text-decoration: none;
+}
+
+.sf-brand-logo img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.sf-brand-text {
+  margin: 1rem 0 1.25rem;
+  line-height: 1.7;
+  font-size: 0.92rem;
+  max-width: 340px;
+}
+
+/* Botão do grupo VIP */
+.sf-vip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.75rem;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: var(--sf-title);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.sf-vip:hover {
+  background: rgba(139, 92, 246, 0.22);
+  border-color: rgba(139, 92, 246, 0.6);
+  transform: translateY(-1px);
+}
+
+.sf-vip span[aria-hidden] {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.sf-social {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+.sf-social a {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--sf-border);
+  color: var(--sf-muted);
+  transition: all 0.2s ease;
+}
+
+.sf-social a:hover {
+  color: var(--sf-title);
+  border-color: var(--sf-hover);
+  background: rgba(79, 70, 229, 0.1);
+}
+
+/* ---------- Colunas ---------- */
+.sf-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.sf-col h4 {
+  font-family: var(--font-title), 'Inter', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--sf-title);
+  margin-bottom: 0.35rem;
+}
+
+.sf-col a {
+  color: var(--sf-muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.sf-col a:hover {
+  color: var(--sf-hover);
+}
+
+/* ---------- Rodapé de baixo ---------- */
+.sf-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--sf-border);
+  font-size: 0.85rem;
+  color: var(--sf-muted);
+}
+
+.sf-bottom-made {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* ---------- Responsivo ---------- */
+@media (max-width: 1024px) {
+  .sf-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem 2rem;
+  }
+
+  .sf-brand {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .sf-footer {
+    padding: 2.5rem 1.25rem 1.5rem;
+  }
+
+  .sf-grid {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .sf-brand-text {
+    max-width: none;
+  }
+
+  .sf-bottom {
+    justify-content: center;
+    text-align: center;
+    gap: 0.4rem;
+  }
+}

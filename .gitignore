@@ -35,10 +35,21 @@ supabase/*
 !supabase/config.toml
 !supabase/functions
 
+# Personal Access Token do Supabase (publicacao das edge functions)
+.supabase_token
+.supabase_pat
+
 .vercel
 
 # Notas/credenciais locais do agente (contem service_role e tokens)
 .maestri/
 
+# cPanel (host/usuario/token das caixas de e-mail dos grupos)
+.cpanel.json
+.cpanel_token
+
 # Saida temporaria das verificacoes visuais (Playwright)
 .tmp-verify
+
+# Saida dos QA visuais (screenshots das rodadas de teste)
+qa-out/

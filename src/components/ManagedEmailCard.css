@@ -1,0 +1,201 @@
+/* =============================================================
+   CARD — E-MAIL GERENCIADO PELA DIVIDEPASS
+   Aparece na tela do membro (ServiceCredentials) e na tela do
+   dono (ManageGroup). Mostra o e-mail do grupo, o passo a passo
+   para trocar o e-mail da conta da plataforma e o botao de criar
+   a caixa (quando o dono pode).
+   ============================================================= */
+
+.managed-email-card {
+  margin: 1.25rem 0 0;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.managed-email-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+}
+
+.managed-email-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+}
+
+.managed-email-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.15rem;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.managed-email-tag {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--economy-bg, rgba(16, 185, 129, 0.14));
+  color: var(--success, #10B981);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.managed-email-head p {
+  margin: 0;
+  font-size: 0.83rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------- endereco */
+.managed-email-address {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.9rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.managed-email-address code {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-main);
+  word-break: break-all;
+}
+
+.managed-email-copy {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--surface-soft);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.managed-email-copy:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* --------------------------------------------------------- passos */
+.managed-email-steps {
+  margin: 0 0 0.85rem;
+  padding-left: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.managed-email-steps strong { color: var(--text-main); }
+
+.managed-email-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.77rem;
+  color: var(--text-soft);
+}
+
+/* --------------------------------------------------------- acoes */
+.managed-email-intro {
+  margin: 0 0 0.85rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.managed-email-create { width: 100%; justify-content: center; }
+
+.managed-email-toggle-manual {
+  display: block;
+  margin: 0.7rem auto 0;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.managed-email-toggle-manual:hover { color: var(--text-main); }
+
+.managed-email-manual {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+.managed-email-manual-title {
+  margin: 0 0 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.managed-email-label {
+  display: block;
+  margin-bottom: 0.65rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.managed-email-label input {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+  color: var(--text-main);
+  font-size: 0.86rem;
+}
+
+.managed-email-label input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.managed-email-error {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.85rem 0 0;
+  font-size: 0.8rem;
+  color: var(--error);
+}

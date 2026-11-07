@@ -74,6 +74,19 @@
   border-color: rgba(0, 0, 0, 0.08);
 }
 
+/* Via Parceiro (revenda Pulse Coding): acesso privado, vem de parceiro. */
+.group-tag-parceiro {
+  color: #6D28D9;
+  background: rgba(139, 92, 246, 0.14);
+  border-color: rgba(139, 92, 246, 0.32);
+}
+
+[data-theme="light"] .group-tag-parceiro {
+  color: #5B21B6;
+  background: #EDE9FE;
+  border-color: rgba(109, 40, 217, 0.22);
+}
+
 /* Tamanho compacto (linhas apertadas, cards pequenos) */
 .group-tags-sm .group-tag {
   padding: 0.15rem 0.4rem;

@@ -58,6 +58,35 @@ npm run build
 vercel --prod
 ```
 
+### Option 1b: via CLI com o token do projeto (caminho que funciona aqui)
+
+O token de produção está em **`.vercel_token`** (escopo de projeto, prefixo
+`vcp_`). O projeto já está linkado em `.vercel/project.json`
+(`projectId` `prj_eG9hlKQqFvNiK9jr6BQhYD8pntfN`, org `divide-pass`).
+
+```powershell
+cd 'C:\Users\GABRIEL\Documents\DividePass'
+$t = (Get-Content .vercel_token -Raw).Trim()
+vercel --prod --yes --token $t
+```
+
+O build acontece **na Vercel** (não localmente): o CLI sobe o fonte, a Vercel
+roda `npm run build` e faz o alias em **https://dividepass.com**.
+
+> O `.gitignore` já exclui `.env`, `.vercel_token`, `.vercel` e `.tmp-verify`,
+> e o CLI da Vercel usa o `.gitignore` como lista de ignorados — então nenhum
+> segredo sobe. **Não** crie um `.vercelignore` sem copiar essas regras.
+
+### O que a Vercel **não** deploya
+
+A Vercel só publica o **front**. As edge functions e o SQL do Supabase são
+deploy separados, e neste ambiente o PAT do Supabase (Credential Manager,
+alvo `Supabase CLI:supabase`) **só enxerga o projeto `byefit`** — a Management
+API responde `403` para o projeto DividePass. Ou seja:
+
+- `supabase functions deploy ...` → **403** (faça pelo dashboard do Supabase);
+- DDL (migrations) → **sem caminho** (SQL Editor do Supabase).
+
 ### Option 2: Vercel Dashboard
 1. Go to [vercel.com](https://vercel.com)
 2. Import your project from GitHub

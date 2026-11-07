@@ -1,0 +1,238 @@
+/* ==========================================================================
+   DividePass — camada Tailwind v4 + shadcn/ui
+   --------------------------------------------------------------------------
+   Este arquivo e a "camada nova" do design system. Ele NAO reseta o app:
+   o preflight do Tailwind fica de fora de proposito, porque o projeto tem
+   ~95 arquivos de CSS legado e o reset zeraria o visual inteiro.
+
+   Como funciona o espelho com o CSS legado:
+   - `src/index.css` mantem os tokens da marca (--primary, --surface,
+     --text-main, --border...) e o switch de tema via `data-theme`.
+   - O bloco `@theme inline` abaixo traduz o namespace semantico do shadcn
+     (`bg-primary`, `text-muted-foreground`...) para esses tokens.
+   - As utilities entram SEM camada e importadas por ultimo no entrypoint.
+     Regra do CSS: estilo sem camada vence estilo em camada, e no empate
+     vence o ultimo. Entao a utility Tailwind ganha da classe legada de
+     mesmo nome — que e exatamente o comportamento desejado para as telas
+     migradas.
+   ========================================================================== */
+
+/* theme: variaveis do Tailwind (cores, espacamento, fontes, breakpoints) */
+@import "tailwindcss/theme.css" layer(theme);
+
+/* utilities: SEM layer(utilities) — ver nota acima */
+@import "tailwindcss/utilities.css";
+
+/* animacoes used pelos componentes shadcn (animate-in, fade-in, zoom-in...) */
+@import "tw-animate-css";
+
+/* fonte de classes: o CSS vive em src/styles, entao o caminho e relativo a ele */
+@source "../../src";
+@source "../../index.html";
+@source not "../../dist";
+
+/* O projeto alterna tema por atributo (`data-theme`), nao por classe `.dark`.
+   Sem esta variante, os `dark:` dos componentes shadcn nunca casariam. */
+@custom-variant dark (&:is([data-theme="dark"] *));
+
+/* ==========================================================================
+   Tokens da marca — fonte unica de verdade
+   --------------------------------------------------------------------------
+   Movidos de `src/index.css` para ca. O CSS legado (95 arquivos) continua
+   consumindo exatamente os mesmos nomes (`var(--surface)`, `var(--text-main)`,
+   `var(--primary)`...), entao nada quebra; o que muda e que agora a marca e o
+   design system novo moram no mesmo lugar.
+   ========================================================================== */
+
+:root {
+  /* Brand colors - same in both themes */
+  --primary: #4F46E5;
+  --primary-600: #4338CA;
+  --primary-700: #3730A3;
+  --primary-soft: rgba(79, 70, 229, 0.12);
+  --primary-light: #818CF8;
+  --action: #EA580C;
+  --action-light: #FB923C;
+  --action-bg: #FEF9C3;
+  --tech: #0EA5E9;
+  --tech-bg: rgba(14, 165, 233, 0.12);
+  --economy: #10B981;
+  --economy-bg: rgba(16, 185, 129, 0.12);
+  --success: #10B981;
+  --warning: #F59E0B;
+  --error: #EF4444;
+  --info: #0EA5E9;
+
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+
+  --font-title: 'Inter', sans-serif;
+  --font-text: 'Inter', sans-serif;
+}
+
+/* ===== DARK THEME (default) ===== */
+[data-theme="dark"], :root {
+  --secondary: #FFFFFF;
+  --ink: #0F172A;
+  --background: #0F172A;
+  --surface: #1E293B;
+  --surface-raised: rgba(30, 41, 59, 0.84);
+  --surface-soft: #1E293B;
+  --text-main: #FFFFFF;
+  --text-muted: #94A3B8;
+  --text-soft: #64748B;
+  /* `--text` e o atalho usado por varios components (ex.: .btn-outline).
+     Sem ele, `var(--text, #e2e8f0)` caia sempre no fallback claro e o texto
+     sumia no tema claro. */
+  --text: #E2E8F0;
+  --border: #334155;
+  --border-strong: #475569;
+  --ring: rgba(79, 70, 229, 0.3);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 18px 45px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.45);
+}
+
+/* ===== LIGHT THEME ===== */
+[data-theme="light"] {
+  --secondary: #0F172A;
+  --ink: #0F172A;
+  --background: #F8FAFC;
+  --surface: #FFFFFF;
+  --surface-raised: rgba(255, 255, 255, 0.84);
+  --surface-soft: #F1F5F9;
+  --text-main: #0F172A;
+  --text-muted: #64748B;
+  --text-soft: #94A3B8;
+  --text: #0F172A;
+  --border: #E2E8F0;
+  --border-strong: #CBD5E1;
+  --ring: rgba(79, 70, 229, 0.2);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 18px 45px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.12);
+}
+
+@theme inline {
+  --font-sans: var(--font-text);
+
+  /* superficies e texto */
+  --color-background: var(--background);
+  --color-foreground: var(--text-main);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text-main);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text-main);
+
+  /* marca */
+  --color-primary: var(--primary);
+  --color-primary-foreground: #ffffff;
+  --color-action: var(--action);
+  --color-action-foreground: #ffffff;
+
+  /* neutros */
+  --color-secondary: var(--surface-soft);
+  --color-secondary-foreground: var(--text-main);
+  --color-muted: var(--surface-soft);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--surface-soft);
+  --color-accent-foreground: var(--text-main);
+
+  /* bordas e foco */
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--border-strong);
+  --color-ring: var(--primary);
+
+  /* estado */
+  --color-destructive: var(--error);
+  --color-destructive-foreground: #ffffff;
+  --color-success: var(--success);
+  --color-success-foreground: #ffffff;
+  --color-warning: var(--warning);
+  --color-warning-foreground: #0f172a;
+  --color-info: var(--info);
+  --color-info-foreground: #ffffff;
+  --color-tech: var(--tech);
+  --color-tech-foreground: #ffffff;
+  --color-economy: var(--economy);
+  --color-economy-foreground: #ffffff;
+
+  /* series de grafico */
+  --color-chart-1: var(--primary);
+  --color-chart-2: var(--action);
+  --color-chart-3: var(--tech);
+  --color-chart-4: var(--economy);
+  --color-chart-5: var(--warning);
+
+  /* raios: espelham a escala da marca (--radius-xs..lg de 8/10/14/18px).
+     Os valores sao literais e iguais aos do `src/index.css` de proposito:
+     o legado continua mandando no `:root` sem camada e o Tailwind usa a
+     mesma escala, entao nao ha divergencia entre os dois. */
+  --radius: 0.875rem;
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+  --radius-2xl: 26px;
+  --radius-3xl: 32px;
+}
+
+@layer base {
+  /* O preflight nao entra no projeto (o `src/index.css` ja faz o reset do
+     box-sizing/margin/padding). Mas sem isto o `border` do Tailwind v4
+     define so `border-width`, e o `border-style` inicial do navegador e
+     `none` — a borda nao apareceria.
+
+     Importante: zerar a LARGURA tambem. O `border-width` inicial do navegador
+     e `medium` (3px); se so o `border-style` virar `solid`, essa largura
+     padrao aparece em todos os elementos do app. `border: 0 solid` e o
+     mesmo reset do preflight do Tailwind — e as classes utilitarias
+     `border`, `border-t`... sobrescrevem a largura depois. */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border: 0 solid;
+  }
+}
+
+/* ==========================================================================
+   Utilitarios do DividePass
+   Pequenos helpers usados pelas telas migradas (e que o legado ainda nao tem).
+   ========================================================================== */
+
+@layer components {
+  /* Focus ring consistente — o legado nao padroniza o foco de teclado. */
+  .dp-focus-ring {
+    outline: none;
+  }
+  .dp-focus-ring:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Superficie de cartao do design system novo. */
+  .dp-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Tipografia de titulo de secao. */
+  .dp-section-title {
+    font-family: var(--font-title);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    color: var(--text-main);
+  }
+}

@@ -361,7 +361,7 @@ function Announcements() {
                       {a.is_active ? 'Ativo' : 'Inativo'}
                     </span>
                   </td>
-                  <td className="actions-cell">
+                  <td className="actions-cell announcement-actions-cell">
                     <button
                       className="btn btn-outline toggle-btn"
                       onClick={() => toggleActive(a.id, a.is_active)}

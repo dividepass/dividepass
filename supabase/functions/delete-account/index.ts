@@ -73,16 +73,11 @@ Deno.serve(async (req) => {
     await supabaseAdmin.from("notifications").delete().eq("user_id", userId);
 
     // 7. Delete wallet data
-    const { data: wallet } = await supabaseAdmin
-      .from("user_wallets")
-      .select("id")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (wallet) {
-      await supabaseAdmin.from("wallet_transactions").delete().eq("wallet_id", wallet.id);
-      await supabaseAdmin.from("user_wallets").delete().eq("user_id", userId);
-    }
+    // `wallet_transactions` liga em users por user_id (NÃO por wallet_id):
+    // o delete por wallet_id nunca apagava nada e deixava o lançamento
+    // pendurado. Aqui apaga pelo user_id, que vale nos dois schemas.
+    await supabaseAdmin.from("wallet_transactions").delete().eq("user_id", userId);
+    await supabaseAdmin.from("user_wallets").delete().eq("user_id", userId);
 
     // 8. Delete activity logs
     await supabaseAdmin.from("activity_logs").delete().eq("user_id", userId);
@@ -93,8 +88,37 @@ Deno.serve(async (req) => {
     // 10. Delete payment attempts
     await supabaseAdmin.from("payment_attempts").delete().eq("user_id", userId);
 
+    // 10b. Lista de espera ("Avise-me quando houver uma vaga") e votos.
+    //     Estas linhas NÃO têm ON DELETE CASCADE: sem esta limpeza o
+    //     `DELETE FROM public.users` abaixo falha com violação de FK e a
+    //     exclusão da conta acontece em silêncio (o auth some, o profile
+    //     fica). É o que trava quem está na lista de espera de um serviço.
+    await supabaseAdmin.from("group_interest").delete().eq("user_id", userId);
+    await supabaseAdmin.from("service_votes").delete().eq("user_id", userId);
+
+    // 10c. Eventos de plataforma: `platform_events.created_by` aponta para
+    //      users(id) SEM ON DELETE CASCADE. Como TODO login grava um evento
+    //      ("user_login"), essa linha sozinha fazia o `DELETE FROM public.users`
+    //      falhar com violação de FK — e a conta ficava órfã: o auth sumia,
+    //      o perfil não.
+    await supabaseAdmin.from("platform_events").delete().eq("created_by", userId);
+
     // 11. Delete from users table
-    await supabaseAdmin.from("users").delete().eq("id", userId);
+    const { error: deleteUsersError } = await supabaseAdmin
+      .from("users")
+      .delete()
+      .eq("id", userId);
+
+    if (deleteUsersError) {
+      console.error("[delete-account] Falha ao apagar public.users:", deleteUsersError.message);
+      return new Response(
+        JSON.stringify({
+          error: "delete_failed",
+          message: `Não foi possível apagar o perfil: ${deleteUsersError.message}`,
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // 12. Delete from Supabase Auth
     const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(userId);

@@ -18,6 +18,7 @@ import {
   User,
   MessageCircle,
   CreditCard,
+  RefreshCw,
   X
 } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
@@ -33,10 +34,12 @@ import {
 } from '../../lib/subscriptionAccess';
 import { formatDateBR } from '../../lib/dateFormat';
 import GroupChat from '../../components/GroupChat';
+import GroupRules from '../../components/GroupRules';
 import ContactAdminModal from '../../components/ContactAdminModal';
 import SubscriptionRenewalModal from '../../components/SubscriptionRenewalModal';
 import RenewalReminderCard from '../../components/RenewalReminderCard';
 import EmailCodeSearch from '../../components/EmailCodeSearch';
+import ManagedEmailCard from '../../components/ManagedEmailCard';
 import './ServiceCredentials.css';
 
 function ServiceCredentials() {
@@ -49,6 +52,9 @@ function ServiceCredentials() {
 
   const [showCredentials, setShowCredentials] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  // O dono pode desligar o chat do grupo. A coluna `chat_enabled` ainda pode
+  // nao existir no banco (migration) — nesse caso o chat continua liberado.
+  const [chatEnabled, setChatEnabled] = useState(true);
   const [copiedField, setCopiedField] = useState(null);
   const [showPasswords, setShowPasswords] = useState({});
 
@@ -67,6 +73,12 @@ function ServiceCredentials() {
   const [accessOverdue, setAccessOverdue] = useState(false);
   const [showBlockedModal, setShowBlockedModal] = useState(false);
   const [showRenewal, setShowRenewal] = useState(false);
+  // A CONSULTA de acesso falhou (rede/banco). Isso NÃO é "acesso negado":
+  // a tela mostra "não foi possível verificar" com botão de tentar de novo.
+  // Negar por causa de um erro passageiro trancava fora quem tinha pago.
+  const [accessCheckError, setAccessCheckError] = useState(false);
+  // Contador que refaz a verificação (usado pelo botão "Tentar de novo").
+  const [accessRetry, setAccessRetry] = useState(0);
 
   const activeServices = getActiveServices();
   const service = streamingServices.find(s => s.id === serviceId || s.slug === serviceId);
@@ -99,90 +111,139 @@ function ServiceCredentials() {
             .limit(1)
             .maybeSingle(),
           supabase.from('group_members')
-            .select('status, payment_status')
+            .select('status, payment_status, subscription_deadline')
             .eq('group_id', targetGroupId)
             .eq('user_id', user.id)
+            .limit(1)
             .maybeSingle()
         ]);
 
         if (cancelled) return;
 
         const sub = subRes.data;
-        const memberStatus = memberRes.data?.status;
+        const member = memberRes.data;
+        const memberStatus = member?.status;
 
-        // Falha na consulta (inclusive a coluna `renewal_due_at` ainda não
-        // existir no banco): BLOQUEAR o acesso. Sem conseguir ler a
-        // assinatura não há como dizer que o período está pago — continuar
-        // liberado entregaria credencial de assinatura vencida. O mesmo
-        // fail-closed do `catch` abaixo.
+        // ── FALHA DE CONSULTA: NÃO É "ACESSO NEGADO" ────────────────────
+        // Erro de rede/banco (inclusive coluna nova que ainda não existe)
+        // não diz nada sobre o pagamento. Negar aqui trancava fora quem
+        // tinha pago, e a tela acusava a pessoa ("saiu do grupo") — o que
+        // é mentira. Agora é "não foi possível verificar" + tentar de novo.
         if (subRes.error || memberRes.error) {
           console.error(
             '[ServiceCredentials] Erro ao verificar assinatura/membro:',
             subRes.error || memberRes.error
           );
-          setVerifiedAccess(false);
-          return;
-        }
-
-        // Se os dados retornaram null (RLS bloqueia ou registro não existe), bloquear acesso
-        if (!sub && !memberRes.data) {
-          setVerifiedAccess(false);
-          return;
-        }
-
-        // Saiu do grupo: sem caminho para reativar por aqui.
-        // ('cancelled' é o que o cancelamento grava; 'left' e 'inactive' são
-        // legados que também significam "fora do grupo".)
-        if (memberStatus === 'cancelled' || memberStatus === 'left' || memberStatus === 'inactive') {
-          setVerifiedAccess(false);
+          setAccessCheckError(true);
+          setVerifiedAccess(null);
+          setAccessSubscription(null);
           setAccessBlocked(false);
           setAccessOverdue(false);
           return;
         }
+        setAccessCheckError(false);
 
-        setAccessSubscription(sub || null);
+        // ── A ASSINATURA É A FONTE DA VERDADE DO ACESSO ────────────────────
+        //
+        // O vínculo em `group_members` é um espelho do grupo; a assinatura é
+        // o que a pessoa PAGOU. Quando os dois discordam, quem manda é o
+        // pagamento.
+        //
+        // BUG CORRIGIDO (01/11/2026): antes, um vínculo com status legado
+        // ('cancelled'/'left'/'inactive') negava o acesso na hora, sem olhar
+        // a assinatura — mesmo com a assinatura ativa e o período pago até
+        // janeiro/2027. O resultado era a tela "Acesso Negado" para gente que
+        // tinha pago (a Carol e a Maysa, por exemplo). Agora a assinatura vem
+        // primeiro: quem pagou tem acesso, mesmo que o espelho do grupo ainda
+        // esteja defasado.
+        if (sub) {
+          // O estado vem do módulo compartilhado: ativa, atrasada, pendente ou
+          // cancelada — é a mesma regra que o painel e o backend aplicam.
+          const accessState = subscriptionAccessState(sub);
 
-        // Sem assinatura em si (membro do grupo sem registro de assinatura):
-        // o acesso continua como antes, ligado à associação ao grupo.
-        if (!sub) {
+          // Assinatura cancelada (carência vencida ou cancelada no banco): o
+          // acesso está encerrado, mas a pessoa ainda está no grupo — dá para
+          // reativar pagando de novo.
+          if (accessState === ACCESS_CANCELLED) {
+            setVerifiedAccess(false);
+            setAccessBlocked(true);
+            setAccessOverdue(false);
+            setAccessSubscription(sub);
+            return;
+          }
+
+          // Renovação vencida: a assinatura continua de pé, mas o período pago
+          // acabou. As credenciais ficam bloqueadas até a regularização — e o
+          // botão passa a exigir o pagamento.
+          if (accessState === ACCESS_OVERDUE) {
+            setVerifiedAccess(true);
+            setAccessBlocked(true);
+            setAccessOverdue(true);
+            setAccessSubscription(sub);
+            return;
+          }
+
+          // Em dia (ou pagamento ainda em aberto) → libera.
           setVerifiedAccess(true);
           setAccessBlocked(false);
           setAccessOverdue(false);
+          setAccessSubscription(sub);
           return;
         }
 
-        // O estado vem do módulo compartilhado: ativa, atrasada, pendente ou
-        // cancelada — é a mesma regra que o painel e o backend aplicam.
-        const accessState = subscriptionAccessState(sub);
+        // ── SEM ASSINATURA: O PAGAMENTO NO VÍNCULO MANDA ───────────────
+        //
+        // Há grupos em que o vínculo existe e está PAGO (o espelho tem
+        // `payment_status = 'active'` e prazo vigente) mas a linha de
+        // `user_subscriptions` não existe ou não está visível. O painel e
+        // o cron já tratam isso como membro ativo — a tela de credenciais
+        // precisa usar a MESMA regra, senão quem pagou fica trancado fora
+        // com um "Acesso Negado" que não faz sentido.
+        //
+        // (Regra do banco: pagamento ativo + prazo ainda vigente = membro
+        // ATIVO. O `status` legado do espelho — 'inactive'/'cancelled' — é
+        // lixo de um fluxo antigo e NÃO pode custar o acesso de quem pagou.)
+        const pagamentoAtivo = member?.payment_status === 'active';
+        const espelhoAtivo = memberStatus === 'active';
+        const prazo = member?.subscription_deadline
+          ? new Date(member.subscription_deadline).getTime()
+          : null;
+        const prazoVigente = prazo !== null && prazo > Date.now();
+        const prazoVencido = prazo !== null && prazo <= Date.now();
 
-        // Assinatura cancelada (carência vencida ou cancelada no banco): o
-        // acesso está encerrado, mas a pessoa ainda está no grupo — dá para
-        // reativar pagando de novo.
-        if (accessState === ACCESS_CANCELLED) {
-          setVerifiedAccess(false);
-          setAccessBlocked(true);
-          setAccessOverdue(false);
-          return;
-        }
-
-        // Renovação vencida: a assinatura continua de pé, mas o período pago
-        // acabou. As credenciais ficam bloqueadas até a regularização — e o
-        // botão passa a exigir o pagamento.
-        if (accessState === ACCESS_OVERDUE) {
+        // Pagou e o período vale → entra.
+        // Pagou e a data "paga até" NÃO foi gravada no vínculo (falta de dado,
+        // não falta de pagamento) → entra, desde que o espelho esteja ativo.
+        // Período vencido sem assinatura → o acesso está encerrado.
+        if (pagamentoAtivo && (prazoVigente || (prazo === null && espelhoAtivo))) {
           setVerifiedAccess(true);
+          setAccessBlocked(false);
+          setAccessOverdue(false);
+          setAccessSubscription(null);
+          return;
+        }
+
+        if (pagamentoAtivo && prazoVencido) {
+          // Pagou, mas o período acabou: mostra o aviso de renovação.
+          setVerifiedAccess(false);
           setAccessBlocked(true);
           setAccessOverdue(true);
+          setAccessSubscription(null);
           return;
         }
 
-        // Em dia (ou pagamento ainda em aberto) → libera
-        setVerifiedAccess(true);
+        // Saiu do grupo (ou nunca teve assinatura aqui): sem caminho para
+        // reativar por esta tela. O aviso é objetivo — e a tela oferece o
+        // grupo que ela TEM (quando existe), em vez de só accusar.
+        setVerifiedAccess(false);
         setAccessBlocked(false);
         setAccessOverdue(false);
+        setAccessSubscription(null);
       } catch (e) {
         console.error('[ServiceCredentials] verify error:', e);
-        // Em caso de erro, BLOQUEAR acesso (fail-closed)
-        setVerifiedAccess(false);
+        // Erro inesperado também NÃO é "acesso negado".
+        setAccessCheckError(true);
+        setVerifiedAccess(null);
       } finally {
         if (!cancelled) setVerifyingAccess(false);
       }
@@ -190,7 +251,7 @@ function ServiceCredentials() {
 
     verify();
     return () => { cancelled = true; };
-  }, [user?.id, groupId, activeService?.group?.id]);
+  }, [user?.id, groupId, activeService?.group?.id, accessRetry]);
 
   // Verificar se o usuário ainda é membro ativo do grupo
   const isStillMember = activeService?.group?.members?.some(m => m.user_id === user?.id && m.status === 'active');
@@ -216,6 +277,28 @@ function ServiceCredentials() {
     fetchPayment();
     return () => { cancelled = true; };
   }, [user, activeService?.group?.id]);
+
+  /* O grupo pode ter o chat desligado pelo dono. A coluna `chat_enabled`
+     entra por migration — se ela ainda nao existir no banco a query falha e
+     o chat continua liberado (comportamento antigo). */
+  useEffect(() => {
+    const targetGroupId = activeService?.group?.id;
+    if (!targetGroupId) return undefined;
+    let cancelled = false;
+
+    const fetchChatFlag = async () => {
+      const { data, error } = await supabase
+        .from('groups')
+        .select('id, chat_enabled')
+        .eq('id', targetGroupId)
+        .maybeSingle();
+      if (cancelled || error || !data) return;
+      setChatEnabled(data.chat_enabled !== false);
+    };
+
+    fetchChatFlag();
+    return () => { cancelled = true; };
+  }, [activeService?.group?.id]);
 
   const togglePassword = (index) => {
     setShowPasswords(prev => ({ ...prev, [index]: !prev[index] }));
@@ -271,7 +354,50 @@ function ServiceCredentials() {
     );
   }
 
+  if (accessCheckError) {
+    // Erro passageiro de rede/banco. A pessoa NÃO perdeu o acesso — e a tela
+    // não pode dizer que perdeu (foi exatamente esse aviso que assustou a
+    // cliente em 02/11/2026).
+    return (
+      <div className="fade-in credentials-page">
+        <button onClick={() => navigate(-1)} className="back-btn">
+          <ChevronLeft size={18} />
+          Voltar
+        </button>
+        <div className="access-denied">
+          <RefreshCw size={48} />
+          <h2>Não foi possível verificar</h2>
+          <p>
+            Não conseguimos conferir seu acesso ao {service.name} agora. Isso não significa que
+            sua assinatura foi cancelada — tente de novo em instantes.
+          </p>
+          <div className="access-denied-actions">
+            <button className="btn btn-primary" onClick={() => setAccessRetry(r => r + 1)}>
+              <RefreshCw size={16} /> Tentar de novo
+            </button>
+            <Link to={`/dashboard/catalog/${service.slug || service.id}`} className="btn btn-primary">
+              Ver Grupos Disponíveis
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (verifiedAccess === false) {
+    // Os grupos que ELA tem para este serviço. Quando o link aponta para um
+    // grupo que não é dela, a saída é o grupo certo — não uma acusação.
+    const meusGrupos = activeServices.filter(
+      item => item.service.id === serviceId || item.service.slug === serviceId
+    );
+    const grupoCerto = meusGrupos.find(item => item.group.id === groupId) || meusGrupos[0];
+
+    const mensagem = accessBlocked && accessSubscription
+      ? `Sua assinatura do ${service.name} foi cancelada. Pague de novo para reativar o acesso.`
+      : accessBlocked
+        ? `O período pago do ${service.name} acabou. Renove para voltar a usar as credenciais.`
+        : `Você não tem assinatura ativa do ${service.name} neste grupo.`;
+
     return (
       <div className="fade-in credentials-page">
         <button onClick={() => navigate(-1)} className="back-btn">
@@ -281,16 +407,20 @@ function ServiceCredentials() {
         <div className="access-denied">
           <AlertTriangle size={48} />
           <h2>Acesso Negado</h2>
-          <p>
-            {accessBlocked && accessSubscription
-              ? `Sua assinatura do ${service.name} foi cancelada. Pague de novo para reativar o acesso.`
-              : `Seu acesso ao ${service.name} foi encerrado. Sua assinatura foi cancelada ou você saiu do grupo.`}
-          </p>
+          <p>{mensagem}</p>
           <div className="access-denied-actions">
             {accessBlocked && accessSubscription && (
               <button className="btn btn-primary" onClick={() => setShowRenewal(true)}>
                 <CreditCard size={16} /> Renovar assinatura
               </button>
+            )}
+            {grupoCerto && (
+              <Link
+                to={`/dashboard/credentials/${grupoCerto.service.slug || grupoCerto.service.id}?group=${grupoCerto.group.id}`}
+                className="btn btn-primary"
+              >
+                Abrir meu grupo {grupoCerto.group.name ? `· ${grupoCerto.group.name}` : ''}
+              </Link>
             )}
             <Link to={`/dashboard/catalog/${service.slug || service.id}`} className="btn btn-primary">
               Ver Grupos Disponíveis
@@ -401,9 +531,18 @@ function ServiceCredentials() {
   }
 
   const { group } = activeService;
-  const mainCredential = Array.isArray(group.credentials) && group.credentials.length > 0
-    ? group.credentials[0]
-    : null;
+
+  // ── Qual credencial é a MINHA? ────────────────────────────────────────
+  // Um grupo pode ter VÁRIAS credenciais (o UNIQUE de group_id foi dropado):
+  // a conta compartilhada dos grupos comuns e, nos grupos "Via Parceiro"
+  // (revenda Pulse Coding), uma conta PRIVADA por cliente.
+  //
+  // Pegar `credentials[0]` mostrava a conta de OUTRO cliente. A ordem
+  // correta é: primeiro a credencial atribuída a mim; se não houver nenhuma
+  // atribuída, cai na primeira sem atribuição (a credencial compartilhada).
+  const credenciais = Array.isArray(group.credentials) ? group.credentials : [];
+  const minhaCredencial = credenciais.find(c => c.assigned_to && c.assigned_to === user?.id) || null;
+  const mainCredential = minhaCredencial || credenciais.find(c => !c.assigned_to) || credenciais[0] || null;
   const hasProfiles = mainCredential?.has_profiles;
   const myProfile = hasProfiles && group.profiles
     ? group.profiles.find(p => p.assigned_to === user?.id)
@@ -503,13 +642,15 @@ function ServiceCredentials() {
               <Shield size={18} />
               {showCredentials ? 'Ocultar Credenciais' : 'Acessar Credenciais'}
             </button>
-            <button
-              className={`btn btn-outline chat-toggle-btn ${showChat ? 'active' : ''}`}
-              onClick={() => setShowChat(!showChat)}
-            >
-              <MessageCircle size={18} />
-              Chat do Grupo
-            </button>
+            {chatEnabled && (
+              <button
+                className={`btn btn-outline chat-toggle-btn ${showChat ? 'active' : ''}`}
+                onClick={() => setShowChat(!showChat)}
+              >
+                <MessageCircle size={18} />
+                Chat do Grupo
+              </button>
+            )}
           </div>
         </div>
 
@@ -520,7 +661,7 @@ function ServiceCredentials() {
                 <ScrollText size={20} />
                 <strong>Regras do Grupo</strong>
               </div>
-              <p>{group.rules}</p>
+              <GroupRules rules={group.rules} />
             </div>
           )}
 
@@ -600,6 +741,13 @@ function ServiceCredentials() {
                   : <p>Não compartilhe suas credenciais com ninguém.</p>
                 }
               </div>
+              {/* E-mail gerenciado pela DividePass: o endereco do grupo e o
+                  passo a passo para trocar o e-mail da conta da plataforma.
+                  Nao aparece quando o grupo nao tem caixa gerenciada. */}
+              <ManagedEmailCard
+                groupId={activeService?.group?.id}
+                serviceName={service?.name || ''}
+              />
               {group.email_code_enabled && (
                 <EmailCodeSearch
                   groupId={activeService?.group?.id}
@@ -676,7 +824,7 @@ function ServiceCredentials() {
       </div>
       )}
 
-      {showChat && (
+      {showChat && chatEnabled && (
         <GroupChat groupId={group.id} />
       )}
 

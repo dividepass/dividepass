@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Plus, Loader2, ChevronLeft, Pencil, Trash2, Heart, Search, X,
-  AlertCircle, CheckCircle, Clock, Ban, MessageSquare, Shield,
+  AlertCircle, CheckCircle, Clock, Ban, MessageSquare,
   DollarSign, Users, TrendingUp, CreditCard, Activity, BarChart3
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import GroupRules from '../../components/GroupRules';
 import InterestList from './InterestList';
 import './Platforms.css';
 
@@ -16,7 +17,6 @@ const TABS = [
 ];
 
 function Platforms() {
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('platforms');
 
   return (
@@ -115,7 +115,7 @@ function PlatformsTab() {
             <button
               key={platform.id}
               className={`platform-card ${platform.status !== 'active' ? 'platform-inactive' : ''}`}
-              onClick={() => navigate(`/admin/platforms/${platform.id}/edit`)}
+              onClick={() => navigate(`/admin/platforms/${platform.slug || platform.id}/edit`)}
               style={{ '--platform-color': platform.color }}
             >
               <div className="platform-icon" style={{ backgroundColor: platform.color }}>
@@ -249,6 +249,22 @@ function GroupsTab() {
           event_type: 'group_approved',
           metadata: JSON.stringify({ group_id: groupId }),
         });
+      }
+
+      // Avisa quem salvou "Avise-me quando houver uma vaga" neste serviço.
+      // Best-effort: falhar no aviso não pode derrubar a aprovação do grupo.
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-service-watchers`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ group_id: groupId }),
+        });
+      } catch (notifyErr) {
+        console.warn('[notify-service-watchers] Não foi possível avisar a lista de espera:', notifyErr);
       }
 
       setPendingGroups(prev => prev.filter(g => g.id !== groupId));
@@ -564,7 +580,10 @@ function GroupsTab() {
                       {group.has_slot_limit && <span>{group.max_size} vagas</span>}
                     </div>
                     {group.rules && (
-                      <div className="pending-group-rules"><strong>Regras:</strong> {group.rules}</div>
+                      <div className="pending-group-rules">
+                        <strong>Regras:</strong>
+                        <GroupRules rules={group.rules} />
+                      </div>
                     )}
                     <div className="pending-group-actions">
                       <button className="approve-btn" onClick={() => handleApproveGroup(group.id)} disabled={processingId === group.id}>

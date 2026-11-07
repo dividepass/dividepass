@@ -30,6 +30,10 @@ const OUT_DIR = path.join(ROOT, ".tmp-verify", "painel");
 
 /** Funções que mudaram nesta rodada + as que embutem `confirm-payment`. */
 const FUNCOES = [
+  // Tier 0 — e-mail gerenciado do grupo com IA (rodada de 31/10/2026)
+  "provision-group-mailbox",
+  // Tier 0 — avisa a lista de espera quando abre vaga (rodada de 01/11/2026)
+  "notify-service-watchers",
   // Tier 0 — gestão de e-mail (rodada de 27/10/2026, e-mail do cliente)
   "send-lifecycle-emails",
   "send-welcome-email",
@@ -44,6 +48,11 @@ const FUNCOES = [
   "force-confirm-payment",
   "create-payment",
   "mercado-pago-webhook",
+  // Tier 2 — reconciliação: "paguei e não fui add ao grupo" (rodada de 01/11/2026)
+  "reconcile-payments",
+  // Tier 2 — exclusão de conta (a versão corrigida limpa platform_events e
+  // group_interest antes do DELETE, senão o perfil fica órfão no banco)
+  "delete-account",
   // Tier 3 — webhooks que embutem `confirm-payment/index.ts`
   "iopay-webhook",
   "asaas-webhook",
@@ -73,6 +82,33 @@ function resolverLocal(fromFile, spec) {
  *  - corpo (sem os imports)
  *  - exports de valor / exports de tipo
  */
+/**
+ * Onde termina a declaração de um `type`/`interface` que começa em `inicio`.
+ * (Precisa achar o fim porque o tipo pode ocupar várias linhas.)
+ */
+function fimDeclaracaoTipo(src, inicio) {
+  let depth = 0;
+  let sawBrace = false;
+  for (let i = inicio; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "{") {
+      depth++;
+      sawBrace = true;
+    } else if (ch === "}") {
+      depth--;
+      if (depth <= 0 && sawBrace) {
+        let j = i + 1;
+        while (j < src.length && /\s/.test(src[j])) j++;
+        if (src[j] === ";") j++;
+        return j;
+      }
+    } else if (ch === ";" && depth === 0) {
+      return i + 1;
+    }
+  }
+  return src.length;
+}
+
 function analisar(absPath) {
   const src = ler(absPath);
   const externos = [];
@@ -80,7 +116,25 @@ function analisar(absPath) {
   const dinâmicos = [];
   const exportsValor = [];
   const exportsTipo = [];
+  const tipos = [];
   let corpo = src;
+
+  // ── Tipos (type/interface) ───────────────────────────────────────────────
+  // No arquivo empacotado cada módulo vira uma IIFE. Um `export type X`
+  // ficaria preso dentro dela e quem o importa (`import { type X }`) ficaria
+  // com "Cannot find name 'X'" — ERRO DE TIPO no deploy. Por isso os tipos
+  // são tirados do corpo e emitidos no TOPO do arquivo, onde todos os
+  // módulos enxergam.
+  const RE_TIPO = /^[ \t]*export\s+(type|interface)\s+([A-Za-z0-9_$]+)/gm;
+  let t;
+  while ((t = RE_TIPO.exec(corpo)) !== null) {
+    const fim = fimDeclaracaoTipo(corpo, t.index);
+    const texto = corpo.slice(t.index, fim).trim();
+    corpo = corpo.slice(0, t.index) + corpo.slice(fim);
+    tipos.push({ nome: t[2], texto: texto.replace(/^export\s+/, "") });
+    exportsTipo.push(t[2]);
+    RE_TIPO.lastIndex = t.index;
+  }
 
   // O import estático pode ocupar VARIAS LINHAS (é o formato padrão do
   // TypeScript quando há mais de um símbolo):
@@ -153,7 +207,7 @@ function analisar(absPath) {
     corpo = corpo.replace(/const __default__ = /g, "export default ");
   }
 
-  return { src, externos, locais, dinâmicos, exportsValor, exportsTipo, corpo };
+  return { src, externos, locais, dinâmicos, exportsValor, exportsTipo, tipos, corpo };
 }
 
 /**
@@ -162,10 +216,27 @@ function analisar(absPath) {
  *  - `const mod = await import("./x.ts")` -> `const mod = m_x;`
  *  - `const { a } = await import("./x.ts")` -> `const { a } = m_x;`
  */
-function linhaVinculo(d, indent = "") {
+function linhaVinculo(d, indent = "", tiposAlvo = []) {
   const nomes = d.nomes.trim();
   if (nomes.startsWith("{")) {
-    const dentro = nomes.replace(/[{}]/g, "").replace(/^type\s+/, "").trim();
+    // `import { type Foo, bar } from "./x.ts"` — o modificador `type` é de
+    // TIPOS e não existe em runtime. Se ele for carried para o destructuring
+    // gerado (`const { type Foo } = m_x;`), o arquivo empacotado fica com
+    // sintaxe inválida para JavaScript puro (só o stripper de tipos do Deno
+    // perdoa). Aqui cada especificador é limpo individualmente.
+    //
+    // E tipos nem entram no destructuring: eles foram içados para o topo do
+    // arquivo, onde já estão no escopo de todos os módulos.
+    const dentro = nomes
+      .replace(/[{}]/g, "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => s.replace(/^type\s+/, "").trim())
+      .filter(Boolean)
+      .filter((s) => !tiposAlvo.includes(s.split(/\s+as\s+/)[0].trim()))
+      .join(", ");
+    if (!dentro.trim()) return "";
     return `${indent}const { ${dentro} } = ${slug(d.abs)};`;
   }
   return `${indent}const ${nomes} = ${slug(d.abs)};`;
@@ -225,6 +296,29 @@ function empacotar(nomeFuncao) {
     partes.push("");
   }
 
+  // ── Tipos no topo do arquivo ─────────────────────────────────────────────
+  // Escopo de arquivo: assim todo módulo (que é uma IIFE) enxerga os tipos
+  // declarados nos outros módulos — inclusive os importados via
+  // `import { type X }`.
+  const tiposTopo = [];
+  const nomesTipo = new Set();
+  for (const absPath of ordem) {
+    const { info } = visitados.get(absPath);
+    for (const t of info.tipos || []) {
+      if (nomesTipo.has(t.nome)) {
+        console.warn(`  ! tipo duplicado "${t.nome}" em ${absPath} — mantido o primeiro`);
+        continue;
+      }
+      nomesTipo.add(t.nome);
+      tiposTopo.push(t.texto);
+    }
+  }
+  if (tiposTopo.length) {
+    partes.push("// ── tipos (escopo do arquivo inteiro) " + "─".repeat(30));
+    for (const t of tiposTopo) partes.push(t);
+    partes.push("");
+  }
+
   for (const absPath of ordem) {
     const { info, deps } = visitados.get(absPath);
     if (absPath === entryAbs) continue; // o entrypoint fica no fim, no topo do escopo
@@ -233,7 +327,9 @@ function empacotar(nomeFuncao) {
     partes.push(`const ${slug(absPath)} = (() => {`);
     for (const d of deps) {
       if (!d.nomes || !d.nomes.trim()) continue;
-      partes.push(linhaVinculo(d, "  "));
+      const tiposAlvo = visitados.get(d.abs)?.info?.exportsTipo || [];
+      const linha = linhaVinculo(d, "  ", tiposAlvo);
+      if (linha) partes.push(linha);
     }
     if (deps.length) partes.push("");
     partes.push(info.corpo.trim());

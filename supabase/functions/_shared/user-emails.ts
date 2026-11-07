@@ -33,7 +33,9 @@ export type EmailEventType =
   | "renewal_reminder"
   | "overdue_notice"
   | "payment_failed"
-  | "subscription_cancelled";
+  | "subscription_cancelled"
+  | "payment_received"
+  | "member_joined";
 
 export type SendUserEmailInput = {
   /** Tipo do evento — vira o `event_type` do log e o filtro do painel. */
@@ -174,6 +176,10 @@ export type EmailSettings = {
   overdue: boolean;
   paymentFailed: boolean;
   cancelled: boolean;
+  /** "Recebemos o seu pagamento" — sai quando o gateway aprova. */
+  paymentReceived: boolean;
+  /** "Sua assinatura foi criada / você entrou no grupo". */
+  memberJoined: boolean;
   /** Dias de antecedência do lembrete de renovação. */
   reminderDays: number;
   /** Dias (dentro da carência) em que o aviso de atraso é repetido. */
@@ -219,6 +225,8 @@ export async function loadEmailSettings(
     overdue: toBool(map.email_overdue_enabled, true),
     paymentFailed: toBool(map.email_payment_failed_enabled, true),
     cancelled: toBool(map.email_cancelled_enabled, true),
+    paymentReceived: toBool(map.email_payment_received_enabled, true),
+    memberJoined: toBool(map.email_member_joined_enabled, true),
     reminderDays: toInt(map.email_renewal_reminder_days, 3),
     overdueRepeatDays: toInt(map.email_overdue_repeat_days, 3),
   };
@@ -242,6 +250,10 @@ export function isEventEnabled(
       return settings.paymentFailed;
     case "subscription_cancelled":
       return settings.cancelled;
+    case "payment_received":
+      return settings.paymentReceived;
+    case "member_joined":
+      return settings.memberJoined;
     default:
       return false;
   }

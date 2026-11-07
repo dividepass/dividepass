@@ -6,7 +6,13 @@ import {
   ChevronLeft, ChevronRight, AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { isSubscriptionOverdue, renewalDeadline } from '../../lib/subscriptionAccess';
+import {
+  isSubscriptionOverdue,
+  renewalDeadline,
+  subscriptionAccessLabel,
+  subscriptionAccessState,
+  subscriptionRenewalDate,
+} from '../../lib/subscriptionAccess';
 import { formatDateBR } from '../../lib/dateFormat';
 import {
   RENEWAL_WINDOW_LABELS,
@@ -57,16 +63,6 @@ const TABLE_SELECT = `
   service:service_id (id, name, full_name),
   coupon:coupon_id (id, code, discount_type, discount_value)
 `;
-
-const statusLabel = (status) => ({
-  active: 'Ativa',
-  inactive: 'Inativa',
-  cancelled: 'Cancelada',
-  expired: 'Expirada',
-  pending: 'Pendente',
-  overdue: 'Atrasada',
-  first_attempt: 'Primeira tentativa',
-}[status] || status || '—');
 
 const paymentStatusLabel = (s) => ({
   paid: 'Pago', pending: 'Pendente', failed: 'Falhou', cancelled: 'Cancelado',
@@ -886,9 +882,21 @@ function Subscriptions() {
 
                       <td>
                         <div className="date-cell">
-                          <span className={isSubscriptionOverdue(sub) ? 'renewal-overdue-text' : isRenewalSoon(sub) ? 'renewal-month' : ''}>
-                            {sub.next_charge_at ? formatDateBR(sub.next_charge_at) : '—'}
-                          </span>
+                          {/*
+                            A coluna é "Próxima cobrança" = o vencimento do
+                            ciclo (`renewal_due_at`). O `next_charge_at` anda a
+                            cada tentativa de cartão, então usá-lo aqui mostrava
+                            uma data diferente da que o "vence em N dias" (que
+                            usa o vencimento) contava.
+                          */}
+                          {(() => {
+                            const raw = subscriptionRenewalDate(sub);
+                            return (
+                              <span className={isSubscriptionOverdue(sub) ? 'renewal-overdue-text' : isRenewalSoon(sub) ? 'renewal-month' : ''}>
+                                {raw ? formatDateBR(raw) : '—'}
+                              </span>
+                            );
+                          })()}
                           {dueLabel(sub) && (
                             <span className={`subs-due ${isSubscriptionOverdue(sub) ? 'is-overdue' : ''}`}>
                               {dueLabel(sub)}
@@ -899,8 +907,17 @@ function Subscriptions() {
 
                       <td>
                         <div className="status-cell">
-                          <span className={`status-badge ${sub.status}`}>
-                            {statusLabel(sub.status)}
+                          {/*
+                            O badge mostra o ESTADO DERIVADO (a mesma regra do
+                            app do usuário: Ativa / Atrasada / Cancelada /
+                            Pendente), não o `status` cru do banco. Assim a tela
+                            não anuncia "Cancelada" enquanto a renovação ainda
+                            está no futuro — e "Expirada" some do vocabulary
+                            (virou "Atrasada", que é o que a carência de 7 dias
+                            significa).
+                          */}
+                          <span className={`status-badge ${subscriptionAccessState(sub)}`}>
+                            {subscriptionAccessLabel(sub)}
                           </span>
                           {badges.map((badge) => (
                             <span key={badge.className} className={`status-badge ${badge.className}`}>
@@ -1059,7 +1076,9 @@ function Subscriptions() {
                 <div className="detail-row">
                   <div className="detail-item">
                     <label>Status</label>
-                    <span className={`status-badge ${detailSub.status}`}>{statusLabel(detailSub.status)}</span>
+                    <span className={`status-badge ${subscriptionAccessState(detailSub)}`}>
+                      {subscriptionAccessLabel(detailSub)}
+                    </span>
                     {isSubscriptionOverdue(detailSub) && (
                       <span className="status-badge overdue" style={{ marginLeft: 8 }}>Vencida</span>
                     )}

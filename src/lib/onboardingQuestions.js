@@ -45,6 +45,30 @@ export const CATEGORY_LABELS = {
 
 export const categoryLabel = (category) => CATEGORY_LABELS[category] || category || 'Outras';
 
+/* Todas as categorias: as duas perguntas de plataforma do fluxo novo
+   (quer criar / quer entrar) aceitam qualquer serviço do catálogo. */
+const ALL_CATEGORIES = [
+  ...INTEREST_CATEGORIES.STREAMING,
+  ...INTEREST_CATEGORIES.MUSIC,
+  ...INTEREST_CATEGORIES.HEALTH,
+  ...INTEREST_CATEGORIES.EDUCATION,
+  ...INTEREST_CATEGORIES.AI,
+  ...INTEREST_CATEGORIES.OTHER,
+];
+
+/**
+ * Fluxo do onboarding — versão curta (02/11/2026).
+ *
+ * Antes eram 11 perguntas (quantas assinaturas, já compartilha, com quem,
+ * dificuldade, 5 perguntas de plataforma e as indicações). O usuário reclamou
+ * de cansaço: cada pergunta extra custava uma tela. Agora o caminho é:
+ *
+ *   avatar → dificuldade → 2 convidados → criar/entrar/ambos
+ *          → [serviços para criar] → [serviços para entrar] → texto livre
+ *
+ * O passo `group_intent` é a bifurcação: cada opção aponta o próximo passo.
+ * "Ambos" responde as duas perguntas de plataforma (criar e depois entrar).
+ */
 export const ONBOARDING_STEPS = [
   {
     id: 'welcome',
@@ -57,52 +81,10 @@ export const ONBOARDING_STEPS = [
   },
 
   {
-    id: 'subscriptions_count',
-    type: 'single',
-    column: 'subscriptions_count_band',
-    title: 'Quantas assinaturas você paga atualmente?',
-    options: [
-      { value: '1-2', label: '1 a 2' },
-      { value: '3-4', label: '3 a 4' },
-      { value: '5-6', label: '5 a 6' },
-      { value: '7-8', label: '7 a 8' },
-      { value: '9-10', label: '9 a 10' },
-      { value: '10+', label: 'Acima de 10' },
-      { value: 'nenhuma', label: 'Não pago nenhuma' },
-    ],
-  },
-
-  {
-    // Ramificação: quem já compartilha cai em "com quem", quem não cai na
-    // barreira. É o único tipo com desvio de próximo passo.
-    id: 'already_shares',
-    type: 'yes_no',
-    column: 'already_shares',
-    title: 'Você já compartilha alguma assinatura digital com outras pessoas?',
-    yesNext: 'shares_with',
-    noNext: 'main_barrier',
-  },
-
-  {
-    id: 'shares_with',
-    type: 'multiple',
-    column: 'shares_with',
-    thenNext: 'current_platforms',
-    title: 'Com quem você compartilha suas assinaturas?',
-    options: [
-      { value: 'familia', label: 'Família' },
-      { value: 'amigos', label: 'Amigos' },
-      { value: 'parceiro', label: 'Namorado(a) ou parceiro(a)' },
-      { value: 'colegas', label: 'Colegas de trabalho' },
-      { value: 'desconhecidos', label: 'Pessoas que não conheço pessoalmente' },
-    ],
-  },
-
-  {
     id: 'main_barrier',
     type: 'single',
     column: 'main_barrier',
-    thenNext: 'current_platforms',
+    thenNext: 'invites',
     title: 'Qual é a maior dificuldade para você começar a compartilhar assinaturas?',
     customField: 'main_barrier_other',
     customOption: 'outro',
@@ -120,65 +102,61 @@ export const ONBOARDING_STEPS = [
   },
 
   {
-    id: 'current_platforms',
-    type: 'platforms',
-    kind: 'current',
-    title: 'Quais destas plataformas você utiliza atualmente?',
-    helper: 'Marque as que você já usa.',
-    categories: [
-      ...INTEREST_CATEGORIES.STREAMING,
-      ...INTEREST_CATEGORIES.MUSIC,
-      ...INTEREST_CATEGORIES.HEALTH,
-      ...INTEREST_CATEGORIES.EDUCATION,
-      ...INTEREST_CATEGORIES.AI,
-      ...INTEREST_CATEGORIES.OTHER,
+    // Pedir uma pessoa é o que dá ao time um grupo real para abrir. O
+    // mínimo é 1: exigir 2 fazia parte do fluxo largar no meio — no
+    // primeiro acesso as pessoas paravam de responder justamente nessa
+    // etapa (o próprio número delas não conta como indicação).
+    id: 'invites',
+    type: 'invites',
+    minInvites: 1,
+    thenNext: 'group_intent',
+    title: 'Se você fosse criar um grupo hoje para dividir assinaturas, tem amigos ou familiares que faria sentido convidar para participar?',
+    helper: 'Adicione pelo menos 1 pessoa. Podemos avisar quando abrir grupos que combinam com ela.',
+  },
+
+  {
+    // Bifurcação do fluxo. `next` de cada opção é o passo que vem a seguir.
+    id: 'group_intent',
+    type: 'single',
+    column: 'group_intent',
+    title: 'Hoje você gostaria de entrar em grupos para dividir ou deseja criar o seu grupo?',
+    options: [
+      { value: 'entrar', label: 'Entrar em grupo existente', next: 'join_platforms' },
+      { value: 'criar', label: 'Quero criar meu grupo', next: 'share_platforms' },
+      { value: 'ambos', label: 'Ambos', next: 'share_platforms' },
     ],
   },
 
   {
-    id: 'interested_streaming',
+    id: 'share_platforms',
     type: 'platforms',
-    kind: 'interested',
-    title: 'Em quais serviços de filmes e séries você teria interesse em entrar em um grupo?',
-    helper: 'Marque quantas quiser.',
-    categories: INTEREST_CATEGORIES.STREAMING,
+    kind: 'share',
+    title: 'Quais destes serviços você quer criar um grupo?',
+    helper: 'Marque os serviços que você quer compartilhar com o seu grupo.',
+    categories: ALL_CATEGORIES,
+    // "Quero criar" termina aqui; "Ambos" segue para a pergunta de entrar.
+    nextWhen: (answers) => (answers?.group_intent === 'criar' ? 'expectations' : 'join_platforms'),
   },
 
   {
-    id: 'interested_music',
+    id: 'join_platforms',
     type: 'platforms',
-    kind: 'interested',
-    title: 'Quais serviços de música você gostaria de compartilhar?',
-    helper: 'Marque quantas quiser.',
-    categories: INTEREST_CATEGORIES.MUSIC,
+    kind: 'join',
+    title: 'Quais destas plataformas você tem interesse de entrar em grupos?',
+    helper: 'Marque as plataformas que te interessam para entrar em um grupo.',
+    categories: ALL_CATEGORIES,
   },
 
   {
-    id: 'interested_education',
-    type: 'platforms',
-    kind: 'interested',
-    title: 'Quais serviços de educação e idiomas te interessam?',
-    helper: 'Cursos, idiomas e educação financeira.',
-    categories: INTEREST_CATEGORIES.EDUCATION,
-  },
-
-  {
-    id: 'interested_ai',
-    type: 'platforms',
-    kind: 'interested',
-    title: 'Quais ferramentas de inteligência artificial e produtividade te interessam?',
-    helper: 'Marque quantas quiser.',
-    categories: INTEREST_CATEGORIES.AI,
-  },
-
-  {
-    // Última etapa. Não é texto livre: o usuário adiciona as pessoas que
-    // chamaria para um grupo, e o mínimo de 2 libera o botão de concluir.
-    id: 'invites',
-    type: 'invites',
-    minInvites: 2,
-    title: 'Se você fosse criar um grupo hoje para dividir assinaturas, tem amigos ou familiares que faria sentido convidar para participar?',
-    helper: 'Adicione pelo menos 2 pessoas. Podemos avisar quando abrir grupos que combinam com elas.',
+    // Última pergunta: aberta. O que a pessoa espera encontrar e o que a faria
+    // usar é o insumo mais valioso que o time recebe do onboarding.
+    id: 'expectations',
+    type: 'text',
+    column: 'expectations',
+    title: 'O que você espera encontrar na plataforma? E o que te faria usar a nossa plataforma?',
+    helper: 'Responda com as suas palavras — essa resposta é lida pelo time.',
+    placeholder:
+      'Ex: quero encontrar gente para dividir a Netflix e o Spotify sem ficar combinando pagamento toda vez.',
   },
 ];
 
@@ -186,9 +164,20 @@ export const ONBOARDING_STEPS = [
 export const AVATAR_STEP_ID = 'avatar';
 
 /**
- * Sequência effective de passos, resolvendo a ramificação do yes/no.
+ * Sequência effective de passos, resolvendo a ramificação.
  * `answers` usa o formato { [id]: value } com value cru (string, array ou
  * booleano), que é o que `pickColumnValue` converte para gravar.
+ *
+ * Três formas de escolher o próximo passo, nesta ordem:
+ *
+ *  1. `options[].next` — bifurcação pela resposta (o passo "criar, entrar ou
+ *     ambos" manda o usuário para perguntas diferentes);
+ *  2. `nextWhen(answers)` — o próximo depende de uma resposta de OUTRO passo
+ *     (quem quer criar vai direto para a pergunta aberta; quem quer os dois
+ *     passa antes pela de entrar);
+ *  3. `thenNext` — próximo passo fixo.
+ *
+ * Sem nenhum desses, segue a posição na lista.
  */
 export function buildOnboardingPath(answers) {
   const byId = Object.fromEntries(ONBOARDING_STEPS.map((s) => [s.id, s]));
@@ -201,15 +190,27 @@ export function buildOnboardingPath(answers) {
     const step = byId[cursor];
     path.push(step);
 
-    if (step.type === 'yes_no') {
-      const isYes = answers?.[step.id] === true || answers?.[step.id] === 'sim';
-      cursor = (isYes ? step.yesNext : step.noNext) || null;
+    // 1. Bifurcação pela resposta escolhida.
+    if (step.options?.some((o) => o.next)) {
+      const chosen = step.options.find((o) => o.value === answers?.[step.id]);
+      if (chosen?.next) {
+        cursor = chosen.next;
+        continue;
+      }
+      // Sem resposta ainda: segue a lista até a primeira pergunta de
+      // plataforma, e o caminho se refaz quando a pessoa escolher.
+      const next = ONBOARDING_STEPS[ONBOARDING_STEPS.indexOf(step) + 1];
+      cursor = next?.id ?? null;
       continue;
     }
 
-    // `thenNext` existe porque os dois alvos da ramificação (shares_with e
-    // main_barrier) são vizinhos na lista: seguir pela posição cairia no
-    // outro e perguntaria a barreira mesmo para quem respondeu "sim".
+    // 2. Próximo passo que depende de outra resposta.
+    if (step.nextWhen) {
+      cursor = step.nextWhen(answers);
+      continue;
+    }
+
+    // 3. Próximo passo fixo.
     if (step.thenNext) {
       cursor = step.thenNext;
       continue;
@@ -285,6 +286,12 @@ export function restoreAnswersFromProfile(row) {
       continue;
     }
     if (step.type === 'single') {
+      answers[step.id] = value;
+      continue;
+    }
+
+    // Texto livre (a pergunta aberta final): volta como string.
+    if (step.type === 'text') {
       answers[step.id] = value;
       continue;
     }

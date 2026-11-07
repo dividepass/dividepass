@@ -47,7 +47,9 @@ function Pesquisa() {
           const uuidPat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           if (filter.length === 0) {
             const { data: p } = await supabase.from('streaming_services')
-              .select('id, name, icon_url, color, pinned, featured').order('name');
+              .select('id, name, icon_url, color, pinned, featured')
+              .eq('status', 'active')
+              .order('name');
             step.platforms = p || [];
           } else {
             const uuids = filter.filter(f => uuidPat.test(String(f)));
@@ -55,12 +57,16 @@ function Pesquisa() {
             let plats = [];
             if (uuids.length) {
               const { data: p } = await supabase.from('streaming_services')
-                .select('id, name, icon_url, color, pinned, featured').in('id', uuids);
+                .select('id, name, icon_url, color, pinned, featured')
+                .eq('status', 'active')
+                .in('id', uuids);
               plats.push(...(p || []));
             }
             if (cats.length) {
               const { data: p } = await supabase.from('streaming_services')
-                .select('id, name, icon_url, color, pinned, featured').in('category', cats);
+                .select('id, name, icon_url, color, pinned, featured')
+                .eq('status', 'active')
+                .in('category', cats);
               plats.push(...(p || []));
             }
             const seen = new Set();

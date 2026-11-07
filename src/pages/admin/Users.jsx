@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Search, Phone, Shield, User, Eye, Loader2, Trash2, RefreshCw, MessageCircle, ArrowUpDown } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Search, Phone, Shield, User, Eye, Loader2, Trash2, RefreshCw, MessageCircle, ArrowUpDown, CheckSquare, Square, Pencil, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import './Users.css';
@@ -27,6 +27,21 @@ const STATUS_LABELS = {
   suspended: 'Suspenso',
 };
 
+/** Campos que fazem sentido editar em lote (o resto é individual por usuário). */
+const BULK_STATUS_OPTIONS = [
+  { key: '', label: 'Não alterar status' },
+  { key: 'active', label: 'Ativo' },
+  { key: 'inactive', label: 'Inativo' },
+  { key: 'pending', label: 'Pendente' },
+  { key: 'suspended', label: 'Suspenso' },
+];
+
+const BULK_ROLE_OPTIONS = [
+  { key: '', label: 'Não alterar permissão' },
+  { key: 'user', label: 'Usuário' },
+  { key: 'admin', label: 'Administrador' },
+];
+
 function normalizePhone(phone) {
   if (!phone) return null;
   const digits = String(phone).replace(/\D/g, '');
@@ -46,6 +61,15 @@ function Users() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
   const [pushFilter, setPushFilter] = useState('all');
+
+  // ── Seleção em lote ──────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkRole, setBulkRole] = useState('');
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const [bulkReport, setBulkReport] = useState(null);
+  const selectAllRef = useRef(null);
 
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -79,7 +103,7 @@ function Users() {
         case 'created_asc':
           return new Date(a.created_at) - new Date(b.created_at);
         case 'status':
-          return (a.status || '').localeCompare(b.status || '') || byName(a, b);
+          return (a.status || '').localeCompare(b.status || '', 'pt-BR') || byName(a, b);
         case 'created_desc':
         default:
           return new Date(b.created_at) - new Date(a.created_at);
@@ -89,6 +113,23 @@ function Users() {
 
   const hasActiveFilters =
     statusFilter !== 'all' || roleFilter !== 'all' || pushFilter !== 'all' || search.trim() !== '';
+
+  // Administrador não entra na seleção em lote (o botão de excluir individual
+  // também fica bloqueado para ele).
+  const selectableUsers = useMemo(() => filteredUsers.filter((u) => u.role !== 'admin'), [filteredUsers]);
+  const selectableIds = useMemo(() => selectableUsers.map((u) => u.id), [selectableUsers]);
+  const selectedList = useMemo(
+    () => users.filter((u) => selectedIds.has(u.id)),
+    [users, selectedIds]
+  );
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someSelected;
+    }
+  }, [someSelected]);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,6 +160,33 @@ function Users() {
       cancelled = true;
     };
   }, []);
+
+  const toggleUser = (userId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        selectableIds.forEach((id) => next.delete(id));
+      } else {
+        selectableIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setBulkOpen(false);
+    setBulkReport(null);
+  };
 
   const handleSyncAllMembers = async () => {
     if (!window.confirm('Sincronizar todos os membros? Isso vai verificar todas as assinaturas ativas e garantir que os usuários estão nos grupos corretos.')) return;
@@ -159,6 +227,16 @@ function Users() {
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener,noreferrer');
   };
 
+  /** Exclui um usuário pela edge admin (limpa dados, grupos e login). */
+  const deleteUserById = async (userId) => {
+    const { data, error: fnError } = await supabase.functions.invoke('admin-delete-user', {
+      body: { target_user_id: userId },
+    });
+
+    if (fnError) throw new Error(fnError.message || 'Erro ao excluir usuário');
+    if (data?.error) throw new Error(data.error);
+  };
+
   const handleDeleteUser = async (userId, userName) => {
     if (!window.confirm(`Tem certeza que deseja excluir o usuário "${userName}"?\n\nEsta ação irá:\n- Remover todos os dados do usuário\n- Remover de todos os grupos\n- Excluir a conta permanentemente\n\nEsta ação NÃO pode ser desfeita.`)) {
       return;
@@ -166,13 +244,7 @@ function Users() {
 
     setDeletingUser(userId);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('admin-delete-user', {
-        body: { target_user_id: userId },
-      });
-
-      if (fnError) throw new Error(fnError.message || 'Erro ao excluir usuário');
-      if (data?.error) throw new Error(data.error);
-
+      await deleteUserById(userId);
       setUsers(prev => prev.filter(u => u.id !== userId));
       alert('Usuário excluído com sucesso');
     } catch (err) {
@@ -180,6 +252,109 @@ function Users() {
     } finally {
       setDeletingUser(null);
     }
+  };
+
+  /** Exclusão em lote: uma chamada por usuário, com relatório do que falhou. */
+  const handleBulkDelete = async () => {
+    const alvos = selectedList.filter((u) => u.role !== 'admin');
+    if (alvos.length === 0) return;
+
+    const lista = alvos.slice(0, 8).map((u) => u.email).join(', ');
+    const extra = alvos.length > 8 ? ` e mais ${alvos.length - 8}` : '';
+    const ok = window.confirm(
+      `Excluir ${alvos.length} usuário(s) selecionado(s)?\n\n${lista}${extra}\n\nEsta ação irá:\n- Remover todos os dados de cada usuário\n- Remover de todos os grupos\n- Excluir as contas permanentemente\n\nEsta ação NÃO pode ser desfeita.`
+    );
+    if (!ok) return;
+
+    setBulkWorking(true);
+    setBulkReport(null);
+
+    const deletados = [];
+    const falhos = [];
+
+    for (const user of alvos) {
+      try {
+        await deleteUserById(user.id);
+        deletados.push(user.id);
+      } catch (err) {
+        falhos.push(`${user.email}: ${err.message}`);
+      }
+    }
+
+    setUsers(prev => prev.filter(u => !deletados.includes(u.id)));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      deletados.forEach(id => next.delete(id));
+      return next;
+    });
+
+    setBulkReport({
+      tipo: 'delete',
+      ok: deletados.length,
+      falhas: falhos,
+      total: alvos.length,
+    });
+    setBulkWorking(false);
+  };
+
+  /** Edição em massa: status e/ou permissão. */
+  const handleBulkUpdate = async () => {
+    if (!bulkStatus && !bulkRole) {
+      alert('Escolha ao menos um campo para alterar (status ou permissão).');
+      return;
+    }
+
+    const alvos = selectedList.filter((u) => u.role !== 'admin');
+    if (alvos.length === 0) return;
+
+    const campos = [
+      bulkStatus ? `status = ${bulkStatus}` : null,
+      bulkRole ? `permissão = ${bulkRole}` : null,
+    ].filter(Boolean).join(' e ');
+
+    const ok = window.confirm(
+      `Alterar ${alvos.length} usuário(s) selecionado(s)?\n\n${campos}\n\nOs administradores não são alterados.`
+    );
+    if (!ok) return;
+
+    setBulkWorking(true);
+    setBulkReport(null);
+
+    const atualizados = [];
+    const falhos = [];
+
+    for (const user of alvos) {
+      try {
+        const body = { user_id: user.id };
+        if (bulkStatus) body.status = bulkStatus;
+        if (bulkRole) body.role = bulkRole;
+
+        const { data, error: fnError } = await supabase.functions.invoke('admin-update-user', { body });
+        if (fnError) throw new Error(fnError.message || 'Erro ao atualizar usuário');
+        if (data?.error) throw new Error(data.error);
+
+        atualizados.push(user.id);
+      } catch (err) {
+        falhos.push(`${user.email}: ${err.message}`);
+      }
+    }
+
+    setUsers(prev => prev.map(u => {
+      if (!atualizados.includes(u.id)) return u;
+      return {
+        ...u,
+        ...(bulkStatus ? { status: bulkStatus } : {}),
+        ...(bulkRole ? { role: bulkRole } : {}),
+      };
+    }));
+
+    setBulkReport({
+      tipo: 'update',
+      ok: atualizados.length,
+      falhas: falhos,
+      total: alvos.length,
+    });
+    setBulkWorking(false);
   };
 
   return (
@@ -193,7 +368,7 @@ function Users() {
               : `${users.length} usuários cadastrados`}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div className="admin-header-actions">
           <button className="btn btn-outline" onClick={handleSyncAllMembers} disabled={syncingMembers}>
             {syncingMembers ? <><Loader2 size={14} className="spin" /> Sincronizando...</> : <><RefreshCw size={14} /> Sincronizar Membros</>}
           </button>
@@ -221,7 +396,7 @@ function Users() {
           />
         </div>
 
-        <div className="users-filters">
+        <div className="users-filters ad-filter-grid">
           <label className="users-filter">
             <ArrowUpDown size={14} />
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="Ordenar por">
@@ -266,7 +441,7 @@ function Users() {
 
           {hasActiveFilters && (
             <button
-              className="users-filter-clear"
+              className="users-filter-clear ad-filter-wide"
               onClick={() => {
                 setSearch('');
                 setStatusFilter('all');
@@ -280,6 +455,80 @@ function Users() {
         </div>
       </div>
 
+      {/* ── Barra de ações em lote ───────────────────────────────── */}
+      {selectedIds.size > 0 && (
+        <div className="users-bulk-bar">
+          <div className="users-bulk-count">
+            <CheckSquare size={16} />
+            <strong>{selectedIds.size}</strong> selecionado{selectedIds.size > 1 ? 's' : ''}
+          </div>
+
+          <div className="users-bulk-actions">
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => setBulkOpen((v) => !v)}
+              disabled={bulkWorking}
+            >
+              <Pencil size={14} /> Editar em massa
+            </button>
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={handleBulkDelete}
+              disabled={bulkWorking}
+            >
+              {bulkWorking ? <><Loader2 size={14} className="spin" /> Processando...</> : <><Trash2 size={14} /> Excluir selecionados</>}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={clearSelection} disabled={bulkWorking}>
+              <X size={14} /> Limpar seleção
+            </button>
+          </div>
+
+          {bulkOpen && (
+            <div className="users-bulk-panel">
+              <label className="users-bulk-field">
+                Status
+                <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
+                  {BULK_STATUS_OPTIONS.map((opt) => (
+                    <option key={opt.key} value={opt.key}>{opt.label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="users-bulk-field">
+                Permissão
+                <select value={bulkRole} onChange={(e) => setBulkRole(e.target.value)}>
+                  {BULK_ROLE_OPTIONS.map((opt) => (
+                    <option key={opt.key} value={opt.key}>{opt.label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={handleBulkUpdate}
+                disabled={bulkWorking || (!bulkStatus && !bulkRole)}
+              >
+                {bulkWorking ? <><Loader2 size={14} className="spin" /> Salvando...</> : 'Aplicar em massa'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {bulkReport && (
+        <div className={`users-bulk-report ${bulkReport.falhas.length ? 'has-errors' : ''}`}>
+          <strong>
+            {bulkReport.tipo === 'delete' ? 'Exclusão' : 'Atualização'} em massa:{' '}
+            {bulkReport.ok} de {bulkReport.total} concluída(s).
+          </strong>
+          {bulkReport.falhas.length > 0 && (
+            <ul>
+              {bulkReport.falhas.map((f) => <li key={f}>{f}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="error-banner">
           Erro ao carregar usuários: {error}
@@ -292,11 +541,31 @@ function Users() {
           <p>Carregando usuários...</p>
         </div>
       ) : (
-        <div className="users-table-card">
+        <div className="users-table-card ad-cards">
           <div className="table-responsive">
-            <table className="users-table">
+            <table className="users-table ad-card-table ad-card-table--grid ad-card-table--pick">
               <thead>
                 <tr>
+                  <th className="users-select-cell">
+                    <button
+                      type="button"
+                      className="users-check-btn"
+                      onClick={toggleSelectAll}
+                      title={allSelected ? 'Desmarcar todos' : 'Selecionar todos os visíveis'}
+                      aria-label={allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
+                    >
+                      {allSelected ? <CheckSquare size={18} /> : someSelected ? <Square size={18} className="users-check-mixed" /> : <Square size={18} />}
+                    </button>
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      className="users-check-hidden"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    />
+                  </th>
                   <th>Usuário</th>
                   <th>Contato</th>
                   <th>Permissão</th>
@@ -306,75 +575,91 @@ function Users() {
                 </tr>
               </thead>
               <tbody>
-                {filteredUsers.map(user => (
-                  <tr key={user.id}>
-                    <td>
-                      <div className="user-cell">
-                        <div className="user-avatar">
-                          {user.name?.[0]?.toUpperCase() || '?'}
-                        </div>
-                        <div>
-                          <strong>{user.name}</strong>
-                          <span>{user.email}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="contact-cell">
-                        <Phone size={14} />
-                        {user.phone || 'Não informado'}
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`role-badge ${user.role}`}>
-                        {user.role === 'admin' ? (
-                          <><Shield size={12} /> Administrador</>
-                        ) : (
-                          <><User size={12} /> Usuário</>
-                        )}
-                      </span>
-                      {user.push_notifications_enabled_at && (
-                        <span className="role-badge push-enabled" style={{ marginLeft: '0.35rem', background: 'rgba(16,185,129,0.1)', color: '#10b981', fontSize: '0.7rem' }}>
-                        Push
-                      </span>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`status-badge ${user.status}`}>
-                        {STATUS_LABELS[user.status] || user.status || '—'}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="date-cell">
-                        {new Date(user.created_at).toLocaleDateString('pt-BR')}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="actions-cell">
+                {filteredUsers.map(user => {
+                  const isSelected = selectedIds.has(user.id);
+                  const isAdmin = user.role === 'admin';
+                  return (
+                    <tr key={user.id} className={isSelected ? 'row-selected' : ''}>
+                      <td className="users-select-cell ad-pick">
                         <button
-                          className="action-btn whatsapp"
-                          title={user.phone ? `Falar no WhatsApp com ${user.name}` : 'Usuário sem WhatsApp cadastrado'}
-                          onClick={() => handleWhatsApp(user)}
-                          disabled={!user.phone}
-                          style={!user.phone ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                          type="button"
+                          className="users-check-btn"
+                          onClick={() => toggleUser(user.id)}
+                          disabled={isAdmin}
+                          title={isAdmin ? 'Administrador não entra na seleção em lote' : (isSelected ? 'Desmarcar' : 'Selecionar')}
+                          aria-label={`Selecionar ${user.email}`}
                         >
-                          <MessageCircle size={18} />
+                          {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
                         </button>
-                        <Link to={`/admin/users/${user.id}`} className="action-btn" title="Ver detalhes">
-                          <Eye size={18} />
-                        </Link>
-                        <button
-                          className="action-btn danger"
-                          title="Excluir usuário"
-                          onClick={() => handleDeleteUser(user.id, user.name)}
-                          disabled={deletingUser === user.id || user.role === 'admin'}
-                        >
-                          {deletingUser === user.id ? <Loader2 size={18} className="spin" /> : <Trash2 size={18} />}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="ad-lead">
+                        <div className="user-cell">
+                          <div className="user-avatar">
+                            {user.name?.[0]?.toUpperCase() || '?'}
+                          </div>
+                          <div>
+                            <strong>{user.name}</strong>
+                            <span>{user.email}</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td data-label="Contato">
+                        <div className="contact-cell">
+                          <Phone size={14} />
+                          {user.phone || 'Não informado'}
+                        </div>
+                      </td>
+                      <td data-label="Permissão">
+                        <span className="users-perm-cell">
+                          <span className={`role-badge ${user.role}`}>
+                            {user.role === 'admin' ? (
+                              <><Shield size={12} /> Administrador</>
+                            ) : (
+                              <><User size={12} /> Usuário</>
+                            )}
+                          </span>
+                          {user.push_notifications_enabled_at && (
+                            <span className="role-badge push-enabled">Push</span>
+                          )}
+                        </span>
+                      </td>
+                      <td data-label="Status">
+                        <span className={`status-badge ${user.status}`}>
+                          {STATUS_LABELS[user.status] || user.status || '—'}
+                        </span>
+                      </td>
+                      <td data-label="Cadastro">
+                        <span className="date-cell">
+                          {new Date(user.created_at).toLocaleDateString('pt-BR')}
+                        </span>
+                      </td>
+                      <td className="ad-actions">
+                        <div className="actions-cell">
+                          <button
+                            className="action-btn whatsapp"
+                            title={user.phone ? `Falar no WhatsApp com ${user.name}` : 'Usuário sem WhatsApp cadastrado'}
+                            onClick={() => handleWhatsApp(user)}
+                            disabled={!user.phone}
+                            style={!user.phone ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                          >
+                            <MessageCircle size={18} />
+                          </button>
+                          <Link to={`/admin/users/${user.id}`} className="action-btn" title="Ver detalhes">
+                            <Eye size={18} />
+                          </Link>
+                          <button
+                            className="action-btn danger"
+                            title="Excluir usuário"
+                            onClick={() => handleDeleteUser(user.id, user.name)}
+                            disabled={deletingUser === user.id || isAdmin}
+                          >
+                            {deletingUser === user.id ? <Loader2 size={18} className="spin" /> : <Trash2 size={18} />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -135,6 +135,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+  white-space: nowrap;
   color: var(--text-muted);
   background: none;
   border: 1px solid var(--border);
@@ -157,6 +158,31 @@
   border-radius: 1rem;
   padding: 0;
   overflow: hidden;
+}
+
+/* Bloco "Exibição no catálogo": fica ABAIXO do card do formulário, como
+   um card próprio (não dentro da seção de dados). */
+.platform-visibility-section {
+  margin-top: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.platform-visibility-section h2 { margin-bottom: 0.35rem; }
+
+.platform-visibility-section .section-desc {
+  margin-bottom: 1.15rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.platform-visibility-section .platform-form-footer {
+  margin-top: 1.35rem;
+  margin-left: -2rem;
+  margin-right: -2rem;
+  border-top: 1px solid var(--border);
 }
 
 .pf-section {
@@ -462,7 +488,29 @@
   }
 
   .category-selector {
-    grid-template-columns: repeat(2, 1fr);
+    /* No celular as categorias viram uma faixa que desliza na horizontal:
+       a grade de 2 colunas deixava a página inteira gigante para rolar. */
+    display: flex;
+    flex-wrap: nowrap;
+    grid-template-columns: none;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    padding-bottom: 0.35rem;
+    margin-inline: -1rem;
+    padding-inline: 1rem;
+  }
+
+  .category-option {
+    flex: 0 0 8.5rem;
+    scroll-snap-align: start;
+    padding: 0.7rem 0.4rem;
+  }
+
+  .category-option-desc {
+    display: none;
   }
 
   .platform-form-footer {

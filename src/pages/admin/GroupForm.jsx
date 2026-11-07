@@ -1,13 +1,78 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Save, Plus, Trash2, CheckCircle, X, Info, UserPlus, UserMinus, Camera, RefreshCw, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, Plus, Trash2, CheckCircle, X, Info, UserPlus, UserMinus, Camera, RefreshCw, AlertTriangle, Tv, Crown, Eye, KeyRound, QrCode, ShieldCheck } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import NotificationComposerCard from '../../components/NotificationComposerCard';
 import { simulatePrice, brl, MIN_PRICE_PER_SLOT } from '../../lib/platformFee';
 import { hasAdsColumnAvailable, isMissingHasAdsColumn } from '../../lib/groupHasAds';
+import { visibilityColumnAvailable, isMissingVisibilityColumn } from '../../lib/groupVisibility';
+import {
+  subscriptionStatusColumnAvailable, isMissingSubscriptionStatusColumn,
+  groupStatusForSubscription, SUBSCRIPTION_ACTIVE, SUBSCRIPTION_PENDING,
+} from '../../lib/groupSubscription';
+import { chatColumnAvailable, isMissingChatColumn } from '../../lib/groupChat';
+import {
+  buildGroupName, fetchPlansForService, maxSlotsFor,
+  pricePerSlot, suggestedGroupTotal, slotPriceOutOfRange, planSlotRangeText,
+} from '../../lib/platformPlans';
+import { unmaskPixKey } from '../../lib/pixKeyMask';
+import { DEFAULT_RULE_TEXT, rulesSummary } from '../../lib/groupRuleTypes';
 import AdsToggle from '../../components/AdsToggle';
+
+import WizardSteps from '../../components/group-creation/WizardSteps';
+import PlatformSearchStep from '../../components/group-creation/PlatformSearchStep';
+import PlanSelectionStep from '../../components/group-creation/PlanSelectionStep';
+import SlotsStep from '../../components/group-creation/SlotsStep';
+import SubscriptionStatusStep from '../../components/group-creation/SubscriptionStatusStep';
+import VisibilityStep from '../../components/group-creation/VisibilityStep';
+import BillingStep from '../../components/group-creation/BillingStep';
+import RuleTypesField from '../../components/group-creation/RuleTypesField';
+import CredentialsStep from '../../components/group-creation/CredentialsStep';
+import PaymentStep from '../../components/group-creation/PaymentStep';
+import SummaryStep from '../../components/group-creation/SummaryStep';
+
 import './GroupForm.css';
+
+/**
+ * TRILHA DE 6 ETAPAS — a mesma do wizard do usuário
+ * (/dashboard/my-groups/create). Mudar uma etapa aqui é mudar lá também.
+ */
+const WIZARD_STEPS = [
+  { key: 'plataforma', title: 'Plataforma', icon: Tv },
+  { key: 'plano', title: 'Plano', icon: Crown },
+  { key: 'grupo', title: 'Grupo', icon: Eye },
+  { key: 'credenciais', title: 'Credenciais', icon: KeyRound },
+  { key: 'pagamentos', title: 'Pagamentos', icon: QrCode },
+  { key: 'resumo', title: 'Resumo', icon: ShieldCheck },
+];
+
+const WIZARD_COPY = {
+  plataforma: {
+    title: 'Qual plataforma o grupo vai compartilhar?',
+    desc: 'É o serviço cujas credenciais os membros vão usar.',
+  },
+  plano: {
+    title: 'Qual é o tipo de conta que o dono tem a assinatura?',
+    desc: 'Escolha o plano da plataforma — é ele que define o limite de vagas e o valor do grupo.',
+  },
+  grupo: {
+    title: 'Como o grupo vai ser?',
+    desc: 'Escolha quem pode entrar e escreva as regras do grupo (opcional).',
+  },
+  credenciais: {
+    title: 'Como os membros acessam a conta?',
+    desc: 'Os membros acessam a conta por aqui — você pode mudar depois.',
+  },
+  pagamentos: {
+    title: 'Como os membros vão pagar?',
+    desc: 'Ciclos de cobrança, chave PIX e o valor que cada membro paga.',
+  },
+  resumo: {
+    title: 'Confirme e crie o grupo',
+    desc: 'Confira os dados e aceite as políticas para publicar o grupo.',
+  },
+};
 
 function Toast({ message, onClose }) {
   useEffect(() => {
@@ -36,6 +101,33 @@ function sanitizeOwnerTerm(term) {
   return String(term || '').replace(/["\\,()]/g, ' ').trim();
 }
 
+/**
+ * Campos do grupo que dependem de migration: se o banco ainda nao conhece a
+ * coluna, a gravacao e refeita sem ela (o front degrada com elegancia).
+ *
+ * @returns {{payload: object, missing: string[]}|null}
+ */
+function stripMissingGroupColumns(payload, error) {
+  const next = { ...payload };
+  const missing = [];
+
+  const optional = [
+    { field: 'has_ads', test: isMissingHasAdsColumn },
+    { field: 'visibility', test: isMissingVisibilityColumn },
+    { field: 'subscription_status', test: isMissingSubscriptionStatusColumn },
+    { field: 'chat_enabled', test: isMissingChatColumn },
+  ];
+
+  optional.forEach(({ field, test }) => {
+    if (field in next && test(error)) {
+      delete next[field];
+      missing.push(field);
+    }
+  });
+
+  return missing.length ? { payload: next, missing } : null;
+}
+
 function GroupForm() {
   const { user } = useAuth();
   const { groupId } = useParams();
@@ -44,6 +136,15 @@ function GroupForm() {
   const isEditing = !!groupId;
 
   const [services, setServices] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [usage, setUsage] = useState({});
+  const [wizardStep, setWizardStep] = useState(0);
+  const [wizardError, setWizardError] = useState('');
+  const [policiesAccepted, setPoliciesAccepted] = useState(false);
+  const [hasVisibilityColumn, setHasVisibilityColumn] = useState(false);
+  const [hasSubscriptionColumn, setHasSubscriptionColumn] = useState(false);
+  const [hasChatColumn, setHasChatColumn] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -54,16 +155,23 @@ function GroupForm() {
     service_id: '',
     name: '',
     price_per_slot: '',
+    price_total: '',
     available_cycles: ['monthly'],
     cycle_discount: 0,
     max_size: 4,
     has_slot_limit: true,
     has_entrance_fee: false,
     entrance_fee: '',
-    rules: '',
+    rules: DEFAULT_RULE_TEXT,
     tags: '',
     verified: false,
     status: 'open',
+    visibility: 'public',
+    // Status da assinatura da conta do serviço: 'active' (ja assinou) ou
+    // 'pending' (vai assinar quando o grupo fechar).
+    subscription_status: SUBSCRIPTION_ACTIVE,
+    // Chat do grupo (troca de mensagens entre os membros).
+    chat_enabled: true,
     custom_cycle_months: '',
     custom_cycle_label: '',
     custom_cycle_days: '',
@@ -113,6 +221,15 @@ function GroupForm() {
   const [hasAds, setHasAds] = useState(null);
   const [hasAdsColumn, setHasAdsColumn] = useState(true);
 
+  /* Plano da plataforma (service_plans) vinculado ao grupo. Define o teto de
+     preco e a quantidade maxima de membros do grupo. */
+  const [planId, setPlanId] = useState('');
+  /* Chave PIX do grupo — mesma coluna (`groups.pix_key`) usada pelo wizard
+     do usuario. */
+  const [pixKey, setPixKey] = useState('');
+  const [pixType, setPixType] = useState('cpf');
+  const [hasPixColumn, setHasPixColumn] = useState(true);
+
   const [emailCodeEnabled, setEmailCodeEnabled] = useState(false);
   const [emailAddress, setEmailAddress] = useState('');
   const [emailImapServer, setEmailImapServer] = useState('');
@@ -132,7 +249,6 @@ function GroupForm() {
   const [groupAlertMessage, setGroupAlertMessage] = useState('');
   const [groupAlertChannels, setGroupAlertChannels] = useState(['in_app', 'push']);
   const [sendingGroupAlert, setSendingGroupAlert] = useState(false);
-  const [settings, setSettings] = useState({});
 
   const priceSimulation = useMemo(() => {
     return simulatePrice(formData.price_per_slot);
@@ -410,8 +526,8 @@ function GroupForm() {
       try {
         if (!cancelled) setLoading(true);
 
-        const [servicesRes, groupRes, credsRes, profilesRes, membersRes, mailboxRes] = await Promise.all([
-          supabase.from('streaming_services').select('id, name, full_name').order('name'),
+        const [servicesRes, groupRes, credsRes, profilesRes, membersRes, mailboxRes, usageRes] = await Promise.all([
+          supabase.from('streaming_services').select('id, name, full_name, icon, icon_url, color, slug, pinned, featured, status, max_group_size').order('name'),
           isEditing
             ? supabase.from('groups').select('*, owner:owner_id (id, name, email)').eq('id', groupId).single()
             : Promise.resolve({ data: null }),
@@ -428,6 +544,8 @@ function GroupForm() {
           isEditing
             ? supabase.from('group_mailboxes').select('*').eq('group_id', groupId).maybeSingle()
             : Promise.resolve({ data: null }),
+          // contagem de grupos por plataforma (ordem "mais usadas" na etapa 1)
+          supabase.from('groups').select('service_id').limit(2000),
         ]);
 
         if (servicesRes.error) throw servicesRes.error;
@@ -437,6 +555,30 @@ function GroupForm() {
         // Antes dela existir, o seletor fica oculto e o campo não é gravado —
         // assim o admin nunca toma erro 42703 ao salvar o grupo.
         if (!cancelled) setHasAdsColumn(await hasAdsColumnAvailable());
+
+        // A coluna visibility (database/add-platform-plans-and-group-visibility.sql)
+        // e a pix_key (database/add-group-pix.sql) sao opcionais: o front
+        // detecta se existem antes de mandar no payload.
+        if (!cancelled) {
+          setHasVisibilityColumn(await visibilityColumnAvailable());
+          const pixProbe = await supabase.from('groups').select('id, pix_key').limit(1);
+          setHasPixColumn(!pixProbe.error);
+          // As colunas subscription_status e chat_enabled entram pela mesma
+          // migration da visibility — o front detecta antes de mandar no payload.
+          setHasSubscriptionColumn(await subscriptionStatusColumnAvailable());
+          setHasChatColumn(await chatColumnAvailable());
+        }
+
+        // Quantos grupos cada plataforma tem — as mais usadas ficam no topo
+        // da lista da etapa 1.
+        if (!cancelled && usageRes?.data) {
+          const counts = {};
+          usageRes.data.forEach((g) => {
+            if (!g.service_id) return;
+            counts[g.service_id] = (counts[g.service_id] || 0) + 1;
+          });
+          setUsage(counts);
+        }
 
         if (isEditing && !cancelled) {
           setMembers(membersRes.data || []);
@@ -463,11 +605,17 @@ function GroupForm() {
               tags: Array.isArray(group.tags) ? group.tags.join(', ') : '',
               verified: group.verified || false,
               status: group.status || 'open',
+              visibility: group.visibility || 'public',
+              subscription_status: group.subscription_status || SUBSCRIPTION_ACTIVE,
+              chat_enabled: group.chat_enabled === false ? false : true,
               custom_cycle_months: group.custom_cycle_months || '',
               custom_cycle_label: group.custom_cycle_label || '',
               custom_cycle_days: group.custom_cycle_days || '',
             });
             if (group.photo_url) setPhotoPreview(group.photo_url);
+            if (group.plan_id) setPlanId(group.plan_id);
+            if (group.pix_key) setPixKey(group.pix_key);
+            if (group.pix_type) setPixType(group.pix_type);
             if (group.plan_type) { setPlanType(group.plan_type); setCustomPlanActive(false); }
             if (group.plan_type_custom) { setPlanTypeCustom(group.plan_type_custom); setCustomPlanActive(true); }
             setHasAds(group.has_ads === true ? true : (group.has_ads === false ? false : null));
@@ -534,11 +682,13 @@ function GroupForm() {
             })));
           }
         } else if (servicesRes.data?.length > 0) {
+          // Na criacao a plataforma NAO e escolhida automaticamente: o admin
+          // busca, clica e confirma no popup da etapa 1. Se a URL veio com
+          // ?service=..., ela fica pré-selecionada (o admin só confirma).
           const preselectedService = searchParams.get('service');
-          const initialService = preselectedService && servicesRes.data.some(s => s.id === preselectedService)
-            ? preselectedService
-            : servicesRes.data[0].id;
-          setFormData(prev => ({ ...prev, service_id: initialService }));
+          if (preselectedService && servicesRes.data.some(s => s.id === preselectedService)) {
+            setFormData(prev => ({ ...prev, service_id: preselectedService }));
+          }
         }
       } catch (err) {
         if (!cancelled) setError(err.message);
@@ -552,14 +702,23 @@ function GroupForm() {
   }, [groupId, isEditing, searchParams]);
 
   useEffect(() => {
+    // Planos da plataforma (service_plans): o grupo pode ser vinculado a um
+    // plano da plataforma, que define o teto de preco e o limite de vagas.
+    let cancelled = false;
+    if (!formData.service_id) return undefined;
+    fetchPlansForService(formData.service_id).then((list) => {
+      if (cancelled) return;
+      setPlans(list);
+      setPlansLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [formData.service_id]);
+
+  useEffect(() => {
     // As taxas nao vem mais de app_settings: a margem da plataforma segue a
     // regra de faixas (src/lib/platformFee.js), definida pelo preco MENSAL.
-    // Mantido o fetch das outras configurações do painel.
-    supabase.from('app_settings').select('key, value').then(({ data }) => {
-      const s = {};
-      data?.forEach(d => { s[d.key] = d.value; });
-      setSettings(s);
-    });
+    // O fetch das configurações do painel foi removido junto com o estado
+    // `settings` (nada mais lia esse valor).
   }, []);
 
   const handleSubmit = async (e) => {
@@ -567,11 +726,34 @@ function GroupForm() {
     setSaving(true);
     setError('');
 
+    // Na criação, todas as etapas precisam estar válidas — inclusive o aceite
+    // das políticas, que é o que autoriza a publicar o grupo.
+    if (!isEditing) {
+      const msg = validateWizardStep(WIZARD_STEPS.length - 1);
+      if (msg) {
+        setWizardError(msg);
+        setError(msg);
+        setSaving(false);
+        return;
+      }
+    }
+
     try {
+      const platform = services.find(s => s.id === formData.service_id) || null;
+      const selectedPlan = plans.find(p => p.id === planId) || null;
+
       const groupPayload = {
         service_id: formData.service_id,
-        name: formData.name,
-        price_per_slot: parseFloat(formData.price_per_slot),
+        // Nome automatico quando o admin nao digita: [plataforma] + [plano]
+        // ou [plataforma] + [id do grupo].
+        name: (formData.name || '').trim() || buildGroupName({ platform, plan: selectedPlan, groupId }),
+        // Na criação, o preço por vaga é o total do grupo dividido pelas vagas.
+        // Na edição, o admin edita o preço por vaga direto.
+        price_per_slot: isEditing
+          ? parseFloat(formData.price_per_slot)
+          : (pricePerSlot(formData.price_total, formData.max_size)
+            || parseFloat(formData.price_per_slot)
+            || 0.01),
         billing_cycle: formData.available_cycles[0] || 'monthly',
         available_cycles: formData.available_cycles,
         cycle_discount: parseFloat(formData.cycle_discount || 0),
@@ -584,7 +766,8 @@ function GroupForm() {
           ? formData.tags.split(',').map(t => t.trim()).filter(Boolean)
           : [],
         verified: !!formData.verified,
-        status: formData.status,
+        // Grupo com assinatura pendente nasce em FORMACAO (status 'forming').
+        status: groupStatusForSubscription(formData.subscription_status, formData.status),
         // Dono escolhido no formulário; sem escolha, o admin logado.
         // (NUNCA null: grupo sem dono não tem quem receba o repasse.)
         owner_id: ownerId || user?.id || null,
@@ -596,6 +779,18 @@ function GroupForm() {
         plan_type: customPlanActive ? null : (planType || null),
         plan_type_custom: customPlanActive ? (planTypeCustom || null) : null,
         ...(hasAdsColumn ? { has_ads: hasAds } : {}),
+        // Vínculo com o plano da plataforma (define teto de preço e vagas).
+        ...(planId ? { plan_id: planId } : {}),
+        // Grupo público ou privado (entra só por convite/link).
+        ...(hasVisibilityColumn ? { visibility: formData.visibility || 'public' } : {}),
+        // Status da assinatura da conta do serviço ('active' | 'pending').
+        ...(hasSubscriptionColumn
+          ? { subscription_status: formData.subscription_status || SUBSCRIPTION_ACTIVE }
+          : {}),
+        // Chat do grupo (troca de mensagens entre os membros).
+        ...(hasChatColumn ? { chat_enabled: formData.chat_enabled !== false } : {}),
+        // Chave PIX de pagamento.
+        ...(hasPixColumn && pixKey ? { pix_key: unmaskPixKey(pixKey, pixType), pix_type: pixType } : {}),
         // Grupo criado pelo painel admin já nasce aprovado: a fila de aprovação
         // é para grupos que o USUÁRIO criou. Ao editar, o status de aprovação
         // não é tocado (aprovar é ação explícita na tela de grupos).
@@ -609,12 +804,19 @@ function GroupForm() {
           .from('groups')
           .update(groupPayload)
           .eq('id', groupId);
-        if (updateError && hasAdsColumn && isMissingHasAdsColumn(updateError)) {
-          // o banco ainda nao tem a coluna has_ads: refaz sem o campo
-          const { has_ads, ...semAds } = groupPayload;
-          setHasAdsColumn(false);
-          const retry = await supabase.from('groups').update(semAds).eq('id', groupId);
-          updateError = retry.error;
+        if (updateError) {
+          // o banco ainda nao tem alguma das colunas novas: refaz sem o campo
+          const retry = stripMissingGroupColumns(groupPayload, updateError);
+          if (retry) {
+            retry.missing.forEach((field) => {
+              if (field === 'has_ads') setHasAdsColumn(false);
+              if (field === 'visibility') setHasVisibilityColumn(false);
+              if (field === 'subscription_status') setHasSubscriptionColumn(false);
+              if (field === 'chat_enabled') setHasChatColumn(false);
+            });
+            const again = await supabase.from('groups').update(retry.payload).eq('id', groupId);
+            updateError = again.error;
+          }
         }
         if (updateError) throw updateError;
       } else {
@@ -623,20 +825,30 @@ function GroupForm() {
           .insert(groupPayload)
           .select('id')
           .single();
-        if (insertError && hasAdsColumn && isMissingHasAdsColumn(insertError)) {
-          const { has_ads, ...semAds } = groupPayload;
-          setHasAdsColumn(false);
-          const retry = await supabase.from('groups').insert(semAds).select('id').single();
-          newGroup = retry.data;
-          insertError = retry.error;
+        if (insertError) {
+          const retry = stripMissingGroupColumns(groupPayload, insertError);
+          if (retry) {
+            retry.missing.forEach((field) => {
+              if (field === 'has_ads') setHasAdsColumn(false);
+              if (field === 'visibility') setHasVisibilityColumn(false);
+              if (field === 'subscription_status') setHasSubscriptionColumn(false);
+              if (field === 'chat_enabled') setHasChatColumn(false);
+            });
+            const again = await supabase.from('groups').insert(retry.payload).select('id').single();
+            newGroup = again.data;
+            insertError = again.error;
+          }
         }
         if (insertError) throw insertError;
         groupIdResult = newGroup.id;
 
         const shortSlug = newGroup.id.slice(0, 6).toUpperCase();
+        // Sem plano vinculado o nome automatico usa o id curto do grupo.
+        const finalName = (formData.name || '').trim()
+          || buildGroupName({ platform, plan: selectedPlan, groupId: newGroup.id });
         const { error: slugError } = await supabase
           .from('groups')
-          .update({ slug: shortSlug })
+          .update({ slug: shortSlug, name: finalName })
           .eq('id', newGroup.id);
         if (slugError) throw slugError;
       }
@@ -754,6 +966,25 @@ function GroupForm() {
       }
 
       const ownerChanged = isEditing && !!ownerId && !!originalOwnerId && ownerId !== originalOwnerId;
+
+      // Grupo novo nasce aprovado e visível: avisa quem estava esperando vaga
+      // nesse serviço. Best-effort — falhar no aviso não bloqueia o cadastro.
+      if (!isEditing) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-service-watchers`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ group_id: groupIdResult }),
+          });
+        } catch (notifyErr) {
+          console.warn('[notify-service-watchers] Não foi possível avisar a lista de espera:', notifyErr);
+        }
+      }
+
       setToast(
         ownerChanged
           ? `Grupo atualizado! Dono alterado para ${currentOwnerName}.`
@@ -768,6 +999,257 @@ function GroupForm() {
       setSaving(false);
     }
   };
+
+  /* Busca do dono do grupo (admin). Compartilhado entre o form antigo
+     (edicao) e o wizard (criacao). */
+  const handleOwnerSearchChange = (value) => {
+    setOwnerQuery(value);
+    const term = value.trim();
+    if (term.length < 2 || !sanitizeOwnerTerm(term)) {
+      setOwnerResults([]);
+      setOwnerSearched(false);
+      setOwnerLoading(false);
+    } else {
+      setOwnerLoading(true);
+      setOwnerSearched(true);
+    }
+  };
+
+  const selectOwner = (u) => {
+    setOwnerId(u.id);
+    setCurrentOwnerName(u.name || u.email);
+    setOwnerQuery('');
+    setOwnerResults([]);
+    setOwnerSearched(false);
+    setOwnerPicking(false);
+  };
+
+  /* ---------------------------------------------------------------- wizard */
+  const wizardPlatform = useMemo(
+    () => services.find(s => s.id === formData.service_id) || null,
+    [services, formData.service_id],
+  );
+  const wizardPlan = useMemo(
+    () => plans.find(p => p.id === planId) || null,
+    [plans, planId],
+  );
+
+  const wizardStepInfo = WIZARD_STEPS[wizardStep] || WIZARD_STEPS[0];
+  const WizardStepIcon = wizardStepInfo.icon;
+
+  const wizardBillingValue = {
+    available_cycles: (formData.available_cycles || []).filter(c => c !== 'custom' && c !== 'days'),
+    custom_cycle_enabled: (formData.available_cycles || []).includes('custom'),
+    custom_cycle_months: formData.custom_cycle_months || 2,
+    custom_cycle_label: formData.custom_cycle_label || '',
+    days_cycle_enabled: (formData.available_cycles || []).includes('days'),
+    days_cycle_days: formData.custom_cycle_days || 15,
+    days_cycle_label: formData.custom_cycle_label || '',
+    rules: formData.rules || '',
+  };
+
+  const applyWizardBilling = (patch) => {
+    const next = { ...wizardBillingValue, ...patch };
+    const cycles = [...next.available_cycles];
+    if (next.custom_cycle_enabled) cycles.push('custom');
+    if (next.days_cycle_enabled) cycles.push('days');
+    setFormData(prev => ({
+      ...prev,
+      available_cycles: cycles,
+      custom_cycle_months: next.custom_cycle_months,
+      custom_cycle_label: next.custom_cycle_label,
+      custom_cycle_days: next.days_cycle_days,
+      rules: next.rules,
+    }));
+  };
+
+  /* O painel admin guarda o codigo em `login_password` e o link em
+     `credential_url`; o componente compartilhado usa um campo unico
+     (`credential_extra`). Esta ponte traduz um no outro. */
+  const wizardCredentialValue = {
+    credential_type: credentialType,
+    login_email: loginEmail,
+    login_password: credentialType === 'code' ? '' : loginPassword,
+    credential_extra: credentialType === 'link' || credentialType === 'invite'
+      ? credentialUrl
+      : (credentialType === 'code' ? loginPassword : (credentialType === 'custom' ? credentialNotes : '')),
+    credential_notes: credentialType === 'custom' ? '' : credentialNotes,
+  };
+
+  const applyWizardCredential = (patch) => {
+    const next = { ...wizardCredentialValue, ...patch };
+    setCredentialType(next.credential_type);
+    setLoginEmail(next.login_email);
+    setLoginPassword(next.credential_type === 'code' ? next.credential_extra : next.login_password);
+    setCredentialUrl(
+      (next.credential_type === 'link' || next.credential_type === 'invite') ? next.credential_extra : '',
+    );
+    setCredentialNotes(next.credential_type === 'custom' ? next.credential_extra : next.credential_notes);
+  };
+
+  const applyWizardPlan = (patch) => {
+    if (patch.plan_id !== undefined) {
+      setPlanId(patch.plan_id);
+      const plan = plans.find(p => p.id === patch.plan_id);
+      if (plan) {
+        setPlanType(plan.name);
+        setPlanTypeCustom('');
+        setCustomPlanActive(false);
+        const maxSlots = maxSlotsFor(plan, wizardPlatform);
+        // Total do grupo: valor sugerido do plano (por pessoa) x vagas; sem
+        // sugestao, o preco oficial do plano + 8%.
+        // Plano sem max_members nao impoe vagas: o total usa as vagas do
+        // grupo (ou o padrao), senao o preco por pessoa sai errado.
+        const slots = plan.max_members
+          ? maxSlots
+          : (parseInt(formData.max_size, 10) || 4);
+        setFormData(prev => ({
+          ...prev,
+          price_total: String(suggestedGroupTotal(plan, slots)),
+          max_size: plan.max_members ? maxSlots : prev.max_size,
+          has_slot_limit: true,
+        }));
+      }
+    }
+    if (patch.plan_type !== undefined) {
+      setPlanType(patch.plan_type);
+      setCustomPlanActive(false);
+      /* Texto livre (plataforma SEM planos cadastrados) nao pode conviver com
+         um plano escolhido. Mas o clique num plano tambem manda plan_type —
+         nesse caso o plan_id manda e nao pode ser limpo, senao o plano
+         selecionado some na hora e a etapa nunca libera. */
+      if (patch.plan_type && patch.plan_id === undefined) setPlanId('');
+    }
+    if (patch.plan_type_custom !== undefined) setPlanTypeCustom(patch.plan_type_custom);
+    if (patch.custom_plan_active !== undefined) {
+      setCustomPlanActive(patch.custom_plan_active);
+      if (patch.custom_plan_active) {
+        setPlanType('');
+        setPlanId('');
+      }
+    }
+    if (patch.has_ads !== undefined) setHasAds(patch.has_ads);
+  };
+
+  const validateWizardStep = (stepIndex) => {
+    switch (stepIndex) {
+      /* 1. PLATAFORMA */
+      case 0:
+        if (!formData.service_id) return 'Escolha a plataforma do grupo.';
+        return '';
+
+      /* 2. PLANO — plano/tipo de conta + vagas + status da assinatura */
+      case 1:
+        if (plansLoading) return 'Carregando os planos da plataforma...';
+        if (plans.length > 0) {
+          if (!planId) return 'Escolha o plano da plataforma que o grupo vai usar.';
+        } else {
+          if (!customPlanActive && !planType) return 'Escolha o tipo de conta ou use "Personalizado".';
+          if (customPlanActive && !planTypeCustom.trim()) return 'Escreva o tipo de conta personalizado.';
+        }
+        if (!formData.max_size || formData.max_size < 1) return 'Informe quantas vagas o grupo vai abrir.';
+        if (wizardPlan?.max_members && formData.max_size > wizardPlan.max_members) {
+          return `Este plano permite até ${wizardPlan.max_members} vaga(s).`;
+        }
+        // Status da assinatura: sempre tem um valor valido (o padrao e "ja
+        // assinei"), entao nao bloqueia a criacao.
+        if (!formData.subscription_status) return 'Escolha se o dono já assinou a conta ou vai assinar depois.';
+        return '';
+
+      /* 3. GRUPO — visibilidade (as regras do grupo sao opcionais) */
+      case 2:
+        if (!formData.visibility) return 'Escolha se o grupo é público ou privado.';
+        return '';
+
+      /* 4. CREDENCIAIS */
+      case 3:
+        if (credentialType === 'email_password' && !loginEmail.trim()) return 'Informe o e-mail de acesso.';
+        if (credentialType !== 'email_password' && !wizardCredentialValue.credential_extra.trim()) {
+          return 'Informe a credencial de acesso.';
+        }
+        return '';
+
+      /* 5. PAGAMENTOS — ciclos + valor do grupo */
+      case 4: {
+        if (!wizardBillingValue.available_cycles.length
+          && !wizardBillingValue.custom_cycle_enabled
+          && !wizardBillingValue.days_cycle_enabled) {
+          return 'Escolha ao menos um ciclo de cobrança.';
+        }
+        if (wizardBillingValue.custom_cycle_enabled && !wizardBillingValue.custom_cycle_label.trim()) {
+          return 'Dê um nome ao ciclo personalizado.';
+        }
+        if (wizardBillingValue.days_cycle_enabled && !wizardBillingValue.days_cycle_label.trim()) {
+          return 'Dê um nome ao ciclo de dias.';
+        }
+        const total = parseFloat(formData.price_total);
+        if (!(total > 0)) return 'Informe o valor total do grupo.';
+        const perSlot = pricePerSlot(total, formData.max_size);
+        if (perSlot > 0 && perSlot < MIN_PRICE_PER_SLOT) {
+          return `O valor por pessoa (R$ ${brl(perSlot)}) está abaixo do mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)}.`;
+        }
+        // TETO DO PLANO (por pessoa): fora da faixa o grupo não é criado.
+        if (wizardPlan) {
+          const range = slotPriceOutOfRange(wizardPlan, perSlot);
+          if (range.outOfRange) {
+            const faixa = planSlotRangeText(wizardPlan, (v) => `R$ ${brl(v)}`);
+            return `O valor por pessoa (R$ ${brl(perSlot)}) está fora da faixa do plano "${wizardPlan.name}" (${faixa}). Ajuste o valor total.`;
+          }
+        }
+        return '';
+      }
+
+      /* 6. RESUMO — politicas */
+      case 5:
+        if (!policiesAccepted) return 'Aceite as políticas para criar o grupo.';
+        return '';
+
+      default:
+        return '';
+    }
+  };
+
+  const handleWizardNext = () => {
+    const msg = validateWizardStep(wizardStep);
+    setWizardError(msg);
+    if (msg) return;
+    setWizardStep(Math.min(wizardStep + 1, WIZARD_STEPS.length - 1));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleWizardBack = () => {
+    setWizardError('');
+    setWizardStep(Math.max(wizardStep - 1, 0));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const wizardSummaryItems = [
+    { label: 'Plataforma', value: wizardPlatform?.full_name || wizardPlatform?.name || '—' },
+    {
+      label: 'Nome do grupo',
+      value: (formData.name || '').trim() || buildGroupName({ platform: wizardPlatform, plan: wizardPlan, groupId }),
+    },
+    {
+      label: 'Plano',
+      value: wizardPlan?.name || (customPlanActive ? planTypeCustom : (planType || '—')),
+    },
+    { label: 'Vagas', value: `${formData.max_size || 1} membro(s)` },
+    {
+      label: 'Status da assinatura',
+      value: formData.subscription_status === SUBSCRIPTION_PENDING
+        ? 'Vou assinar (grupo fica em formação)'
+        : 'Já assinei (conta ativa)',
+    },
+    { label: 'Chat do grupo', value: formData.chat_enabled === false ? 'Desligado' : 'Ligado' },
+    { label: 'Visibilidade', value: formData.visibility === 'private' ? 'Privado (só convite/link)' : 'Público' },
+    { label: 'Ciclos', value: (formData.available_cycles || []).join(', ') || '—' },
+    { label: 'Regrinhas', value: rulesSummary(formData.rules) },
+    { label: 'PIX', value: pixKey ? `${pixKey} (${pixType})` : '—' },
+    { label: 'Taxa de entrada', value: formData.has_entrance_fee ? `R$ ${brl(parseFloat(formData.entrance_fee || 0))}` : 'Sem taxa' },
+    { label: 'Total do grupo', value: `R$ ${brl(parseFloat(formData.price_total) || 0)}` },
+    { label: 'Cada membro paga', value: `R$ ${brl(pricePerSlot(formData.price_total, formData.max_size))} / mês` },
+    { label: 'Dono', value: currentOwnerName || ownerId?.slice(0, 8) || '—' },
+  ];
 
   if (loading) {
     return (
@@ -794,6 +1276,337 @@ function GroupForm() {
       {error && <div className="error-banner">{error}</div>}
 
       <form onSubmit={handleSubmit} className="group-form-card">
+        {!isEditing ? (
+          <>
+            <div className="admin-wizard-steps">
+              <WizardSteps
+                steps={WIZARD_STEPS}
+                current={wizardStep}
+                onNavigate={(i) => {
+                  if (i <= wizardStep) { setWizardError(''); setWizardStep(i); }
+                }}
+              />
+            </div>
+
+            <div className="wizard-card">
+              <div className="wizard-card-head">
+                <span className="wizard-eyebrow">
+                  <WizardStepIcon size={16} /> Etapa {wizardStep + 1} de {WIZARD_STEPS.length}
+                </span>
+                <h2>{WIZARD_COPY[wizardStepInfo.key].title}</h2>
+                <p className="section-desc">{WIZARD_COPY[wizardStepInfo.key].desc}</p>
+              </div>
+
+              <div className="wizard-card-body">
+                {/* ------------------------------------------------ 1. PLATAFORMA */}
+                {wizardStep === 0 && (
+                  <PlatformSearchStep
+                    services={services.filter(s => s.status !== 'inactive')}
+                    usage={usage}
+                    selectedId={formData.service_id}
+                    onConfirm={(service) => {
+                      setFormData(prev => ({
+                        ...prev,
+                        service_id: service.id,
+                        // trocar de plataforma zera o plano e o preco (o teto muda junto)
+                        price_total: '',
+                        max_size: 4,
+                        has_slot_limit: false,
+                      }));
+                      setPlans([]);
+                      setPlansLoading(true);
+                      setPlanId('');
+                      setPlanType('');
+                      setPlanTypeCustom('');
+                      setCustomPlanActive(false);
+                      setWizardError('');
+                      /* Confirmar a plataforma ja leva para os planos dela — o
+                         mesmo movimento do wizard do usuario. */
+                      setWizardStep(1);
+                    }}
+                  />
+                )}
+
+                {/* --------------------- 2. PLANO (tipo de conta) + VAGAS + ASSINATURA */}
+                {wizardStep === 1 && (
+                  <>
+                    {plansLoading ? (
+                      <div className="loading-state">
+                        <Loader2 size={28} className="spin" />
+                        <p>Carregando os planos da plataforma...</p>
+                      </div>
+                    ) : (
+                      <PlanSelectionStep
+                        plans={plans}
+                        value={{
+                          plan_id: planId,
+                          plan_type: planType,
+                          plan_type_custom: planTypeCustom,
+                          custom_plan_active: customPlanActive,
+                          has_ads: hasAds,
+                        }}
+                        onChange={applyWizardPlan}
+                        hasAdsColumn={hasAdsColumn}
+                      />
+                    )}
+
+                    {!plansLoading && (
+                      <>
+                        <SlotsStep
+                          value={{ slots: formData.max_size || 1 }}
+                          onChange={(patch) => setFormData(prev => {
+                            const slots = patch.slots;
+                            const next = { ...prev, max_size: slots, has_slot_limit: true };
+                            /* O total que veio do plano acompanha o numero de vagas
+                               (o dono nao editou o valor) — senao mudar as vagas
+                               empurraria o preco por pessoa para fora da faixa do
+                               plano. */
+                            if (wizardPlan) {
+                              const before = suggestedGroupTotal(wizardPlan, prev.max_size);
+                              if (!prev.price_total || Number(prev.price_total) === before) {
+                                next.price_total = String(suggestedGroupTotal(wizardPlan, slots));
+                              }
+                            }
+                            return next;
+                          })}
+                          plan={wizardPlan}
+                          service={wizardPlatform}
+                        />
+
+                        <SubscriptionStatusStep
+                          value={formData.subscription_status}
+                          onChange={(v) => setFormData(prev => ({
+                            ...prev,
+                            subscription_status: v,
+                            // "Vou assinar" deixa o grupo em formacao; voltando para
+                            // "ja assinei" o status volta a ser aberto.
+                            status: v === SUBSCRIPTION_PENDING
+                              ? 'forming'
+                              : (prev.status === 'forming' ? 'open' : prev.status),
+                          }))}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+
+                {/* ---------------------------------- 3. GRUPO: VISIBILIDADE + REGRAS */}
+                {wizardStep === 2 && (
+                  <>
+                    <VisibilityStep
+                      value={formData.visibility}
+                      onChange={(v) => setFormData(prev => ({ ...prev, visibility: v }))}
+                    />
+
+                    {/* As REGRAS do grupo (opcional) ocupam o lugar que era da
+                        descrição do grupo. */}
+                    <RuleTypesField
+                      value={formData.rules || ''}
+                      onChange={(patch) => setFormData(prev => ({ ...prev, rules: patch.rules }))}
+                    />
+                  </>
+                )}
+
+                {/* ------------------------------------------------ 4. CREDENCIAIS */}
+                {wizardStep === 3 && (
+                  <CredentialsStep
+                    value={{ ...wizardCredentialValue, chat_enabled: formData.chat_enabled }}
+                    onChange={(patch) => {
+                      if (patch.chat_enabled !== undefined) {
+                        setFormData(prev => ({ ...prev, chat_enabled: patch.chat_enabled }));
+                      }
+                      applyWizardCredential(patch);
+                    }}
+                  />
+                )}
+
+                {/* ------------------------------------------------- 5. PAGAMENTOS */}
+                {wizardStep === 4 && (
+                  <>
+                    <BillingStep
+                      value={wizardBillingValue}
+                      onChange={applyWizardBilling}
+                    />
+
+                    <PaymentStep
+                      value={{
+                        pix_key: pixKey,
+                        pix_type: pixType,
+                        entrance_fee: formData.has_entrance_fee ? formData.entrance_fee : 0,
+                        price_total: formData.price_total,
+                        slots: formData.max_size || 1,
+                      }}
+                      onChange={(patch) => {
+                        if (patch.pix_key !== undefined) setPixKey(patch.pix_key);
+                        if (patch.pix_type !== undefined) setPixType(patch.pix_type);
+                        if (patch.entrance_fee !== undefined) {
+                          setFormData(prev => ({ ...prev, entrance_fee: patch.entrance_fee }));
+                        }
+                        if (patch.price_total !== undefined) {
+                          setFormData(prev => ({ ...prev, price_total: patch.price_total }));
+                        }
+                      }}
+                      plan={wizardPlan}
+                      hasPixColumn={hasPixColumn}
+                    />
+                  </>
+                )}
+
+                {/* ---------------------------------------------------- 6. RESUMO */}
+                {wizardStep === 5 && (
+                  <>
+                    <SummaryStep
+                      items={wizardSummaryItems}
+                      policiesAccepted={policiesAccepted}
+                      onPoliciesChange={setPoliciesAccepted}
+                      notice="Grupos criados pelo painel admin já nascem aprovados e não passam pela fila de aprovação."
+                    />
+
+                    <section className="form-section admin-wizard-extras">
+                      <h2>Opções administrativas</h2>
+                      <p className="section-desc">
+                        Configurações que só o admin define. O dono é quem recebe os repasses.
+                      </p>
+
+                      <div className="form-grid">
+                        <div className="form-group">
+                          <label>Status</label>
+                          <select name="status" value={formData.status} onChange={handleChange}>
+                            <option value="open">Aberto</option>
+                            <option value="forming">Formando</option>
+                            <option value="closed">Fechado</option>
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label>Tags (separadas por vírgula)</label>
+                          <input name="tags" value={formData.tags} onChange={handleChange} placeholder="Ex: 4k, sem anúncios" />
+                        </div>
+                        <div className="form-group checkbox-group">
+                          <label>
+                            <input type="checkbox" name="verified" checked={formData.verified} onChange={handleChange} />
+                            Grupo verificado (DividePass)
+                          </label>
+                        </div>
+                        <div className="form-group">
+                          <label>Nome do grupo (opcional)</label>
+                          <input
+                            name="name"
+                            value={formData.name}
+                            onChange={handleChange}
+                            placeholder="Gerado automaticamente"
+                          />
+                          <small className="field-hint">
+                            Vazio = nome automático: [plataforma] + [plano] ou [plataforma] + [id].
+                          </small>
+                        </div>
+                      </div>
+
+                      <div className="toggle-section">
+                        <label className="toggle-label">
+                          <input
+                            type="checkbox"
+                            checked={formData.has_entrance_fee}
+                            onChange={e => setFormData(prev => ({ ...prev, has_entrance_fee: e.target.checked }))}
+                          />
+                          <span className="toggle-switch" />
+                          <span className="toggle-text">
+                            <strong>Cobrar valor de entrada?</strong>
+                            <small>Valor único pago na primeira vez + assinatura.</small>
+                          </span>
+                        </label>
+                      </div>
+
+                      {formData.has_entrance_fee && (
+                        <div className="form-group">
+                          <label>Valor de entrada (R$) *</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            name="entrance_fee"
+                            value={formData.entrance_fee}
+                            onChange={handleChange}
+                          />
+                        </div>
+                      )}
+
+                      <div className="form-group">
+                        <label>Criado por (dono do grupo)</label>
+                        {ownerId && !ownerPicking ? (
+                          <div className="owner-current">
+                            <div className="owner-current-info">
+                              <strong>{currentOwnerName || `${ownerId.slice(0, 8)}...`}</strong>
+                              <small>{ownerId === user?.id ? 'você' : 'dono atual do grupo'}</small>
+                            </div>
+                            <button type="button" className="btn btn-sm" onClick={() => setOwnerPicking(true)}>
+                              Trocar
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="owner-picker">
+                            <div className="owner-search">
+                              <input
+                                type="text"
+                                value={ownerQuery}
+                                onChange={(e) => handleOwnerSearchChange(e.target.value)}
+                                placeholder="Buscar por nome ou e-mail..."
+                                disabled={ownerLoading}
+                              />
+                              {ownerLoading && <Loader2 size={15} className="spin owner-search-spinner" />}
+                            </div>
+                            {ownerSearched && ownerResults.length === 0 && !ownerLoading && (
+                              <p className="owner-empty">Nenhum usuário encontrado</p>
+                            )}
+                            {ownerResults.length > 0 && (
+                              <div className="owner-results">
+                                {ownerResults.map((u) => (
+                                  <button
+                                    key={u.id}
+                                    type="button"
+                                    className="owner-result"
+                                    onClick={() => selectOwner(u)}
+                                  >
+                                    <strong>{u.name || 'Sem nome'}</strong>
+                                    <span>{u.email}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <small className="field-hint">
+                          {ownerId
+                            ? 'O dono recebe os pagamentos na carteira e gerencia o grupo.'
+                            : 'Busque para colocar outra pessoa como dona. Sem escolha, o grupo fica com você.'}
+                        </small>
+                      </div>
+                    </section>
+                  </>
+                )}
+              </div>
+
+              {wizardError && <div className="wizard-step-error">{wizardError}</div>}
+
+              <div className="wizard-foot">
+                <div className="wizard-foot-left">
+                  {wizardStep > 0 && (
+                    <button type="button" className="btn btn-outline" onClick={handleWizardBack}>
+                      <ArrowLeft size={16} /> Voltar
+                    </button>
+                  )}
+                </div>
+                <div className="wizard-foot-right">
+                  {wizardStep < WIZARD_STEPS.length - 1 && (
+                    <button type="button" className="btn btn-primary" onClick={handleWizardNext}>
+                      Continuar
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
         <section className="form-section">
           <h2>Dados do Grupo</h2>
 
@@ -875,6 +1688,87 @@ function GroupForm() {
               )}
             </div>
 
+            {plans.length > 0 && (
+              <div className="form-group">
+                <label>Plano da plataforma</label>
+                <select
+                  value={planId}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setPlanId(value);
+                    const plan = plans.find(x => x.id === value);
+                    if (plan) {
+                      setPlanType(plan.name);
+                      setPlanTypeCustom('');
+                      setCustomPlanActive(false);
+                    }
+                  }}
+                >
+                  <option value="">Sem vínculo de plano</option>
+                  {plans.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} — R$ {brl(p.official_price)}
+                    </option>
+                  ))}
+                </select>
+                <small className="field-hint">
+                  O plano define o teto de preço e o limite de vagas do grupo.
+                </small>
+              </div>
+            )}
+
+            {hasVisibilityColumn && (
+              <div className="form-group">
+                <label>Visibilidade</label>
+                <select name="visibility" value={formData.visibility} onChange={handleChange}>
+                  <option value="public">Público — aparece no catálogo</option>
+                  <option value="private">Privado — só por convite ou link</option>
+                </select>
+              </div>
+            )}
+
+            {hasSubscriptionColumn && (
+              <div className="form-group">
+                <label>Status da assinatura</label>
+                <select
+                  name="subscription_status"
+                  value={formData.subscription_status || SUBSCRIPTION_ACTIVE}
+                  onChange={(e) => setFormData(prev => ({
+                    ...prev,
+                    subscription_status: e.target.value,
+                    // "Vou assinar" deixa o grupo em formacao; voltando para
+                    // "ja assinei" o status volta a ser aberto.
+                    status: e.target.value === SUBSCRIPTION_PENDING
+                      ? 'forming'
+                      : (prev.status === 'forming' ? 'open' : prev.status),
+                  }))}
+                >
+                  <option value={SUBSCRIPTION_ACTIVE}>Já assinei — a conta está ativa</option>
+                  <option value={SUBSCRIPTION_PENDING}>Vou assinar — quando o grupo fechar</option>
+                </select>
+                <small className="field-hint">
+                  Com "Vou assinar" o grupo fica em formação (status 'forming') até o dono confirmar a assinatura.
+                </small>
+              </div>
+            )}
+
+            {hasChatColumn && (
+              <div className="form-group">
+                <label>Chat do grupo</label>
+                <select
+                  name="chat_enabled"
+                  value={formData.chat_enabled === false ? 'false' : 'true'}
+                  onChange={(e) => setFormData(prev => ({
+                    ...prev,
+                    chat_enabled: e.target.value === 'true',
+                  }))}
+                >
+                  <option value="true">Ligado — membros trocam mensagens</option>
+                  <option value="false">Desligado — sem chat no grupo</option>
+                </select>
+              </div>
+            )}
+
             {hasAdsColumn && (
               <div className="form-group ads-field">
                 <label>A conta compartilhada tem anúncios?</label>
@@ -889,8 +1783,20 @@ function GroupForm() {
 
           <div className="form-group">
             <label>Preço por vaga (R$) *</label>
-            <input type="number" step="0.01" min={MIN_PRICE_PER_SLOT} name="price_per_slot" value={formData.price_per_slot} onChange={handleChange} required />
-            <small className="field-hint">Mínimo de R$ {brl(MIN_PRICE_PER_SLOT)} por vaga.</small>
+            <input
+              type="number"
+              step="0.01"
+              min={MIN_PRICE_PER_SLOT}
+              name="price_per_slot"
+              value={formData.price_per_slot}
+              onChange={handleChange}
+              required
+            />
+            <small className="field-hint">
+              {wizardPlan
+                ? `Mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)} por vaga. O plano ${wizardPlan.name} permite de R$ ${brl(wizardPlan.min_price || 0)}${wizardPlan.max_price ? ` a R$ ${brl(wizardPlan.max_price)}` : ''} por pessoa.`
+                : `Mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)} por vaga.`}
+            </small>
           </div>
 
           {formData.price_per_slot > 0 && (
@@ -1036,7 +1942,10 @@ function GroupForm() {
 
           <div className="form-group">
             <label>Regras do grupo</label>
-            <textarea rows={4} name="rules" value={formData.rules} onChange={handleChange} placeholder="Ex: Não compartilhar a senha; usar apenas 1 tela..." />
+            <RuleTypesField
+              value={formData.rules}
+              onChange={(patch) => setFormData(prev => ({ ...prev, ...patch }))}
+            />
           </div>
 
           <div className="form-group">
@@ -1084,19 +1993,7 @@ function GroupForm() {
                   <input
                     type="text"
                     value={ownerQuery}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setOwnerQuery(value);
-                      const term = value.trim();
-                      if (term.length < 2 || !sanitizeOwnerTerm(term)) {
-                        setOwnerResults([]);
-                        setOwnerSearched(false);
-                        setOwnerLoading(false);
-                      } else {
-                        setOwnerLoading(true);
-                        setOwnerSearched(true);
-                      }
-                    }}
+                    onChange={(e) => handleOwnerSearchChange(e.target.value)}
                     placeholder="Buscar por nome ou e-mail..."
                     disabled={ownerLoading}
                   />
@@ -1660,6 +2557,9 @@ function GroupForm() {
               </button>
             </div>
           </section>
+        )}
+
+          </>
         )}
 
         <div className="form-footer">

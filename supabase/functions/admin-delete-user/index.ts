@@ -59,14 +59,25 @@ Deno.serve(async (req) => {
     await supabaseAdmin.from("email_logs").delete().eq("user_id", target_user_id);
     await supabaseAdmin.from("payment_attempts").delete().eq("user_id", target_user_id);
 
-    const { data: wallet } = await supabaseAdmin
-      .from("user_wallets").select("id").eq("user_id", target_user_id).maybeSingle();
-    if (wallet) {
-      await supabaseAdmin.from("wallet_transactions").delete().eq("wallet_id", wallet.id);
-      await supabaseAdmin.from("user_wallets").delete().eq("user_id", target_user_id);
-    }
+    // Wallet: `wallet_transactions` liga em users por user_id (NÃO por
+    // wallet_id) — o delete por wallet_id nunca apagava nada.
+    await supabaseAdmin.from("wallet_transactions").delete().eq("user_id", target_user_id);
+    await supabaseAdmin.from("user_wallets").delete().eq("user_id", target_user_id);
 
-    await supabaseAdmin.from("users").delete().eq("id", target_user_id);
+    // `platform_events.created_by` aponta para users(id) SEM CASCADE: todo
+    // login grava um evento, então essa linha sozinha fazia o DELETE do
+    // perfil falhar e deixava a conta órfã (auth apagado, profile não).
+    await supabaseAdmin.from("platform_events").delete().eq("created_by", target_user_id);
+    await supabaseAdmin.from("group_interest").delete().eq("user_id", target_user_id);
+    await supabaseAdmin.from("service_votes").delete().eq("user_id", target_user_id);
+
+    const { error: deleteProfileError } = await supabaseAdmin
+      .from("users")
+      .delete()
+      .eq("id", target_user_id);
+    if (deleteProfileError) {
+      console.error("[admin-delete-user] Falha ao apagar public.users:", deleteProfileError.message);
+    }
 
     const { error: authDelErr } = await supabaseAdmin.auth.admin.deleteUser(target_user_id);
     if (authDelErr) console.error("[admin-delete-user] Auth delete warning:", authDelErr.message);

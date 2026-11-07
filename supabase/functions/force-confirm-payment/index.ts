@@ -1,5 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { notifyAdminPayment } from "../_shared/admin-payment-email.ts";
+// Confirmação compartilhada — o mesmo caminho do webhook e do polling.
+import { confirmPayment } from "../confirm-payment/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,219 +67,107 @@ async function getSettings(supabaseAdmin: any): Promise<Record<string, string>> 
   return settings;
 }
 
+/**
+ * Confirmação manual do admin — DELEGA para a confirmação compartilhada.
+ *
+ * POR QUE MUDOU
+ * -------------
+ * A confirmação manual tinha a sua PRÓPIA cópia da regra (mais 200 linhas).
+ * Consequências diretas no caso real de 01/11/2026:
+ *
+ *   - quem era liberado na mão (o "Pagamento confirmado (forçado)") NÃO recebia
+ *     nenhum e-mail — nem o aviso de pagamento recebido, nem o de assinatura
+ *     criada. A Fran entrou no grupo às 15:40 e nunca recebeu um e-mail da
+ *     DividePass;
+ *   - a linha em `payments` não tinha `official_price`/`paid_amount` (o
+ *     painel de economia ficava inconsistente);
+ *   - faturas vencidas não eram quitadas e o `billing_cycles` do próximo
+ *     ciclo não era criado — a renovação não nascia.
+ *
+ * Agora a confirmação manual passa pelo MESMO caminho de todo mundo
+ * (`confirmPayment`): mesma liberação, mesmos eventos, mesmas faturas e os
+ * DOIS e-mails do cliente.
+ *
+ * A única parte que continua aqui é a FATURA, que não existe na confirmação
+ * compartilhada.
+ */
 async function confirmIOPayment(
   supabaseAdmin: any,
   group_id: string,
   user_id: string,
-  payment_type: "entrance" | "subscription" | "invoice",
+  payment_type: "entrance" | "subscription" | "combined" | "invoice",
   amount: number,
   gateway_payment_id: string,
 ): Promise<{ success: boolean; error?: string }> {
-  const now = new Date().toISOString();
-
+  // ── FATURA ────────────────────────────────────────────────────────────────
   if (payment_type === "invoice") {
     try {
-      const { data: invToUpdate } = await supabaseAdmin.from("invoices")
-        .select("id").eq("user_id", user_id).eq("group_id", group_id).eq("status", "pending")
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const { data: invToUpdate } = await supabaseAdmin
+        .from("invoices")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("group_id", group_id)
+        .eq("status", "pending")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
       if (invToUpdate) {
         await supabaseAdmin.from("invoices").update({
-          status: "paid", paid_at: now, gateway_transaction_id: gateway_payment_id,
+          status: "paid",
+          paid_at: new Date().toISOString(),
+          gateway_transaction_id: gateway_payment_id,
         }).eq("id", invToUpdate.id);
       }
+
+      supabaseAdmin.from("payments").insert({
+        user_id,
+        amount,
+        method: "pix",
+        status: "paid",
+        payment_type: "invoice",
+        group_id,
+        transaction_code: gateway_payment_id,
+        gateway: "iopay",
+        notes: "Fatura via PIX",
+      }).then(({ error }: any) => {
+        if (error) console.error("[force-confirm] payments error:", error);
+      });
+
+      return { success: true };
     } catch (e: any) {
       return { success: false, error: "invoice error: " + e.message };
     }
   }
 
-  if (payment_type === "entrance") {
-    try {
-      const { data: existingMember } = await supabaseAdmin
-        .from("group_members").select("id")
-        .eq("group_id", group_id).eq("user_id", user_id).maybeSingle();
-
-      if (existingMember) {
-        const { error } = await supabaseAdmin
-          .from("group_members")
-          .update({
-            status: "active",
-            payment_status: "entrance_paid",
-            entrance_paid_at: now,
-            entrance_payment_id: gateway_payment_id,
-            subscription_deadline: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-          })
-          .eq("group_id", group_id).eq("user_id", user_id);
-        if (error) return { success: false, error: "group_members update failed: " + error.message };
-      } else {
-        const { error: upsertErr } = await supabaseAdmin
-          .from("group_members")
-          .upsert({
-            group_id, user_id,
-            status: "active",
-            payment_status: "entrance_paid",
-            entrance_paid_at: now,
-            entrance_payment_id: gateway_payment_id,
-            subscription_deadline: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-            joined_at: now,
-          }, { onConflict: "group_id, user_id" });
-        if (upsertErr) return { success: false, error: "group_members upsert failed: " + upsertErr.message };
-      }
-    } catch (e: any) {
-      return { success: false, error: "group_members error: " + e.message };
-    }
-
-    supabaseAdmin.from("payments").insert({
-      user_id, amount, method: "pix", status: "paid", payment_type: "entrance",
-      group_id, transaction_code: gateway_payment_id, gateway: "iopay", notes: "Taxa de adesão (force-confirm)",
-    }).then(({ error }: any) => { if (error) console.error("[force-confirm] payments error:", error); });
-
-    return { success: true };
+  // ── ADESÃO / ASSINATURA ───────────────────────────────────────────────────
+  //
+  // `forced: true` mantém o rótulo "Pagamento confirmado (forçado)" no
+  // painel, para o admin distinguir na hora o que foi automático do que foi
+  // liberado na mão.
+  if (payment_type !== "entrance" && payment_type !== "subscription" && payment_type !== "combined") {
+    return { success: false, error: "Tipo de pagamento desconhecido: " + payment_type };
   }
 
-  if (payment_type === "subscription") {
-    // Update or create user_subscriptions
-    try {
-      const { data: subInfo } = await supabaseAdmin
-        .from("user_subscriptions")
-        .select("id, billing_cycle, custom_cycle_months, custom_cycle_days")
-        .eq("group_id", group_id).eq("user_id", user_id)
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const result = await confirmPayment({
+    gateway: "iopay",
+    group_id,
+    user_id,
+    payment_type,
+    amount,
+    status: "approved",
+    gateway_payment_id,
+    payment_method: "pix",
+    forced: true,
+  });
 
-      const cycle = subInfo?.billing_cycle || "monthly";
-      const days = subInfo?.custom_cycle_days || null;
-      const months = subInfo?.custom_cycle_months || null;
-      const nextChargeAt = calculateNextChargeDate(cycle, days, months);
-
-      if (subInfo?.id) {
-        const { error: subErr } = await supabaseAdmin
-          .from("user_subscriptions")
-          .update({
-            status: "active",
-            gateway_status: "authorized",
-            gateway_subscription_id: gateway_payment_id,
-            next_charge_at: nextChargeAt.toISOString(),
-            // Pagamento confirmado: vencimento do ciclo = data + ciclo.
-            renewal_due_at: nextChargeAt.toISOString(),
-            billing_status: "active",
-            retry_count: 0,
-            last_charge_at: now,
-          })
-          .eq("id", subInfo.id);
-        if (subErr) return { success: false, error: "subscription update failed: " + subErr.message };
-      } else {
-        const { data: grp } = await supabaseAdmin.from("groups").select("service_id").eq("id", group_id).maybeSingle();
-        const { error: insErr } = await supabaseAdmin.from("user_subscriptions").insert({
-          user_id, group_id, service_id: grp?.service_id,
-          billing_cycle: cycle, amount,
-          status: "active", gateway: "iopay", gateway_subscription_id: gateway_payment_id,
-          next_charge_at: nextChargeAt.toISOString(),
-          renewal_due_at: nextChargeAt.toISOString(),
-          billing_status: "active", retry_count: 0, last_charge_at: now,
-          started_at: now, custom_cycle_days: days, custom_cycle_months: months,
-        });
-        if (insErr) return { success: false, error: "subscription insert failed: " + insErr.message };
-      }
-    } catch (e: any) {
-      return { success: false, error: "subscription error: " + e.message };
-    }
-
-    // group_members: select-then-update-or-upsert — CRITICAL
-    try {
-      const { data: existingMember, error: selErr } = await supabaseAdmin
-        .from("group_members").select("id")
-        .eq("group_id", group_id).eq("user_id", user_id).maybeSingle();
-
-      if (selErr) console.error("[force-confirm] group_members select error:", selErr);
-
-      if (existingMember) {
-        const { error } = await supabaseAdmin
-          .from("group_members")
-          .update({
-            status: "active",
-            payment_status: "active",
-            joined_at: now,
-            // O cancelamento por carência grava `left_at` no vínculo; ao pagar
-            // de novo o vínculo é refeito e a data de saída é zerada.
-            left_at: null,
-          })
-          .eq("group_id", group_id).eq("user_id", user_id);
-        if (error) return { success: false, error: "group_members update failed: " + error.message };
-      } else {
-        const { error: upsertErr } = await supabaseAdmin
-          .from("group_members")
-          .upsert({
-            group_id, user_id,
-            status: "active",
-            payment_status: "active",
-            joined_at: now,
-            left_at: null,
-          }, { onConflict: "group_id, user_id" });
-        if (upsertErr) return { success: false, error: "group_members upsert failed: " + upsertErr.message };
-      }
-    } catch (e: any) {
-      return { success: false, error: "group_members exception: " + e.message };
-    }
-
-    // billing_cycles
-    try {
-      const { data: sub } = await supabaseAdmin
-        .from("user_subscriptions").select("id")
-        .eq("group_id", group_id).eq("user_id", user_id)
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
-      if (sub?.id) {
-        const { data: existingRows } = await supabaseAdmin
-          .from("billing_cycles").select("id")
-          .eq("subscription_id", sub.id).eq("status", "pending")
-          .order("created_at", { ascending: false }).limit(1);
-        const existing = (existingRows && existingRows[0]) || null;
-        if (!existing) {
-          const cycle = subInfo?.billing_cycle || "monthly";
-          const days = subInfo?.custom_cycle_days || null;
-          const months = subInfo?.custom_cycle_months || null;
-          const nextChargeAt = calculateNextChargeDate(cycle, days, months);
-          await supabaseAdmin.from("billing_cycles").insert({
-            subscription_id: sub.id, user_id, group_id, amount,
-            charge_date: nextChargeAt.toISOString().split("T")[0],
-            status: "pending", attempt_number: 0,
-          });
-        }
-      }
-    } catch (e) { console.error("[force-confirm] billing_cycles error:", e); }
-
-    // Payment record
-    supabaseAdmin.from("payments").insert({
-      user_id, amount, method: "pix", status: "paid", payment_type: "subscription",
-      group_id, transaction_code: gateway_payment_id, gateway: "iopay", notes: "Assinatura (force-confirm)",
-    }).then(({ error }: any) => { if (error) console.error("[force-confirm] payments error:", error); });
-
-    // Platform events + member joined — fire-and-forget AFTER group_members confirmed
-    Promise.all([
-      supabaseAdmin.from("users").select("name").eq("id", user_id).maybeSingle(),
-      supabaseAdmin.from("groups").select("name").eq("id", group_id).maybeSingle(),
-    ]).then(([{ data: usr }, { data: grp }]) => {
-      const userName = usr?.name || "Usuário";
-      const groupName = grp?.name || group_id;
-      supabaseAdmin.from("platform_events").insert({
-        event_type: "payment",
-        title: "Pagamento confirmado (forçado)",
-        message: `${userName} confirmou pagamento de R$ ${amount.toFixed(2)} no grupo "${groupName}".`,
-        metadata: JSON.stringify({ user_id, group_id, amount, payment_type, gateway: "iopay", transaction_id: gateway_payment_id, forced: true }),
-        created_by: user_id,
-      }).then(({ error }: any) => { if (error) console.error("[force-confirm] payment event error:", error); });
-
-      supabaseAdmin.from("platform_events").insert({
-        event_type: "member_joined",
-        title: "Membro ingressou no grupo",
-        message: `${userName} ingressou no grupo "${groupName}".`,
-        metadata: JSON.stringify({ user_id, group_id, amount, gateway: "iopay", forced: true }),
-        created_by: user_id,
-      }).then(({ error }: any) => { if (error) console.error("[force-confirm] member_joined event error:", error); });
-    }).catch(e => console.error("[force-confirm] event name lookup error:", e));
-
-    return { success: true };
+  if (!result?.success) {
+    console.error(
+      `[force-confirm] confirmPayment falhou (${payment_type}): ${result?.error}`,
+    );
   }
 
-  return { success: false, error: "Tipo de pagamento desconhecido: " + payment_type };
+  return { success: !!result?.success, error: result?.error };
 }
 
 Deno.serve(async (req: Request) => {

@@ -172,7 +172,9 @@
     min-width: unset;
   }
 
-  .actions-cell {
+  /* Só os avisos empilham as ações no celular. `.actions-cell` é classe
+     global e esta regra vazava para as outras telas do painel. */
+  .announcement-actions-cell {
     flex-direction: column;
   }
 

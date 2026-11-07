@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { useGatewayPorMetodo } from '../../hooks/useGatewayPorMetodo';
 import { supabase } from '../../lib/supabase';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import {
@@ -23,7 +24,7 @@ function Billing() {
   const { activeSubscriptions, loading: appLoading, refresh } = useAppDataContext();
 
   // Definidos fora do componente: evita depender de identificador recriado a cada render
-  const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe'];
+  const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe', 'woovi'];
   const GATEWAYS_WITH_CARD = ['iopay', 'pagarme'];
   const [payments, setPayments] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -37,7 +38,6 @@ function Billing() {
   const [savedCards, setSavedCards] = useState([]);
   const [selectedCardId, setSelectedCardId] = useState(null);
   const [cardsLoading, setCardsLoading] = useState(false);
-  const [activeGateway, setActiveGateway] = useState('mercadopago');
 
   // PIX payment state
   const [payingInvoice, setPayingInvoice] = useState(null);
@@ -82,23 +82,28 @@ function Billing() {
   };
 
   // Gateway ativo define quais métodos de pagamento existem
-  useEffect(() => {
-    let cancelled = false;
-    supabase
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'active_gateway')
-      .maybeSingle()
-      .then(({ data }) => {
-        if (!cancelled && data?.value) setActiveGateway(data.value);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
+  const cfgGateway = useGatewayPorMetodo();
+
+  // O gateway que atende o método escolhido agora (com a divisão por
+  // método desligada, é o gateway de sempre).
+  const activeGateway = cfgGateway.splitAtivo
+    ? cfgGateway.gatewayDoMetodo(payMethod)
+    : cfgGateway.gatewayPadrao;
+
+  // Os gateways de CADA método — é o PAR configurado que decide o que a
+  // tela oferece, não o método selecionado.
+  const gatewayDoPix = cfgGateway.splitAtivo
+    ? cfgGateway.gatewayDoMetodo('pix')
+    : cfgGateway.gatewayPadrao;
+  const gatewayDoCard = cfgGateway.splitAtivo
+    ? cfgGateway.gatewayDoMetodo('card')
+    : cfgGateway.gatewayPadrao;
+  const pixDisponivel = GATEWAYS_WITH_PIX.includes(gatewayDoPix);
+  const cartaoDisponivel = GATEWAYS_WITH_CARD.includes(gatewayDoCard);
 
   // Cartões salvos do usuário (necessário para pagar fatura no cartão)
   const loadSavedCards = useCallback(async () => {
-    if (!user || !GATEWAYS_WITH_CARD.includes(activeGateway)) return;
+    if (!user || !cartaoDisponivel) return;
     try {
       setCardsLoading(true);
       const { data: sessionData } = await supabase.auth.getSession();
@@ -124,7 +129,7 @@ function Billing() {
     } finally {
       setCardsLoading(false);
     }
-  }, [user, activeGateway]);
+  }, [user, cartaoDisponivel]);
 
   useEffect(() => { fetchPayments(); }, [user]);
 
@@ -190,10 +195,10 @@ function Billing() {
 
   // Cartões são carregados sob demanda, ao abrir o modal de pagamento
   useEffect(() => {
-    if (payTarget && GATEWAYS_WITH_CARD.includes(activeGateway) && savedCards.length === 0) {
+    if (payTarget && cartaoDisponivel && savedCards.length === 0) {
       void loadSavedCards();
     }
-  }, [payTarget, activeGateway, savedCards.length, loadSavedCards]);
+  }, [payTarget, cartaoDisponivel, savedCards.length, loadSavedCards]);
 
   useEffect(() => {
     return () => {
@@ -592,7 +597,7 @@ function Billing() {
             </div>
             <div className="invoice-modal-body">
               <div className="pay-method-list">
-                {GATEWAYS_WITH_PIX.includes(activeGateway) && (
+                {pixDisponivel && (
                   <button
                     type="button"
                     className={`pay-method-option ${payMethod === 'pix' ? 'active' : ''}`}
@@ -606,7 +611,7 @@ function Billing() {
                   </button>
                 )}
 
-                {GATEWAYS_WITH_CARD.includes(activeGateway) && (
+                {cartaoDisponivel && (
                   <button
                     type="button"
                     className={`pay-method-option ${payMethod === 'card' ? 'active' : ''}`}

@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { motion, useMotionValue, useSpring, useMotionValueEvent, useReducedMotion } from 'motion/react';
 import logoImg from '../assets/logo.png';
 import {
   ChevronRight,
   ChevronLeft,
-  Play,
   Zap,
   Users,
   CreditCard,
@@ -21,9 +21,15 @@ import {
   Key,
   Sparkles,
   PlusCircle,
+  User,
+  Plus,
 } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
 import ServicesCarousel from '../components/ServicesCarousel';
+import SiteFooter from '../components/SiteFooter';
+import Confetti from '../components/Confetti';
+import Reveal from '../components/Reveal';
+import { useWhatsappVipUrl } from '../hooks/useWhatsappVipUrl';
 // fmtBRL e getCycleMonths inlined para evitar TDZ no bundler
 const fmtBRL = (value) => {
   if (value == null || isNaN(value)) return 'R$ 0,00';
@@ -40,6 +46,7 @@ const getCycleMonths = (billingCycle, customMonths = null) => {
   }
 };
 import { supabase } from '../lib/supabase';
+import { visibilityColumnAvailable } from '../lib/groupVisibility';
 import './Home.css';
 
 const CATEGORIES = [
@@ -137,26 +144,100 @@ const faqs = [
   }
 ];
 
+/** Quantas pessoas cabem no grupo do card (e quanto o preço cai). */
+const MAX_PESSOAS = 4;
+
+/** As pessoas que vão "entrando" no grupo, na ordem. */
+const PESSOAS_DEMO = [
+  { rotulo: 'você', cor: '#4F46E5' },
+  { rotulo: 'pessoa 2', cor: '#7C3AED' },
+  { rotulo: 'pessoa 3', cor: '#F97316' },
+  { rotulo: 'pessoa 4', cor: '#10B981' },
+];
+
+/**
+ * Dinheiro que conta até o valor novo.
+ *
+ * O Motion cuida da mola: quando o valor muda, o número antigo "anda" até o
+ * novo em vez de trocar de uma vez — é o que dá a sensação de o preço estar
+ * caindo enquanto as pessoas entram no grupo.
+ */
+function AnimatedMoney({ value, className }) {
+  const alvo = useMotionValue(value);
+  const mola = useSpring(alvo, { stiffness: 130, damping: 20, mass: 0.8 });
+  const [mostrado, setMostrado] = useState(value);
+
+  useEffect(() => { alvo.set(value); }, [value, alvo]);
+  useMotionValueEvent(mola, 'change', (v) => setMostrado(v));
+
+  return <span className={className}>{fmtBRL(mostrado)}</span>;
+}
+
 /**
  * SplitDemo — a assinatura visual do DividePass: o preço CHEIO de uma
- * assinatura aparece dividido em N partes. A primeira parte (azul) é a que o
- * visitante paga. Usa o preço oficial real do catálogo, então não é número
- * inventado — se o catálogo não tiver preço, o bloco simplesmente não aparece.
+ * assinatura aparece dividido entre as pessoas que estão no grupo.
+ *
+ * O card é uma demonstração do produto em movimento:
+ *
+ *   1) A plataforma é SORTEADA a cada visita, dentro do catálogo que tem
+ *      preço oficial real (não é número inventado);
+ *   2) As pessoas entram uma a uma (1 → 4) e o preço de cada uma cai
+ *      junto — a economia aparece no mesmo instante;
+ *   3) Quando o grupo fecha com 4 pessoas, o confete dispara.
  */
-function SplitDemo({ services, members = 4 }) {
-  const service = useMemo(() => {
-    const lista = Array.isArray(services) ? services : [];
-    return lista.find(s => parseFloat(s.official_price || 0) > 0) || null;
+function SplitDemo({ services }) {
+  const reduced = useReducedMotion();
+  const [service, setService] = useState(null);
+  const [membros, setMembros] = useState(1);
+  const [burst, setBurst] = useState(0);
+  const sorteado = useRef(false);
+
+  /* A plataforma muda a cada carregamento da página. O `sorteado` garante
+     uma vez só: se o catálogo arrives depois, não troca a escolha. */
+  useEffect(() => {
+    if (sorteado.current) return;
+    const lista = (Array.isArray(services) ? services : []).filter(
+      (s) => parseFloat(s.official_price || 0) > 0
+    );
+    if (!lista.length) return;
+    sorteado.current = true;
+    setService(lista[Math.floor(Math.random() * lista.length)]);
   }, [services]);
+
+  /* As pessoas entram uma a uma. */
+  useEffect(() => {
+    if (reduced || !service) return;
+    if (membros >= MAX_PESSOAS) {
+      // Segura o melhor cenário (grupo cheio) antes de recomeçar a demo.
+      const espera = setTimeout(() => setMembros(1), 4500);
+      return () => clearTimeout(espera);
+    }
+    const espera = setTimeout(() => setMembros((m) => Math.min(m + 1, MAX_PESSOAS)), 1500);
+    return () => clearTimeout(espera);
+  }, [membros, service, reduced]);
+
+  /* O confete sai quando a 4ª pessoa entra. */
+  useEffect(() => {
+    if (membros === MAX_PESSOAS) setBurst((b) => b + 1);
+  }, [membros]);
 
   if (!service) return null;
 
   const full = parseFloat(service.official_price || 0);
-  const share = full / members;
+  const gente = reduced ? MAX_PESSOAS : membros;
+  const share = full / gente;
   const saving = full - share;
+  const completo = gente >= MAX_PESSOAS;
 
   return (
-    <div className="split-demo">
+    <motion.div
+      className="split-demo"
+      animate={completo ? { scale: [1, 1.015, 1] } : { scale: 1 }}
+      transition={completo ? { duration: 0.5, ease: [0.22, 1, 0.36, 1] } : { duration: 0.3 }}
+    >
+      {/* Confete contido no card: o "boom" quando o grupo fecha. */}
+      <Confetti fire={burst} fall={360} />
+
       <div className="split-head">
         <span className="split-service">
           {service.icon_url ? (
@@ -175,42 +256,82 @@ function SplitDemo({ services, members = 4 }) {
         </span>
       </div>
 
+      <div className="split-group">
+        <span className={`split-group-badge ${completo ? 'is-completo' : ''}`}>
+          <span className="split-group-dot" />
+          {gente === 1 ? 'você ainda está sozinho' : `${gente} pessoas no grupo`}
+        </span>
+        <span className="split-group-hint">
+          {completo ? 'grupo completo — economia máxima' : 'entrando no grupo...'}
+        </span>
+      </div>
+
       <div className="split-bar">
-        {Array.from({ length: members }).map((_, i) => (
-          <span
+        {PESSOAS_DEMO.map((p, i) => (
+          <motion.span
             key={i}
-            className={`split-slice ${i === 0 ? 'is-yours' : ''}`}
-            style={{ animationDelay: `${0.30 + i * 0.08}s` }}
+            className={`split-slice ${i === 0 ? 'is-yours' : ''} ${i < gente ? 'is-full' : 'is-vazia'}`}
+            style={{ transformOrigin: 'left center' }}
+            initial={{ scaleX: 0 }}
+            animate={{ scaleX: i < gente ? 1 : 0.16 }}
+            transition={{ duration: 0.45, delay: i * 0.06, ease: [0.34, 1.4, 0.64, 1] }}
           />
         ))}
       </div>
 
       <div className="split-parts">
-        {Array.from({ length: members }).map((_, i) => (
-          <span
-            key={i}
-            className={`split-part ${i === 0 ? 'is-yours' : ''}`}
-            style={{ animationDelay: `${0.40 + i * 0.08}s` }}
-          >
-            <small>{i === 0 ? 'você paga' : `pessoa ${i + 1}`}</small>
-            <strong>{fmtBRL(share)}</strong>
-          </span>
-        ))}
+        {PESSOAS_DEMO.map((p, i) => {
+          const entrou = i < gente;
+          return (
+            <motion.div
+              key={i}
+              className={`split-part ${i === 0 ? 'is-yours' : ''} ${entrou ? 'is-in' : 'is-vaga'}`}
+              initial={{ scale: 0.9 }}
+              animate={{ scale: 1 }}
+              transition={{ duration: 0.4, delay: 0.05 * i, ease: [0.34, 1.4, 0.64, 1] }}
+            >
+              <span className="split-part-person">
+                <span
+                  className="split-person-avatar"
+                  style={entrou ? { background: p.cor } : undefined}
+                >
+                  {entrou ? <User size={12} /> : <Plus size={12} />}
+                </span>
+                <small>{p.rotulo}</small>
+              </span>
+              <strong>
+                {entrou ? <AnimatedMoney value={share} /> : '—'}
+              </strong>
+            </motion.div>
+          );
+        })}
       </div>
 
       <p className="split-note">
         <Sparkles size={15} />
         <span>
-          Em vez de <strong>{fmtBRL(full)}</strong> por mês, você paga <strong>{fmtBRL(share)}</strong> —
-          economiza <strong>{fmtBRL(saving)}</strong> todo mês.
+          {gente === 1 ? (
+            <>
+              Por enquanto é só você no grupo: paga o valor cheio de{' '}
+              <strong>{fmtBRL(full)}</strong> por mês. Conforme as pessoas entram,
+              o preço cai.
+            </>
+          ) : (
+            <>
+              Em vez de <strong>{fmtBRL(full)}</strong> por mês, você paga{' '}
+              <strong><AnimatedMoney value={share} /></strong> — economiza{' '}
+              <strong><AnimatedMoney value={saving} /></strong> todo mês.
+            </>
+          )}
         </span>
       </p>
-    </div>
+    </motion.div>
   );
 }
 
 export default function Home() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const whatsappVipUrl = useWhatsappVipUrl();
   const [scrolled, setScrolled] = useState(false);
   const [openFaq, setOpenFaq] = useState(-1);
   const [allServices, setAllServices] = useState([]);
@@ -367,10 +488,18 @@ export default function Home() {
       }
     });
 
-    supabase.from('groups')
-      .select('id, service_id, status, members:group_members(status), max_size')
-      .in('status', ['open', 'forming'])
-      .then(({ data }) => { if (data) setGroups(data); });
+    // Contadores da landing: só grupos PÚBLICOS contam (grupo privado não
+    // aparece para o público).
+    (async () => {
+      const hasVisibility = await visibilityColumnAvailable();
+      let query = supabase
+        .from('groups')
+        .select('id, service_id, status, members:group_members(status), max_size')
+        .in('status', ['open', 'forming']);
+      if (hasVisibility) query = query.eq('visibility', 'public');
+      const { data } = await query;
+      if (data) setGroups(data);
+    })();
 
     // Depoimentos: busca um pool maior, junta a foto atual do perfil de cada
     // um e traz para frente quem tem foto.
@@ -584,10 +713,15 @@ export default function Home() {
               Criar conta grátis agora!
               <ArrowRight size={20} />
             </Link>
-            <button onClick={() => scrollToSection('como-funciona')} className="btn btn-outline btn-lg">
-              <Play size={18} fill="currentColor" />
-              Ver Como Funciona
-            </button>
+            <a
+              href={whatsappVipUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-outline btn-lg btn-vip"
+            >
+              <span className="btn-vip-heart" aria-hidden="true">💜</span>
+              Grupo VIP WhatsApp
+            </a>
           </div>
 
           <SplitDemo services={allServices} />
@@ -619,16 +753,16 @@ export default function Home() {
         </section>
 
         {/* GRUPOS DISPONÍVEIS */}
-        <section className="home-available-groups">
+        <Reveal as="section" className="home-available-groups">
           <div className="section-header">
             <span className="section-tag">🔥 Grupos disponíveis</span>
             <p className="section-description">Serviços que já possuem grupos formados</p>
           </div>
           <ServicesCarousel services={allServices} groups={groups} basePath="/" />
-        </section>
+        </Reveal>
 
         {/* CATÁLOGO */}
-        <section id="servicos" className="services-section">
+        <Reveal as="section" id="servicos" className="services-section">
           <div className="section-header">
             <span className="section-tag">Serviços</span>
             <h2 className="section-title">Explorar todos os serviços</h2>
@@ -709,10 +843,10 @@ export default function Home() {
               </button>
             </div>
           )}
-        </section>
+        </Reveal>
 
         {/* COMO FUNCIONA */}
-        <section id="como-funciona" className="how-it-works-section">
+        <Reveal as="section" id="como-funciona" className="how-it-works-section">
           <div className="section-header">
             <span className="section-tag">Como Funciona</span>
             <h2 className="section-title">Em 4 passos você já está economizando</h2>
@@ -775,11 +909,11 @@ export default function Home() {
               <ArrowRight size={15} />
             </Link>
           </div>
-        </section>
+        </Reveal>
 
         {/* DEPOIMENTOS */}
         {testimonials.length > 0 && (
-          <section id="depoimentos" className="testimonials-section">
+          <Reveal as="section" id="depoimentos" className="testimonials-section">
             <div className="section-header">
               <span className="section-tag">Depoimentos</span>
               <h2 className="section-title">O que nossos usuários dizem</h2>
@@ -824,11 +958,11 @@ export default function Home() {
                 </div>
               )}
             </div>
-          </section>
+          </Reveal>
         )}
 
         {/* FAQ */}
-        <section id="faq" className="faq-section">
+        <Reveal as="section" id="faq" className="faq-section">
           <div className="section-header">
             <span className="section-tag">FAQ</span>
             <h2 className="section-title">Dúvidas frequentes</h2>
@@ -861,10 +995,10 @@ export default function Home() {
               </div>
             ))}
           </div>
-        </section>
+        </Reveal>
 
         {/* CTA */}
-        <section className="cta-section">
+        <Reveal as="section" className="cta-section">
           <div className="cta-card">
             <div className="cta-content">
               <h2>Pronto para começar a economizar?</h2>
@@ -880,8 +1014,10 @@ export default function Home() {
               </div>
             </div>
           </div>
-        </section>
+        </Reveal>
       </main>
+
+      <SiteFooter />
     </div>
   );
 }

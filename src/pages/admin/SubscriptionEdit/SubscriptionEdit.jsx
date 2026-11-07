@@ -564,17 +564,28 @@ export default function SubscriptionEdit() {
           .eq('group_id', sub.group_id)
           .eq('user_id', sub.user_id);
       } else if (statusParaGravar === 'cancelled' || statusParaGravar === 'inactive') {
+        // 'cancelled' é o valor canônico de "saiu do grupo" (o 'inactive' é
+        // legado e fazia o front tratar a pessoa como "Acesso Negado").
         await supabase
           .from('group_members')
-          .update({ status: 'inactive', left_at: agora, payment_status: 'cancelled', updated_at: agora })
+          .update({ status: 'cancelled', left_at: agora, payment_status: 'cancelled', updated_at: agora })
           .eq('group_id', sub.group_id)
           .eq('user_id', sub.user_id);
       } else if (statusParaGravar === 'active') {
         // Reativar: o membro volta para 'active' e o prazo volta a acompanhar
         // a próxima cobrança — senão o cron marcaria overdue na hora.
+        //
+        // BUG CORRIGIDO (01/11/2026): antes só gravava `payment_status` e o
+        // prazo. O `status` continuava 'inactive'/'cancelled' e o `left_at`
+        // continuava preenchido — aí a pessoa aparecia como "Cancelado" na
+        // lista de membros do grupo e a tela de credenciais respondia "Acesso
+        // Negado", mesmo com a assinatura ativa e paga. Era só remover e
+        // adicionar o membro de novo que voltava ao normal.
         await supabase
           .from('group_members')
           .update({
+            status: 'active',
+            left_at: null,
             payment_status: 'active',
             subscription_deadline: nextChargeParaGravar,
             updated_at: agora,

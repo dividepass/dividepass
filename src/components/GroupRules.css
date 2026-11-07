@@ -1,0 +1,24 @@
+/* Lista de regrinhas do grupo (detalhe, checkout e credenciais). */
+.group-rules-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.group-rules-list li {
+  position: relative;
+  padding-left: 0.9rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.group-rules-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--text-soft);
+}

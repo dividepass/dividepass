@@ -623,11 +623,27 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
         : subscriptionAmount;
       // Valor autoritativo (recalculado no servidor). Nunca usar final_amount
       // do body aqui.
-      const authoritative = authoritativeCoupon.get(
-        type === "entrance" ? "entrance" : "subscription",
-      );
-      const finalAmt = authoritative ? authoritative.amount : baseAmt;
-      const discountAmt = authoritative ? authoritative.discount : 0;
+      //
+      // No fluxo COMBINED o total é aADESÃO + a mensalidade: o cupom entra
+      // só na mensalidade, então o valor final não é "o amount do cupom" e
+      // sim "adesão + mensalidade com desconto".
+      let finalAmt = baseAmt;
+      let discountAmt = 0;
+      if (type === "combined") {
+        const sub = authoritativeCoupon.get("subscription");
+        if (sub) {
+          finalAmt = entranceAmount + sub.amount;
+          discountAmt = sub.discount;
+        }
+      } else {
+        const authoritative = authoritativeCoupon.get(
+          type === "entrance" ? "entrance" : "subscription",
+        );
+        if (authoritative) {
+          finalAmt = authoritative.amount;
+          discountAmt = authoritative.discount;
+        }
+      }
       await supabaseAdmin.from("payment_attempts").insert({
         user_id, group_id, gateway: "iopay", payment_method: isPix ? "pix" : "card",
         payment_type: type, amount: finalAmt, original_amount: baseAmt, discount_amount: discountAmt,
@@ -760,7 +776,45 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
   }
 
   if (type === "entrance" || type === "combined") {
-    const chargedAmount = isCombined ? totalCombinedAmount : entranceAmount;
+    // ─────────────────────────────────────────────────────────────────────
+    // FLUXO COMBINADO (adesão + 1ª mensalidade em UM pagamento)
+    //
+    // Regra de negócio: a Taxa de Adesão é ÚNICA (entrada no grupo) e NUNCA
+    // entra na recorrência. A assinatura nasce com o valor do CICLO
+    // (preço mensal x meses) e é esse valor que a renovação vai cobrar.
+    //
+    // O cupom incide sobre a MENSALIDADE (é desconto de assinatura); a taxa
+    // de adesão é cobrada pelo valor cheio do grupo.
+    // ─────────────────────────────────────────────────────────────────────
+    let combinedSubscriptionAmount = subscriptionAmount; // mensalidade (ciclo)
+    let combinedDiscount = 0;
+    let combinedRecurring = false;
+    let combinedStoredAmount = subscriptionAmount; // o que a ASSINATURA vai guardar
+    let combinedStoredDiscount = 0;
+    let combinedStoredCouponId: string | null = null;
+
+    if (isCombined && coupon_id) {
+      const subCouponRes = await resolveCouponFor(subscriptionAmount, "subscription");
+      if (!subCouponRes.ok) {
+        return new Response(
+          JSON.stringify({ error: subCouponRes.error }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      combinedSubscriptionAmount = subCouponRes.amount;
+      combinedDiscount = subCouponRes.discount;
+      combinedRecurring = subCouponRes.recurring;
+      // Cupom recorrente continua valendo nos próximos ciclos; cupom de uso
+      // único só vale neste pagamento (a recorrência volta ao preço cheio).
+      combinedStoredAmount = combinedRecurring ? subCouponRes.amount : subscriptionAmount;
+      combinedStoredDiscount = combinedRecurring ? subCouponRes.discount : 0;
+      combinedStoredCouponId = combinedRecurring ? coupon_id : null;
+    }
+
+    const chargedAmount = isCombined
+      ? entranceAmount + combinedSubscriptionAmount
+      : entranceAmount;
+
     if (entranceAmount <= 0 && !isCombined) {
       return new Response(JSON.stringify({ error: "Este grupo não possui taxa de adesão" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -768,7 +822,7 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
     // Valida o cupom no servidor (rejeita cupom expirado, esgotado ou
     // inelegivel). O valor cobrado aqui NAO muda: a taxa de adesao continua
     // sendo cobrada pelo valor do grupo, igual antes desta correcao.
-    if (coupon_id) {
+    if (!isCombined && coupon_id) {
       const entranceCouponRes = await resolveCouponFor(entranceAmount, "entrance");
       if (!entranceCouponRes.ok) {
         return new Response(
@@ -815,23 +869,59 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
         return new Response(JSON.stringify({ error: "Transação criada mas sem ID de retorno. Verifique seu pagamento." }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      if (!isPix) {
-        // Cartão é capturado na hora. Para pagamento SÓ de taxa de adesão o
-        // membro precisa ficar em 'entrance_paid' (e com prazo de 12h), que é o
-        // estado que o Checkout usa para liberar o Passo 2. Antes gravava
-        // 'active', o que travava o fluxo e ainda liberava o acesso antes da
-        // assinatura estar paga.
-        const isEntranceOnly = !isCombined && entranceAmount > 0;
+      if (!isPix && !isCombined) {
+        // Só o pagamento SÓ de adesão cria o vínculo antes da confirmação
+        // (é ele que abre a janela de 12h para concluir a assinatura depois).
+        //
+        // No FLUXO COMBINADO o vínculo nasce na confirmação: criar antes
+        // deixava o front achar que a adesão JÁ estava paga mesmo com o
+        // pagamento recusado — e a taxa de adesão ficava de fora da cobrança
+        // seguinte (a pessoa pagava só a mensalidade).
+        const isEntranceOnly = entranceAmount > 0;
         await supabaseAdmin.from("group_members").upsert({
           group_id, user_id,
           status: "active",
-          payment_status: isCombined ? "awaiting_subscription" : (isEntranceOnly ? "entrance_paid" : "active"),
+          payment_status: isEntranceOnly ? "entrance_paid" : "active",
           ...(isEntranceOnly ? {
             entrance_paid_at: new Date().toISOString(),
             entrance_payment_id: txId,
             subscription_deadline: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
           } : {}),
         }, { onConflict: "group_id, user_id" });
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // ASSINATURA (fluxo combinado) — nasce como 'pending'
+      //
+      // Criar aqui (e não só na confirmação) é o que garante que o valor
+      // gravado é o do CICLO (preço mensal x meses), SEM a taxa de adesão.
+      // A renovação usa exatamente esse campo — se a taxa entrasse aqui, ela
+      // seria cobrada todo mês.
+      // ─────────────────────────────────────────────────────────────────────
+      if (isCombined) {
+        const nextChargeAt = new Date();
+        if (subDays > 0) nextChargeAt.setDate(nextChargeAt.getDate() + subDays);
+        else nextChargeAt.setMonth(nextChargeAt.getMonth() + subMonths);
+
+        await supabaseAdmin.from("user_subscriptions").upsert({
+          user_id, group_id, service_id: group.service_id,
+          billing_cycle: cycle,
+          amount: combinedStoredAmount,
+          original_amount: subscriptionAmount,
+          discount_amount: combinedStoredDiscount,
+          coupon_id: combinedStoredCouponId,
+          status: "pending",
+          gateway: "iopay",
+          payment_method: isPix ? "pix" : "credit_card",
+          gateway_subscription_id: txId,
+          external_reference: externalReference,
+          started_at: new Date().toISOString(),
+          next_charge_at: nextChargeAt.toISOString(),
+          renewal_due_at: nextChargeAt.toISOString(),
+          billing_status: "active",
+          custom_cycle_days: subDays || null,
+          custom_cycle_months: cycle === "custom" ? (subMonths || null) : null,
+        }, { onConflict: "user_id, group_id" });
       }
 
       const txStatus = txData.status || "pending";
@@ -872,9 +962,9 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
         pix_copy_paste: pixCopyPaste,
         status: isPix ? txStatus : "processing",
         needs_polling: !isPix,
-        total_amount: isCombined ? totalCombinedAmount : undefined,
+        total_amount: isCombined ? entranceAmount + combinedSubscriptionAmount : undefined,
         entrance_amount: isCombined ? entranceAmount : undefined,
-        subscription_amount: isCombined ? subscriptionAmount : undefined,
+        subscription_amount: isCombined ? combinedSubscriptionAmount : undefined,
         raw: { created: txData },
       }, { headers: corsHeaders });
     } catch (err: any) {
@@ -1259,7 +1349,22 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
 
       try {
         await supabaseAdmin.from("group_members").upsert({
-          group_id, user_id, status: "active", payment_status: "active",
+          group_id, user_id,
+          status: "active",
+          // ─────────────────────────────────────────────────────────────────
+          // O PAGAMENTO AINDA NÃO FOI CONFIRMADO aqui.
+          //
+          // Gravar `payment_status: "active"` antes da confirmação mentia
+          // sobre o estado do vínculo — e era exatamente esse estado mentiroso
+          // que fazia o `check-iopay-tx` responder "já confirmei" e devolver
+          // SUCESSO AO NAVEGADOR SEM LIBERAR NADA: a tela dizia "pagamento
+          // aprovado", o cliente saía, e a assinatura continuava PENDENTE
+          // (foi o caso da Cristiana, em 02/11). Quem libera o grupo é a
+          // confirmação (webhook/polling/reconciliação).
+          // ─────────────────────────────────────────────────────────────────
+          payment_status: renewalMode
+            ? "active"
+            : (group.has_entrance_fee ? "awaiting_subscription" : "first_attempt"),
         }, { onConflict: "group_id, user_id" });
       } catch (gmErr) {
         console.error("[create-payment] Card sub group_members upsert error:", gmErr);

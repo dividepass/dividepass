@@ -4,7 +4,12 @@ import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Shar
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
+import { visibilityColumnAvailable } from '../../lib/groupVisibility';
 import GroupTags from '../../components/GroupTags';
+import MemberAvatar from '../../components/MemberAvatar';
+import SponsoredOffers from '../../components/SponsoredOffers';
+import WatchlistButton from '../../components/WatchlistButton';
+import { useEngagement } from '../../hooks/useEngagement';
 import logoImg from '../../assets/logo.png';
 import './Catalog.css';
 
@@ -50,12 +55,20 @@ const SORT_OPTIONS = [
   { key: 'newest', label: 'Mais recentes' },
 ];
 
+/**
+ * Avatar do membro no rodapé do card.
+ *
+ * Foto de perfil quando a pessoa tem uma; inicial do nome quando não tem
+ * (ou quando a foto não carrega — erro de URL/storage).
+ */
+
 function Catalog() {
   const { serviceId } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const { streamingServices, getAvailableServices, isSubscribedToService } = useAppDataContext();
+  const { isWatching, toggleWatch, refreshWatchlist } = useEngagement();
 
   const [search, setSearch] = useState('');
   const [verifiedOnly, setVerifiedOnly] = useState(false);
@@ -91,17 +104,22 @@ function Catalog() {
 
     let cancelled = false;
     const fetchGroups = async () => {
-      const { data } = await supabase
+      // Grupo privado não aparece no catálogo público.
+      const hasVisibility = await visibilityColumnAvailable();
+      if (cancelled) return;
+      let query = supabase
         .from('groups')
         .select(`
           *,
           service:service_id (*),
-          members:group_members (*),
+          members:group_members (*, user:user_id (id, name, avatar_url)),
           credential:group_credentials (*),
           owner:owner_id (id, name, email, avatar_url, role)
         `)
         .eq('service_id', selectedService.id)
         .in('status', ['open', 'forming']);
+      if (hasVisibility) query = query.eq('visibility', 'public');
+      const { data } = await query;
       if (!cancelled && data) setExtraGroups(data);
     };
     fetchGroups();
@@ -150,6 +168,9 @@ function Catalog() {
         console.error(error);
       }
       setInterestSent(true);
+      // O modal grava na mesma tabela da lista de espera compartilhada:
+      // sincroniza para o botão "Na lista de espera" aparecer na hora.
+      refreshWatchlist();
       setTimeout(() => { setInterestModal(false); setInterestSent(false); setInterestMsg(''); }, 2000);
     } catch (err) {
       console.error(err);
@@ -267,10 +288,23 @@ function Catalog() {
               {shareCopied ? <Check size={16} /> : <Share2 size={16} />}
               {shareCopied ? 'Link copiado' : 'Compartilhar plataforma'}
             </button>
-            <button className="btn-interest-header" onClick={() => setInterestModal(true)}>
-              <Bell size={16} />
-              Lista de Espera
-            </button>
+            {/* Lista de espera: se a pessoa já está na lista, o botão sai dela.
+                Se não está, abre o modal (que aceita uma mensagem). */}
+            {isWatching(selectedService.id) ? (
+              <button
+                className="btn-interest-header"
+                onClick={() => toggleWatch(selectedService.id)}
+                title="Você será avisado(a) quando abrir uma vaga. Clique para sair da lista."
+              >
+                <Check size={16} />
+                Na lista de espera
+              </button>
+            ) : (
+              <button className="btn-interest-header" onClick={() => setInterestModal(true)}>
+                <Bell size={16} />
+                Lista de Espera
+              </button>
+            )}
           </div>
         </div>
 
@@ -323,6 +357,18 @@ function Catalog() {
             <button className="btn btn-primary" style={{ marginTop: '1rem' }} onClick={() => setInterestModal(true)}>
               <Bell size={16} /> Solicitar Novo Grupo
             </button>
+            {/* Serviço sem grupo: a pessoa salva o serviço e avisa quando abrir vaga. */}
+            <div className="catalog-watch-suggestion">
+              <WatchlistButton
+                serviceId={selectedService.id}
+                block
+                onToggle={refreshWatchlist}
+              />
+              <p>
+                Salve serviços que ainda não têm grupos disponíveis e receba
+                alertas quando aparecer uma oportunidade.
+              </p>
+            </div>
           </div>
         )}
 
@@ -334,7 +380,13 @@ function Catalog() {
             const hasSlotLimit = group.has_slot_limit !== false;
             const maxSize = hasSlotLimit ? (group.max_size || selectedService.max_group_size) : null;
             const cycleInfo = formatCycleLabel(group);
-            const memberAvatars = (group.members || []).filter(m => m.status === 'active').slice(0, 4);
+            // Rodapé do card: até 4 retratos. Quem tem foto de perfil vem
+            // primeiro (fica mais bonito); quem não tem cai na inicial/letra.
+            const activeMembersList = (group.members || []).filter(m => m.status === 'active');
+            const memberAvatars = [...activeMembersList]
+              .sort((a, b) => Number(Boolean(b.user?.avatar_url)) - Number(Boolean(a.user?.avatar_url)))
+              .slice(0, 4);
+            const hiddenMembers = Math.max(0, activeMembersList.length - memberAvatars.length);
 
             return (
               <div
@@ -394,21 +446,23 @@ function Catalog() {
                 <div className="gc-bottom">
                   <div className="gc-member-avatars">
                     {memberAvatars.map((m, i) => (
-                      <div
-                        key={m.user_id || i}
+                      <MemberAvatar
+                        key={m.user_id || m.id || i}
+                        member={m}
                         className="gc-member-avatar"
                         style={{ zIndex: memberAvatars.length - i }}
-                        title={m.user?.name || 'Membro'}
-                      >
-                        {m.user?.avatar_url ? (
-                          <img src={m.user.avatar_url} alt="" />
-                        ) : (
-                          <span>{(m.user?.name || '?')[0].toUpperCase()}</span>
-                        )}
-                      </div>
+                      />
                     ))}
+                    {hiddenMembers > 0 && (
+                      <div
+                        className="gc-member-avatar gc-member-more"
+                        title={`+${hiddenMembers} ${hiddenMembers === 1 ? 'membro' : 'membros'} — veja todos na página do grupo`}
+                      >
+                        +{hiddenMembers}
+                      </div>
+                    )}
                     {memberAvatars.length === 0 && (
-                      <div className="gc-member-avatar gc-empty">
+                      <div className="gc-member-avatar gc-member-avatar-empty" title="Nenhum membro ainda">
                         <span>?</span>
                       </div>
                     )}
@@ -481,6 +535,14 @@ function Catalog() {
         <h1>Catálogo de Serviços</h1>
         <p>Assine novos serviços dividindo o valor com outras pessoas.</p>
       </div>
+
+      {/* Ofertas patrocinadas — topo do catálogo. Espaço comprado por
+          parceiros para divulgar os serviços deles. */}
+      <SponsoredOffers
+        placement="catalog"
+        title="Oferta em destaque"
+        subtitle="Espaços patrocinados por parceiros para destacar serviços no topo do catálogo."
+      />
 
       <div className="catalog-toolbar">
         <div className="catalog-search-wrap">

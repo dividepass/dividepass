@@ -249,18 +249,7 @@
   color: var(--text-muted);
 }
 
-/* Rules */
-.gd-rules p {
-  padding-left: 1rem;
-  position: relative;
-}
-
-.gd-rules p::before {
-  content: '•';
-  position: absolute;
-  left: 0;
-  color: var(--text-soft);
-}
+/* Rules: as regrinhas sao uma lista compartilhada (components/GroupRules.css). */
 
 /* Loyalty */
 .gd-loyalty-intro {

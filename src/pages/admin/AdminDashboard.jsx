@@ -14,6 +14,7 @@ import {
   Wallet,
   Target,
   UserPlus,
+  ChevronDown,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import './AdminDashboard.css';
@@ -31,6 +32,20 @@ const PRIORITY_LABELS = {
   high: 'Alta',
   critical: 'Crítica',
 };
+
+/* Rótulo e cor de cada status de pagamento (enum payment_status). */
+const PAYMENT_STATUS_LABELS = {
+  paid: 'Pago',
+  pending: 'Pendente',
+  failed: 'Falhou',
+  refunded: 'Estornado',
+  cancelled: 'Cancelado',
+};
+
+const MONTH_NAMES = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('pt-BR', {
@@ -105,6 +120,10 @@ function AdminDashboard() {
   const [criticalTickets, setCriticalTickets] = useState([]);
   const [pendingGroups, setPendingGroups] = useState([]);
   const [approvingGroup, setApprovingGroup] = useState(null);
+  /* Pagamentos do mês: o card mostra o total e a quantidade, e o clique
+     abre a lista de quem pagou, em qual grupo, quanto e com que status. */
+  const [payments, setPayments] = useState([]);
+  const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [signups, setSignups] = useState({
     day: 0,
     week: 0,
@@ -166,6 +185,7 @@ function AdminDashboard() {
           pendingGroupsRes,
           newUsersRes,
           newSubsRes,
+          paymentsRes,
         ] = await Promise.all([
           supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'user').maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
           supabase.from('user_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active').maybeSingle().then(r => ({ ...r, count: r.count || 0 })),
@@ -211,6 +231,17 @@ function AdminDashboard() {
             .eq('role', 'user').gte('created_at', firstDayOfMonth),
           supabase.from('user_subscriptions').select('user_id, created_at')
             .gte('created_at', firstDayOfMonth),
+          /* Pagamentos do mês, com quem pagou e em qual grupo. O "user" e o
+             "group" vêm por join: sem eles o operador teria que abrir cada
+             pagamento para descobrir de quem era. */
+          supabase.from('payments').select(`
+            id, amount, status, method, gateway, paid_at, created_at,
+            transaction_code, user_id, group_id,
+            user:user_id (id, name, email),
+            group:group_id (id, name, service:service_id (id, name))
+          `).gte('created_at', firstDayOfMonth).lte('created_at', lastDayOfMonth)
+            .order('created_at', { ascending: false })
+            .limit(100),
         ]);
 
         if (cancelled) return;
@@ -251,6 +282,8 @@ function AdminDashboard() {
           expectedProfit,
           openTickets,
         });
+
+        setPayments(paymentsRes.data || []);
 
         const normalizedLogs = (activityLogsRes.data || []).map((log) => ({
           id: `log-${log.id}`,
@@ -446,6 +479,13 @@ function AdminDashboard() {
     },
   ].filter((item) => item.count > 0);
 
+  /* Resumo dos pagamentos do mês: o total é só o que está com status "paid".
+     A lista mostra todos (inclusive pendente e falhado) — o operador precisa
+     ver o que ainda não entrou, não só o que entrou. */
+  const paymentsPaid = payments.filter((p) => p.status === 'paid');
+  const paymentsTotal = paymentsPaid.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const paymentsMonth = MONTH_NAMES[new Date().getMonth()];
+
   const metricCards = [
     {
       icon: <UserPlus size={20} />,
@@ -616,6 +656,81 @@ function AdminDashboard() {
           </div>
         ))}
       </div>
+
+      {/*
+        Pagamentos do mês. O card mostra o total e a quantidade; o clique
+        abre a lista com quem pagou, em qual grupo, o valor e o status.
+        Só aparece quando existe pagamento — sem dado, o card é só ruído.
+      */}
+      {payments.length > 0 && (
+        <section className="pay-panel" aria-labelledby="pay-panel-title">
+          <button
+            type="button"
+            className="pay-head"
+            onClick={() => setPaymentsOpen((v) => !v)}
+            aria-expanded={paymentsOpen}
+            aria-controls="pay-panel-list"
+          >
+            <span className="pay-head-icon" aria-hidden><CreditCard size={18} /></span>
+            <span className="pay-head-info">
+              <span className="pay-head-label" id="pay-panel-title">
+                Pagamentos de {paymentsMonth}
+              </span>
+              <span className="pay-head-total">{formatCurrency(paymentsTotal)}</span>
+              <span className="pay-head-sub">
+                {payments.length === 1 ? '1 pagamento' : `${payments.length} pagamentos`}
+                {paymentsPaid.length > 0 && (
+                  <> · {paymentsPaid.length} {paymentsPaid.length === 1 ? 'confirmado' : 'confirmados'}</>
+                )}
+                {' · '}
+                {paymentsOpen ? 'esconder detalhes' : 'ver quem pagou'}
+              </span>
+            </span>
+            <ChevronDown
+              size={18}
+              className={`pay-chevron ${paymentsOpen ? 'is-open' : ''}`}
+              aria-hidden
+            />
+          </button>
+
+          {paymentsOpen && (
+            <div className="pay-list" id="pay-panel-list">
+              {payments.map((p) => {
+                const quem = p.user?.name || p.user?.email || 'Usuário';
+                return (
+                  <div className="pay-row" key={p.id}>
+                    <span className={`pay-dot is-${p.status}`} aria-hidden />
+
+                    <span className="pay-who">
+                      <strong>{quem}</strong>
+                      <span>{p.user?.email && p.user?.name ? p.user.email : (p.transaction_code || '—')}</span>
+                    </span>
+
+                    <span className="pay-group">
+                      <strong>{p.group?.name || 'Grupo removido'}</strong>
+                      <span>{p.group?.service?.name || 'Sem serviço'}</span>
+                    </span>
+
+                    <span className="pay-money">
+                      <strong>{formatCurrency(p.amount)}</strong>
+                      <span className={`pay-badge is-${p.status}`}>
+                        {PAYMENT_STATUS_LABELS[p.status] || p.status}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
+
+              {payments.length >= 100 && (
+                <p className="pay-foot">
+                  Mostrando os 100 mais recentes do mês. A lista completa fica em
+                  {' '}<a href="/admin/billing/failures">Financeiro</a>.
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       {openTickets.length > 0 && (
         <div className="support-block">

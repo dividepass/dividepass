@@ -287,6 +287,7 @@ export function subscriptionCreatedTemplate(
     paragraphs: [
       `Olá, ${data.name}!`,
       `Sua assinatura do ${data.groupName} foi confirmada e o pagamento já está registrado.`,
+      "Acabamos de ingressar você no grupo — as credenciais já estão disponíveis na sua conta.",
       "Daqui em diante a renovação é automática. Antes de cada vencimento você recebe um aviso por e-mail — nada de surpresa.",
     ],
     details: [
@@ -304,6 +305,109 @@ export function subscriptionCreatedTemplate(
 
   return {
     subject: `Assinatura confirmada — ${data.groupName}`,
+    text,
+    html,
+  };
+}
+
+export type PaymentReceivedData = {
+  name: string;
+  groupName: string;
+  amount: number;
+  /** 'subscription' | 'entrance' | 'combined' | 'invoice' */
+  paymentType?: string | null;
+  url: string;
+};
+
+/**
+ * "Recebemos o seu pagamento".
+ *
+ * Sai assim que o gateway aprova o pagamento — antes da liberação no grupo.
+ * A cliente precisa saber que o dinheiro caiu; sem este e-mail ela fica sem
+ * nenhuma notícia entre o "paguei" e o "não fui add ao grupo".
+ */
+export function paymentReceivedTemplate(
+  data: PaymentReceivedData,
+): EmailContent {
+  const oQue = data.paymentType === "entrance"
+    ? "a taxa de adesão"
+    : data.paymentType === "invoice"
+      ? "a fatura"
+      : "a sua assinatura";
+
+  const { html, text } = emailShell({
+    title: "Recebemos o seu pagamento",
+    subtitle: data.groupName,
+    tone: "success",
+    paragraphs: [
+      `Olá, ${data.name}!`,
+      `Recebemos o seu pagamento de ${formatBRL(data.amount)} referente a ${oQue} do grupo ${data.groupName}.`,
+      "Agora estamos liberando o seu acesso no grupo — em instantes você recebe um segundo e-mail confirmando a entrada.",
+    ],
+    details: [
+      { label: "Grupo", value: data.groupName },
+      { label: "Valor pago", value: formatBRL(data.amount) },
+    ],
+    cta: { label: "Acompanhar minha assinatura", url: `${data.url}/dashboard/subscriptions` },
+    footerNote:
+      "Se você não reconhece este pagamento, responda este e-mail imediatamente.",
+  });
+
+  return {
+    subject: `Recebemos seu pagamento — ${data.groupName}`,
+    text,
+    html,
+  };
+}
+
+export type MemberJoinedData = {
+  name: string;
+  groupName: string;
+  amount?: number | null;
+  /** 'subscription' = assinatura; 'entrance' = só taxa de adesão. */
+  paymentType?: string | null;
+  url: string;
+};
+
+/**
+ * "Sua assinatura foi criada — acabamos de ingressar você no grupo".
+ *
+ * É o e-mail que fecha o ciclo: o dinheiro entrou, a pessoa entrou no grupo e
+ * as credenciais estão na conta dela.
+ */
+export function memberJoinedTemplate(
+  data: MemberJoinedData,
+): EmailContent {
+  const assinatura = data.paymentType !== "entrance";
+
+  const { html, text } = emailShell({
+    title: assinatura
+      ? "Sua assinatura foi criada"
+      : "Sua vaga foi liberada",
+    subtitle: data.groupName,
+    tone: "success",
+    paragraphs: [
+      `Olá, ${data.name}!`,
+      assinatura
+        ? `Sua assinatura do ${data.groupName} foi criada e acabamos de ingressar você no grupo.`
+        : `Sua taxa de adesão do ${data.groupName} foi paga e acabamos de ingressar você no grupo.`,
+      "As credenciais do grupo já estão disponíveis na sua conta — é só abrir o painel.",
+    ],
+    details: [
+      { label: "Grupo", value: data.groupName },
+      ...(data.amount != null
+        ? [{ label: "Valor pago", value: formatBRL(data.amount) }]
+        : []),
+    ],
+    cta: { label: "Ver as credenciais", url: `${data.url}/dashboard/credentials` },
+    footerNote:
+      "Dúvida de qualquer coisa, é só responder este e-mail — a gente ajuda.",
+  });
+
+  return {
+    subject: assinatura
+      ? `Sua assinatura foi criada — ${data.groupName}`
+      : `Você entrou no grupo ${data.groupName}`,
     text,
     html,
   };

@@ -1,4 +1,4 @@
-import { BadgeCheck, Megaphone, MegaphoneOff, Crown } from 'lucide-react';
+import { BadgeCheck, Megaphone, MegaphoneOff, Crown, Plug } from 'lucide-react';
 import './GroupTags.css';
 
 /**
@@ -12,11 +12,30 @@ import './GroupTags.css';
  *   pagando. `has_ads === null` (grupo antigo) não mostra selo nenhum.
  * - Tipo de conta ("Conta Família", "Conta Premium"...): o que o membro
  *   recebe de fato.
+ * - "Via Parceiro": grupo importado da revenda (Pulse Coding). O acesso vem
+ *   de um parceiro e é PRIVADO — o membro recebe a própria conta, não uma
+ *   conta compartilhada. O selo avisa isso antes da compra.
  */
 export default function GroupTags({ group, size = 'md', showPlanType = true, showVerified = true, className = '' }) {
   if (!group) return null;
 
   const tags = [];
+
+  // Grupo "Via Parceiro": a tag vive em `groups.tags` (TEXT[]).
+  const ehViaParceiro = Array.isArray(group.tags) && group.tags.some(
+    (t) => String(t || '').trim().toLowerCase() === 'via parceiro'
+  );
+
+  if (ehViaParceiro) {
+    tags.push({
+      key: 'parceiro',
+      label: 'Via Parceiro',
+      short: 'Via Parceiro',
+      icon: Plug,
+      tone: 'parceiro',
+      title: 'Acesso obtido com a revenda Pulse Coding. O acesso é seu e pessoal — não pode ser compartilhado.',
+    });
+  }
 
   if (showVerified && group.verified) {
     tags.push({

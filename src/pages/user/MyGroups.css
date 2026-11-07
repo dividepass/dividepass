@@ -390,6 +390,29 @@
   color: var(--text);
 }
 
+/* Erro dentro do modal de exclusão (ex.: grupo com pagamento confirmado,
+   que só a equipe pode excluir). */
+.confirm-modal-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  text-align: left;
+  background: rgba(239, 68, 68, 0.09);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 0.65rem;
+  padding: 0.7rem 0.85rem;
+  margin: 0 0 1.25rem;
+  color: var(--text-muted);
+  font-size: 0.83rem;
+  line-height: 1.5;
+}
+
+.confirm-modal-error svg {
+  color: #EF4444;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
 .confirm-modal-actions {
   display: flex;
   gap: 0.75rem;

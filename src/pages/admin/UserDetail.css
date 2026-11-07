@@ -201,12 +201,28 @@
     grid-template-columns: 1fr;
   }
 
+  /* As 7 abas empilhavam em 7 linhas e empurravam o conteúdo para
+     baixo. Viram uma faixa rolável que fica presa no topo. */
+  .user-detail-header {
+    margin-bottom: 0.9rem;
+  }
+
+  .back-btn {
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+  }
+
   .user-tabs {
-    flex-direction: column;
+    margin-bottom: 1rem;
+    gap: 0.35rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.35rem;
   }
 
   .user-tab {
-    justify-content: center;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.85rem;
+    gap: 0.35rem;
   }
 
   .global-crons-grid {
@@ -215,6 +231,62 @@
 
   .cron-detail-row {
     flex-wrap: wrap;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Link do grupo na aba Assinaturas
+   O operador não quer ler o nome do grupo — quer abrir o grupo.
+   ───────────────────────────────────────────────────────────── */
+.user-sub-group-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(99, 102, 241, 0.45);
+  padding-bottom: 1px;
+  transition: color 0.15s, border-color 0.15s, gap 0.15s;
+}
+
+.user-sub-group-link:hover {
+  color: #818cf8;
+  border-bottom-color: #818cf8;
+  gap: 0.45rem;
+}
+
+.user-sub-group-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.user-sub-group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 18ch;
+}
+
+.user-sub-group-link svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+/* No celular o nome do grupo fica com espaço para respirar. */
+@media (max-width: 720px) {
+  .user-sub-group-name {
+    max-width: 14ch;
+  }
+
+  .user-form {
+    padding: 1rem;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+    justify-content: center;
   }
 }
 
@@ -435,6 +507,51 @@
   max-width: 500px;
   max-height: 90vh;
   overflow-y: auto;
+}
+
+/* No celular o modal vira folha de baixo: ocupa a largura toda, o
+   cabeçalho fica preso no topo e as ações ficam presas no rodapé —
+   o operador não precisa rolar até o botão para confirmar. */
+@media (max-width: 640px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-content {
+    max-width: 100%;
+    border-radius: 16px 16px 0 0;
+    max-height: 92vh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--card-bg, #111827);
+    padding: 0.85rem 1rem;
+  }
+
+  .modal-body {
+    padding: 1rem;
+    gap: 0.8rem;
+  }
+
+  .modal-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--card-bg, #111827);
+    border-top: 1px solid var(--border, #1f2937);
+    padding: 0.7rem 1rem;
+  }
+
+  .modal-actions .btn {
+    flex: 1;
+    justify-content: center;
+    padding: 0.65rem 0.5rem;
+    font-size: 0.85rem;
+  }
 }
 
 .modal-header {

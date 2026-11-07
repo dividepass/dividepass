@@ -1,0 +1,884 @@
+/* ============================================================
+   ENGAJAMENTO DE CATÁLOGO
+   Estilos das seções novas do dashboard e do catálogo:
+   ofertas patrocinadas, recomendados, oportunidades, votação
+   e o botão "Avise-me quando houver uma vaga".
+
+   Prefixos usados (nenhum colide com o resto do app):
+     .sponsored-*  ofertas patrocinadas
+     .recommended-* card de recomendados
+     .opp-*        ofertas e oportunidades
+     .vote-card-*  card de votação
+     .watch-btn-*  botão de lista de espera
+   ============================================================ */
+
+/* ─────────────────────────────────────────────────────────────
+   OFERTAS PATROCINADAS
+   ───────────────────────────────────────────────────────────── */
+.sponsored-section {
+  margin-bottom: 3rem;
+}
+
+.sponsored-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.sponsored-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--action);
+  background: var(--action-bg);
+  color: #7C2D12;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  margin-bottom: 0.6rem;
+}
+
+.sponsored-header h2 {
+  font-size: 1.5rem;
+  color: var(--secondary);
+  margin: 0 0 0.25rem;
+}
+
+.sponsored-header p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 52ch;
+}
+
+.sponsored-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.sponsored-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sponsored-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--action);
+  box-shadow: var(--shadow-md);
+}
+
+/* Faixa de destaque no topo do card — é o que faz parecer "destaque". */
+.sponsored-card::before {
+  content: '';
+  display: block;
+  height: 4px;
+  background: linear-gradient(90deg, var(--action), var(--action-light), var(--primary));
+}
+
+.sponsored-badge {
+  position: absolute;
+  top: 0.9rem;
+  left: 0.9rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7C2D12;
+  background: var(--action-bg);
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  padding: 0.28rem 0.6rem;
+  border-radius: 999px;
+  z-index: 2;
+}
+
+/* Sem banner não tem nada para o selo "flutuar" por cima: ele entra no fluxo
+   e não cobre o título do anúncio. */
+.sponsored-card--no-banner .sponsored-badge {
+  position: static;
+  align-self: flex-start;
+  margin-bottom: 0.15rem;
+}
+
+.sponsored-banner {
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  display: block;
+  background: var(--surface-soft);
+}
+
+.sponsored-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 1.1rem 1.15rem 1.25rem;
+  flex: 1;
+}
+
+.sponsored-card-body h3 {
+  font-size: 1.05rem;
+  color: var(--text-main);
+  margin: 0;
+  line-height: 1.35;
+}
+
+.sponsored-card-body p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.sponsored-service {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.sponsored-service-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sponsored-service-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sponsored-service-logo span {
+  font-size: 0.8rem;
+}
+
+.sponsored-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.sponsored-sponsor {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.sponsored-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--action);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.sponsored-cta:hover {
+  text-decoration: underline;
+}
+
+/* Variante compacta: dentro de "Ofertas e oportunidades". */
+.opp-card .sponsored-section {
+  margin-bottom: 0;
+}
+
+.sponsored-grid--compact {
+  grid-template-columns: 1fr;
+  gap: 0.6rem;
+}
+
+.sponsored-card--compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.sponsored-card--compact::before {
+  display: none;
+}
+
+.sponsored-card--compact .sponsored-badge {
+  position: static;
+  align-self: flex-start;
+  font-size: 0.6rem;
+  padding: 0.2rem 0.45rem;
+}
+
+.sponsored-card--compact .sponsored-card-body {
+  padding: 0;
+  gap: 0.2rem;
+  flex: 1;
+}
+
+.sponsored-card--compact .sponsored-card-body h3 {
+  font-size: 0.88rem;
+}
+
+.sponsored-card--compact .sponsored-card-body p {
+  font-size: 0.76rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sponsored-card--compact .sponsored-foot {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0.1rem;
+}
+
+.sponsored-card--compact .sponsored-sponsor {
+  display: none;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   RECOMENDADOS PARA VOCÊ — faixa compacta do topo
+   Cada item é só logo + nome, em scroll horizontal: o card
+   grande comia a tela inteira do celular.
+   ───────────────────────────────────────────────────────────── */
+.recommended-section {
+  margin-bottom: 2rem;
+}
+
+.recommended-head {
+  margin-bottom: 0.7rem;
+}
+
+.recommended-head-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  flex-wrap: wrap;
+}
+
+.recommended-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 1.25rem;
+  color: var(--secondary);
+  margin: 0;
+}
+
+.recommended-title svg {
+  color: var(--primary-light);
+  flex-shrink: 0;
+}
+
+.recommended-tagline {
+  font-size: 0.92rem;
+  font-weight: 800;
+  background: linear-gradient(90deg, var(--primary-light), var(--economy));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.recommended-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0.15rem 0 0;
+}
+
+/* A faixa rola na horizontal e some a barra: no celular o polegar
+   desliza e o conteúdo continua reachable com um toque. */
+.highlight-strip {
+  display: flex;
+  gap: 0.55rem;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  padding: 0.7rem 0.15rem 0.6rem;
+  margin: 0 -0.15rem;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.highlight-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.highlight-chip {
+  position: relative;
+  flex: 0 0 auto;
+  width: 104px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.7rem 0.5rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: var(--text);
+  scroll-snap-align: start;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.highlight-chip:hover {
+  transform: translateY(-3px);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
+}
+
+.highlight-chip-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.highlight-chip-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.highlight-chip-logo span {
+  font-size: 1.1rem;
+}
+
+.highlight-chip-name {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-main);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+/* Oferta patrocinada: leve destaque + efeitos, sem roubar a tela. */
+.highlight-chip--offer {
+  border-color: rgba(234, 88, 12, 0.45);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(234, 88, 12, 0.16), transparent 62%),
+    var(--surface);
+  box-shadow: 0 0 0 1px rgba(234, 88, 12, 0.16), 0 10px 26px -14px rgba(234, 88, 12, 0.6);
+  animation: offer-glow 3.4s ease-in-out infinite;
+}
+
+.highlight-chip--offer:hover {
+  border-color: var(--action);
+}
+
+.highlight-chip-ribbon {
+  position: absolute;
+  top: -0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 0.5rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7C2D12;
+  background: var(--action-bg);
+  border: 1px solid rgba(234, 88, 12, 0.4);
+  padding: 0.14rem 0.4rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Brilho que atravessa o card patrocinado no hover. */
+.highlight-chip--offer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.16) 48%,
+    transparent 66%
+  );
+  background-size: 220% 100%;
+  background-position: 130% 0;
+  transition: background-position 0.7s ease;
+  pointer-events: none;
+}
+
+.highlight-chip--offer:hover::after {
+  background-position: -30% 0;
+}
+
+@keyframes offer-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(234, 88, 12, 0.16), 0 10px 26px -14px rgba(234, 88, 12, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(234, 88, 12, 0.4), 0 14px 32px -12px rgba(234, 88, 12, 0.85);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   BOTÃO "AVISE-ME QUANDO HOUVER UMA VAGA"
+   ───────────────────────────────────────────────────────────── */
+.watch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--primary-light);
+  background: var(--primary-soft);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.watch-btn:hover:not(:disabled) {
+  background: rgba(79, 70, 229, 0.22);
+  border-color: var(--primary);
+}
+
+.watch-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.watch-btn--active {
+  color: var(--economy);
+  background: var(--economy-bg);
+}
+
+.watch-btn--active:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: var(--economy);
+}
+
+.watch-btn--sm {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.7rem;
+}
+
+.watch-btn--block {
+  width: 100%;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   OFERTAS E OPORTUNIDADES
+   ───────────────────────────────────────────────────────────── */
+.opp-section {
+  margin-bottom: 3rem;
+}
+
+.opp-header h2 {
+  font-size: 1.5rem;
+  color: var(--secondary);
+  margin: 0 0 0.3rem;
+}
+
+.opp-header p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0 0 1.25rem;
+}
+
+.opp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.opp-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.opp-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.opp-card-title svg {
+  color: var(--primary-light);
+  flex-shrink: 0;
+}
+
+.opp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.opp-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+
+.opp-row:hover {
+  border-color: var(--primary);
+  transform: translateX(2px);
+}
+
+.opp-row-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.opp-row-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.opp-row-logo span {
+  font-size: 0.85rem;
+}
+
+.opp-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.opp-row-name {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.opp-row-sub {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.opp-row-price {
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--economy);
+  white-space: nowrap;
+}
+
+.opp-row-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--success);
+  background: var(--economy-bg);
+  padding: 0.18rem 0.4rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.opp-empty {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 0.75rem 0;
+  margin: 0;
+}
+
+.opp-savings-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.18s ease;
+}
+
+.opp-savings-row:hover {
+  border-color: var(--economy);
+}
+
+.opp-savings-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.opp-savings-name {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.opp-savings-prices {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.74rem;
+}
+
+.opp-savings-old {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.opp-savings-new {
+  color: var(--economy);
+  font-weight: 800;
+}
+
+.opp-savings-badge {
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--economy);
+  background: var(--economy-bg);
+  padding: 0.22rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   "O QUE VOCÊ GOSTARIA DE COMPARTILHAR?" (voto)
+   ───────────────────────────────────────────────────────────── */
+.vote-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem;
+  margin-bottom: 3rem;
+}
+
+.vote-card-header {
+  margin-bottom: 1rem;
+}
+
+.vote-card-header h2 {
+  font-size: 1.35rem;
+  color: var(--secondary);
+  margin: 0 0 0.3rem;
+}
+
+.vote-card-header p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 60ch;
+}
+
+.vote-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.vote-item {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.8rem;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.vote-item--voted {
+  border-color: var(--economy);
+  background: var(--economy-bg);
+}
+
+.vote-item-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.vote-item-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.vote-item-logo span {
+  font-size: 0.9rem;
+}
+
+.vote-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.vote-item-name {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vote-item-sub {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.vote-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.42rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.vote-btn:hover:not(:disabled) {
+  border-color: var(--economy);
+  color: var(--economy);
+}
+
+.vote-btn--active {
+  color: #052E1F;
+  background: var(--economy);
+  border-color: var(--economy);
+}
+
+.vote-btn--active:hover:not(:disabled) {
+  color: #052E1F;
+  background: var(--economy);
+  filter: brightness(1.08);
+}
+
+.vote-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   RESPONSIVO
+   ───────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .sponsored-header h2,
+  .recommended-title,
+  .opp-header h2,
+  .vote-card-header h2 {
+    font-size: 1.1rem;
+  }
+
+  .recommended-tagline {
+    font-size: 0.85rem;
+  }
+
+  /* A faixa continua rolando; os itens ficam um pouco menores para caber
+     mais logos na tela do celular. */
+  .highlight-chip {
+    width: 92px;
+    padding: 0.6rem 0.4rem 0.55rem;
+  }
+
+  .highlight-chip-logo {
+    width: 40px;
+    height: 40px;
+  }
+
+  .highlight-chip-name {
+    font-size: 0.68rem;
+  }
+
+  .sponsored-grid,
+  .opp-grid,
+  .vote-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vote-card {
+    padding: 1rem;
+  }
+}
+
+/* Quem tem-motion reduzido não vê o brilho pulsando do patrocinado. */
+@media (prefers-reduced-motion: reduce) {
+  .highlight-chip--offer {
+    animation: none;
+  }
+
+  .highlight-chip--offer::after {
+    display: none;
+  }
+}

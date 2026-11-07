@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Loader2, Check, AlertCircle } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { maskPhone, onlyDigits, isValidPhone } from '../lib/maskPhone';
+import Confetti from '../components/Confetti';
 import logoImg from '../assets/logo.png';
 import './Register.css';
 
@@ -41,6 +42,8 @@ function Register() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  /* Contador do confete de conclusão do cadastro. */
+  const [celebrar, setCelebrar] = useState(0);
 
   const goToStep = (next) => {
     setError('');
@@ -118,6 +121,9 @@ function Register() {
         lead_source_other: leadSource === 'Outro' ? leadSourceOther.trim() : null,
       });
       setSuccess(true);
+      /* Confete: a conta foi criada. É o primeiro momento de produto do
+         usuário e precisa ter peso de "deu certo". */
+      setCelebrar((c) => c + 1);
     } catch (err) {
       setError(err.message || 'Erro ao criar conta. Tente novamente.');
       setLoading(false);
@@ -127,6 +133,12 @@ function Register() {
   if (success) {
     return (
       <div className="register-container">
+        {/* Confete de cadastro concluído. */}
+        {celebrar > 0 && (
+          <div className="confetti-overlay">
+            <Confetti fire={celebrar} fall={window.innerHeight} />
+          </div>
+        )}
         <div className="register-card">
           <div className="success-message" style={{ textAlign: 'center', padding: '2rem 1rem' }}>
             <div

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { ONBOARDING_STEPS, categoryLabel, labelForValue } from '../../lib/onboardingQuestions';
+import { buildServiceLookup, groupPlatformsByCategory, isNoneAnswer } from '../../lib/onboardingPlatforms';
 import { phoneToWhatsApp } from '../../lib/maskPhone';
 import { buildLeadWhatsappUrl } from '../../lib/leadWhatsapp';
 import InvitesSheet from './InvitesSheet';
@@ -22,19 +23,16 @@ import './OnboardingReport.css';
 const INTEREST_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'platforms');
 const SCALAR_QUESTIONS = ONBOARDING_STEPS.filter((s) => s.type === 'single' && s.column);
 
-/* "Nenhuma destas" é uma resposta, não uma plataforma. O gate oferece a
-   opção e o usuário pode digitar "nenhuma" no campo livre — nos dois casos
-   não faz sentido contar isso como plataforma usada ou desejada. */
-const NONE_ANSWER = /^(nenhuma|nenhum|nada|sem)\b/i;
-const isNoneAnswer = (name) => NONE_ANSWER.test((name || '').trim());
+/* "Nenhuma destas" é uma resposta, não uma plataforma: quem escreve isso no
+   campo livre não está marcando serviço nenhum. O filtro mora em
+   lib/onboardingPlatforms, compartilhado com a ficha do usuário. */
 
 /* Rótulo curto da pergunta, para a ficha da resposta. A pergunta inteira
    aparece logo abaixo, então aqui cabe só o substantivo. */
 const ANSWER_CHIP_LABEL = {
-  subscriptions_count_band: 'Assinaturas',
+  group_intent: 'Criar ou entrar',
   main_barrier: 'Maior barreira',
-  already_shares: 'Já compartilha',
-  shares_with: 'Compartilha com',
+  expectations: 'O que espera da plataforma',
 };
 
 /* Mensagem de WhatsApp para o lead: o texto é o do dono, com os campos
@@ -50,6 +48,7 @@ export default function OnboardingReport() {
   const [funnel, setFunnel] = useState({ entered: 0, answered: 0, completed: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [originUnavailable, setOriginUnavailable] = useState(false);
   const [tab, setTab] = useState('overview');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('recent');
@@ -67,12 +66,20 @@ export default function OnboardingReport() {
        * users.onboarding_completed_at. A flag de conclusão não é gravada por
        * nenhum usuário hoje — usar ela como filtro deixava a página
        * inteiramente vazia, escondendo as respostas que existem no banco.
+       *
+       * IMPORTANTE: `lead_source`/`lead_source_other` NÃO entram nesta
+       * consulta. A migration fix-p0-security.sql dá REVOKE SELECT nelas
+       * (só service_role), então pedi-las junto derrubava a query INTEIRA
+       * (PostgREST responde 42501) e a página mostrava "nenhum usuário
+       * entrou no onboarding" mesmo com respostas salvas. A origem é lida
+       * numa segunda consulta, separada, e a página só perde esse detalhe
+       * se ela falhar.
        */
       const [usersRes, profilesRes, interestsRes, invitesRes, servicesRes] = await Promise.all([
         // Select enxuto para não puxar email_verified e cpf de 100+ usuários à toa.
         supabase
           .from('users')
-          .select('id, name, email, phone, avatar_url, created_at, onboarding_started_at, onboarding_completed_at, onboarding_step, lead_source, lead_source_other'),
+          .select('id, name, email, phone, avatar_url, created_at, onboarding_started_at, onboarding_completed_at, onboarding_step'),
         supabase.from('user_onboarding_profiles').select('*'),
         supabase.from('user_onboarding_interests').select('*'),
         supabase.from('user_onboarding_invites').select('*'),
@@ -80,9 +87,36 @@ export default function OnboardingReport() {
         supabase.from('streaming_services').select('id, name, icon_url, color, category'),
       ]);
 
+      // Origem do cadastro ("como o usuário conheceu a gente") — best effort.
+      const originRes = await supabase
+        .from('users')
+        .select('id, lead_source, lead_source_other');
+
       if (cancelled) return;
 
-      const users = usersRes.data || [];
+      if (usersRes.error) {
+        setError(`Não foi possível carregar os usuários: ${usersRes.error.message}`);
+        setLoading(false);
+        return;
+      }
+      if (profilesRes.error) {
+        setError(`Não foi possível carregar as respostas do onboarding: ${profilesRes.error.message}`);
+        setLoading(false);
+        return;
+      }
+
+      const originByUser = {};
+      if (!originRes.error) {
+        for (const o of originRes.data || []) originByUser[o.id] = o;
+      }
+      if (originRes.error) {
+        setOriginUnavailable(true);
+      }
+
+      const users = (usersRes.data || []).map((u) => ({
+        ...u,
+        ...(originByUser[u.id] || {}),
+      }));
       const answers = profilesRes.data || [];
 
       const answersByUser = Object.fromEntries(answers.map((a) => [a.user_id, a]));
@@ -150,7 +184,7 @@ export default function OnboardingReport() {
   const interestsByUser = useMemo(() => {
     const map = {};
     for (const i of interests) {
-      map[i.user_id] = map[i.user_id] || { current: [], interested: [] };
+      map[i.user_id] = map[i.user_id] || { share: [], join: [] };
       map[i.user_id][i.kind]?.push(i);
     }
     return map;
@@ -188,44 +222,26 @@ export default function OnboardingReport() {
       });
     }
 
-    // "Já compartilha?" é sim/não, o passo não tem options.
-    const sharesStep = ONBOARDING_STEPS.find((s) => s.column === 'already_shares');
-    if (sharesStep) {
-      const yes = rows.filter((r) => r.answers?.already_shares === true).length;
-      const no = rows.filter((r) => r.answers?.already_shares === false).length;
-      out.unshift({
-        key: sharesStep.id,
-        title: sharesStep.title,
-        column: 'already_shares',
-        answered: yes + no,
-        items: sortDistribution([
-          { label: 'Sim', count: yes },
-          { label: 'Não', count: no },
-        ]),
-      });
-    }
-
-    // "Com quem" é múltipla escolha: uma resposta pode estar em várias barras.
-    const sharesWithStep = ONBOARDING_STEPS.find((s) => s.column === 'shares_with');
-    if (sharesWithStep) {
-      const counts = new Map();
-      let answered = 0;
-      for (const row of rows) {
-        const list = row.answers?.shares_with;
-        if (!Array.isArray(list) || !list.length) continue;
-        answered++;
-        for (const v of list) counts.set(v, (counts.get(v) || 0) + 1);
-      }
-      out.push({
-        key: sharesWithStep.id,
-        title: sharesWithStep.title,
-        column: 'shares_with',
-        answered,
-        items: sortDistribution(sharesWithStep.options.map((o) => ({ label: o.label, count: counts.get(o.value) || 0 }))),
-      });
-    }
-
     return out;
+  }, [rows]);
+
+  /* As respostas abertas ("o que você espera encontrar na plataforma?") não
+     são distribuição — cada texto é uma frase diferente. Viram uma lista
+     para o time ler, da mais recente para a mais antiga. */
+  const openAnswers = useMemo(() => {
+    const list = rows
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        avatar_url: row.avatar_url,
+        text: String(row.answers?.expectations || '').trim(),
+        when: row.answers?.created_at || row.created_at,
+      }))
+      .filter((r) => r.text.length > 0);
+
+    list.sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0));
+    return list;
   }, [rows]);
 
   /* "Onde nos encontraram" — a origem do lead (etapa 4 do /register).
@@ -256,40 +272,25 @@ export default function OnboardingReport() {
     return { answered, items };
   }, [users]);
 
-  const servicesById = useMemo(
-    () => Object.fromEntries(services.map((s) => [s.id, s])),
-    [services]
-  );
+  /* Índice do catálogo: por id e por nome (para casar a plataforma digitada
+     à mão). Compartilhado com a aba de qualificação da ficha do usuário. */
+  const lookup = useMemo(() => buildServiceLookup(services), [services]);
 
-  /* Plataforma digitada à mão não tem platform_id. Boa parte é só o mesmo
-     serviço com outra grafia ("Apple music" x "Apple Music", "Duolingo" x
-     "DuoLingo", "TotalPass" x "Totalpass") — casar pelo nome devolve a
-     categoria e o ícone, e a plataforma entra no card certo. */
-  const servicesByName = useMemo(() => {
-    const map = {};
-    for (const s of services) map[(s.name || '').trim().toLowerCase()] = s;
-    return map;
-  }, [services]);
-
-  const resolveService = (interest) => {
-    if (interest.platform_id && servicesById[interest.platform_id]) {
-      return servicesById[interest.platform_id];
-    }
-    return servicesByName[(interest.platform_name || '').trim().toLowerCase()] || null;
-  };
+  const resolveService = (interest) => lookup.resolve(interest);
 
   /*
-   * Um bucket por PERGUNTA, não por "kind".
+   * Um bucket por PERGUNTA de plataforma.
    *
-   * O banco guarda a resposta com `kind` ('current'/'interested') e o id do
-   * serviço, mas não guarda em qual pergunta o usuário marcou. Os 4 cards de
-   * interesse dividiam o mesmo bucket 'interested' — por isso o card de
-   * "filmes e séries" mostrava Spotify, ChatGPT e DuoLingo junto.
+   * No fluxo novo cada pergunta tem um `kind` próprio — 'share' (quer criar
+   * um grupo) e 'join' (quer entrar em um grupo) — e cada uma cobre TODAS as
+   * categorias. Isso resolve o problema antigo: quatro perguntas de
+   * interesse dividiam o mesmo `kind`, e o banco não guardava em qual
+   * pergunta a plataforma tinha sido marcada (o card de "filmes e séries"
+   * acabava mostrando Spotify e ChatGPT junto).
    *
-   * A categoria do serviço (streaming_services.category) é o que amarra a
-   * plataforma à pergunta: cada card de interesse só aceita as categorias
-   * declaradas no passo. "Plataformas que já usa" é a exceção — essa pergunta
-   * realmente cobre todas as categorias.
+   * A plataforma digitada à mão não tem platform_id nem categoria, mas
+   * pertence à pergunta do `kind` — entra no card dela com a etiqueta
+   * "outra".
    */
   const platformRanking = useMemo(() => {
     const buckets = {};
@@ -299,7 +300,7 @@ export default function OnboardingReport() {
       answeredBy[step.id] = new Set();
     }
 
-    const customInterested = new Map();
+    const stepByKind = Object.fromEntries(INTEREST_QUESTIONS.map((s) => [s.kind, s.id]));
 
     for (const i of interests) {
       if (isNoneAnswer(i.platform_name)) continue;
@@ -311,38 +312,21 @@ export default function OnboardingReport() {
       // mesma plataforma e não podem virar duas barras.
       const key = svc?.name || i.platform_name;
 
-      const targets = INTEREST_QUESTIONS.filter((step) => {
-        if (step.kind !== i.kind) return false;
-        if (i.kind === 'current') return true; // "já usa" aceita tudo
-        if (!category) return false; // plataforma livre não tem categoria
-        return step.categories.includes(category);
-      });
+      const stepId = stepByKind[i.kind];
+      if (!stepId) continue; // dado do questionário antigo, sem pergunta equivalente
 
-      if (targets.length === 0) {
-        // Digitada à mão numa pergunta de interesse: não dá para saber em
-        // qual das quatro ela foi marcada. Fica à parte, no card "Outras".
-        if (i.kind === 'interested') {
-          const cur = customInterested.get(key) || { count: 0, custom: true, icon: svc?.icon_url || null, color: svc?.color || null };
-          cur.count++;
-          customInterested.set(key, cur);
-        }
-        continue;
-      }
-
-      for (const step of targets) {
-        const bucket = buckets[step.id];
-        const cur = bucket.get(key) || {
-          count: 0,
-          custom: isCustom,
-          icon: svc?.icon_url || null,
-          color: svc?.color || null,
-          category,
-        };
-        cur.count++;
-        if (!cur.icon && svc?.icon_url) { cur.icon = svc.icon_url; cur.color = svc.color; }
-        bucket.set(key, cur);
-        answeredBy[step.id].add(i.user_id);
-      }
+      const bucket = buckets[stepId];
+      const cur = bucket.get(key) || {
+        count: 0,
+        custom: isCustom,
+        icon: svc?.icon_url || null,
+        color: svc?.color || null,
+        category,
+      };
+      cur.count++;
+      if (!cur.icon && svc?.icon_url) { cur.icon = svc.icon_url; cur.color = svc.color; }
+      bucket.set(key, cur);
+      answeredBy[stepId].add(i.user_id);
     }
 
     const toList = (map) => [...map.entries()]
@@ -352,42 +336,22 @@ export default function OnboardingReport() {
     return {
       byStep: Object.fromEntries(Object.entries(buckets).map(([id, m]) => [id, toList(m)])),
       answeredBy: Object.fromEntries(Object.entries(answeredBy).map(([id, s]) => [id, s.size])),
-      custom: toList(customInterested),
     };
-  }, [interests, servicesById, servicesByName]);
+  }, [interests, lookup]);
 
   /* Plataformas de um usuário, agrupadas por categoria. */
-  const groupByCategory = (list) => {
-    const map = new Map();
-    for (const item of list) {
-      if (isNoneAnswer(item.platform_name)) continue;
-      const svc = resolveService(item);
-      const key = svc?.category || 'outras';
-      if (!map.has(key)) {
-        map.set(key, { key, label: categoryLabel(svc?.category), items: [] });
-      }
-      const name = svc?.name || item.platform_name;
-      if (map.get(key).items.some((p) => p.name === name)) continue;
-      map.get(key).items.push({
-        name,
-        icon: svc?.icon_url || null,
-        color: svc?.color || null,
-        custom: !!item.is_custom && !svc,
-      });
-    }
-    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
-  };
+  const groupByCategory = (list) => groupPlatformsByCategory(list, lookup);
 
   // ── KPIs ───────────────────────────────────────────────────────────────
   const total = rows.length;
-  const alreadyShares = rows.filter((r) => r.answers?.already_shares === true).length;
-  const paysNothing = rows.filter((r) => r.answers?.subscriptions_count_band === 'nenhuma').length;
+  const querCriar = rows.filter((r) => ['criar', 'ambos'].includes(r.answers?.group_intent)).length;
+  const querEntrar = rows.filter((r) => ['entrar', 'ambos'].includes(r.answers?.group_intent)).length;
 
   const stats = [
     { label: 'Responderam o onboarding', value: total, icon: <CheckCircle2 size={18} />, tone: 'green' },
-    { label: 'Já compartilha', value: alreadyShares, icon: <Share2 size={18} />, tone: 'purple' },
-    { label: 'Pessoas indicadas', value: invites.length, icon: <UserPlus size={18} />, tone: 'red', action: 'invites' },
-    { label: 'Não paga assinatura', value: paysNothing, icon: <TrendingUp size={18} />, tone: 'orange' },
+    { label: 'Querem criar grupo', value: querCriar, icon: <Share2 size={18} />, tone: 'purple' },
+    { label: 'Querem entrar em grupo', value: querEntrar, icon: <UserPlus size={18} />, tone: 'blue' },
+    { label: 'Pessoas indicadas', value: invites.length, icon: <TrendingUp size={18} />, tone: 'orange', action: 'invites' },
   ];
 
   /* Quem indicou cada contato — a sheet agrupa por essa pessoa. */
@@ -402,12 +366,13 @@ export default function OnboardingReport() {
 
     const list = rows.filter((r) => {
       if (!q) return true;
-      const mine = interestsByUser[r.id] || { current: [], interested: [] };
+      const mine = interestsByUser[r.id] || { share: [], join: [] };
       const haystack = [
         r.name,
         r.email,
-        ...mine.interested.map((i) => i.platform_name),
-        ...mine.current.map((i) => i.platform_name),
+        r.answers?.expectations,
+        ...mine.join.map((i) => i.platform_name),
+        ...mine.share.map((i) => i.platform_name),
         ...(r.invites || []).map((iv) => iv.name),
       ]
         .filter(Boolean)
@@ -420,7 +385,7 @@ export default function OnboardingReport() {
     if (sort === 'name') {
       sorted.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR'));
     } else if (sort === 'platforms') {
-      const count = (r) => (interestsByUser[r.id]?.interested || []).length;
+      const count = (r) => (interestsByUser[r.id]?.join || []).length;
       sorted.sort((a, b) => count(b) - count(a));
     } else {
       const when = (r) => new Date(r.answers?.created_at || r.created_at || 0).getTime();
@@ -459,6 +424,17 @@ export default function OnboardingReport() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {originUnavailable && (
+        <div className="onboarding-notice">
+          <Info size={16} />
+          <span>
+            A origem do cadastro (<code>lead_source</code>) está sem permissão de leitura para o
+            painel. Os demais dados estão OK — para ver o gráfico de origem, aplique a migration
+            <code> database/fix-users-lead-source-grants.sql</code> no SQL Editor do Supabase.
+          </span>
+        </div>
+      )}
 
       {total === 0 && funnel.entered === 0 ? (
         <div className="admin-card">
@@ -573,9 +549,15 @@ export default function OnboardingReport() {
                   antes das respostas de qualificação. */}
               <div className="chart-card">
                 <div className="chart-header">
-                  <h3>Onde nos encontraram</h3>
-                  <span className="chart-total">{leadSourceChart.answered} respostas</span>
+                  <h3>Onde nos conhecem</h3>
+                  <span className="chart-total">
+                    {leadSourceChart.answered} de {users.length} cadastro{users.length !== 1 ? 's' : ''}
+                  </span>
                 </div>
+                <p className="ob-card-intro">
+                  Como a pessoa chegou até aqui (pergunta feita no cadastro). É o que
+                  mostra de onde trazer o próximo — e quem está chegando sozinho.
+                </p>
                 {leadSourceChart.answered === 0 ? (
                   <p className="ob-report-empty">Ninguém respondeu ainda.</p>
                 ) : (
@@ -629,6 +611,46 @@ export default function OnboardingReport() {
                 </div>
               ))}
 
+              {/* As respostas abertas: cada frase foi escrita por uma pessoa
+                  e vale mais que qualquer barra de percentual. */}
+              {openAnswers.length > 0 && (
+                <div className="chart-card ob-open-card">
+                  <div className="chart-header">
+                    <h3>O que as pessoas esperam da plataforma</h3>
+                    <span className="chart-total">
+                      {openAnswers.length} resposta{openAnswers.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <p className="ob-open-intro">
+                    A última pergunta do onboarding é aberta. Cada texto abaixo foi
+                    escrito por uma pessoa — é a leitura mais honesta do que o
+                    produto precisa entregar.
+                  </p>
+                  <ul className="ob-open-list">
+                    {openAnswers.map((a) => (
+                      <li className="ob-open-item" key={a.id}>
+                        <div className="ob-open-who">
+                          {a.avatar_url ? (
+                            <img src={a.avatar_url} alt="" />
+                          ) : (
+                            <span className="is-initials">
+                              {(a.name || a.email || '?').charAt(0).toUpperCase()}
+                            </span>
+                          )}
+                          <div>
+                            <Link to={`/admin/users/${a.id}`} className="link-name">
+                              {a.name || '—'}
+                            </Link>
+                            <span>{relativeTime(a.when)}</span>
+                          </div>
+                        </div>
+                        <p className="ob-open-text">{a.text}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {INTEREST_QUESTIONS.map((step) => {
                 const bucket = platformRanking.byStep[step.id] || [];
                 const answered = platformRanking.answeredBy[step.id] || 0;
@@ -648,9 +670,7 @@ export default function OnboardingReport() {
                     </div>
                     {bucket.length === 0 ? (
                       <p className="ob-report-empty">
-                        {step.kind === 'current'
-                          ? 'Ninguém marcou plataforma nesta pergunta.'
-                          : `Ninguém marcou ${categoryLabel(step.categories?.[0]).toLowerCase()} nesta pergunta.`}
+                        Ninguém marcou plataforma nesta pergunta.
                       </p>
                     ) : (
                       <div className="chart-bars">
@@ -690,40 +710,6 @@ export default function OnboardingReport() {
                 );
               })}
 
-              {platformRanking.custom.length > 0 && (
-                <div className="chart-card">
-                  <div className="chart-header">
-                    <h3>Outras plataformas citadas</h3>
-                    <span className="chart-total">
-                      {platformRanking.custom.length} digitada{platformRanking.custom.length !== 1 ? 's' : ''} à mão
-                    </span>
-                  </div>
-                  <p className="ob-report-empty">
-                    Foram marcadas em uma das perguntas de interesse, mas não dá para dizer em qual —
-                    a resposta não guarda a pergunta de origem.
-                  </p>
-                  <div className="chart-bars">
-                    {platformRanking.custom.map((b) => (
-                      <div className="bar-row" key={b.name}>
-                        <span className="bar-label">
-                          {b.icon ? (
-                            <img src={b.icon} alt="" className="bar-icon" />
-                          ) : (
-                            <span className="bar-icon" style={{ background: b.color || '#64748B' }}>{b.name.charAt(0)}</span>
-                          )}
-                          {b.name}
-                        </span>
-                        <div className="bar-track">
-                          <div className="bar-fill" style={{ width: `${(b.count / Math.max(1, ...platformRanking.custom.map((x) => x.count))) * 100}%`, background: b.color || '#64748B' }} />
-                        </div>
-                        <div className="bar-value">
-                          <span className="bar-count">{b.count}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -752,32 +738,18 @@ export default function OnboardingReport() {
               ) : (
                 <div className="ob-response-list">
                   {filtered.map((row) => {
-                    const mine = interestsByUser[row.id]?.interested || [];
-                    const theirs = interestsByUser[row.id]?.current || [];
+                    const toShare = interestsByUser[row.id]?.share || [];
+                    const toJoin = interestsByUser[row.id]?.join || [];
                     const open = expanded === row.id;
-                    const wanted = groupByCategory(mine);
-                    const used = groupByCategory(theirs);
+                    const wanted = groupByCategory(toShare);
+                    const used = groupByCategory(toJoin);
 
                     const chips = [];
-                    const bandStep = ONBOARDING_STEPS.find((s) => s.column === 'subscriptions_count_band');
-                    if (bandStep && row.answers?.subscriptions_count_band) {
+                    const intentStep = ONBOARDING_STEPS.find((s) => s.column === 'group_intent');
+                    if (row.answers?.group_intent) {
                       chips.push({
-                        label: ANSWER_CHIP_LABEL.subscriptions_count_band,
-                        value: labelForValue(bandStep, row.answers.subscriptions_count_band),
-                      });
-                    }
-                    if (row.answers?.already_shares !== null && row.answers?.already_shares !== undefined) {
-                      chips.push({
-                        label: ANSWER_CHIP_LABEL.already_shares,
-                        value: row.answers.already_shares ? 'Sim' : 'Não',
-                      });
-                    }
-                    const sharesStep = ONBOARDING_STEPS.find((s) => s.column === 'shares_with');
-                    const withList = row.answers?.shares_with;
-                    if (Array.isArray(withList) && withList.length) {
-                      chips.push({
-                        label: ANSWER_CHIP_LABEL.shares_with,
-                        value: withList.map((v) => labelForValue(sharesStep, v)).join(', '),
+                        label: ANSWER_CHIP_LABEL.group_intent,
+                        value: labelForValue(intentStep, row.answers.group_intent),
                       });
                     }
                     const barrierStep = ONBOARDING_STEPS.find((s) => s.column === 'main_barrier');
@@ -787,9 +759,33 @@ export default function OnboardingReport() {
                         value: labelForValue(barrierStep, row.answers.main_barrier),
                       });
                     }
+                    /* De onde a pessoa chegou: a pergunta é feita no cadastro,
+                       mas é a informação que explica a resposta — por isso
+                       fica à vista, sem precisar abrir o card. */
+                    if (row.lead_source) {
+                      chips.push({
+                        label: 'Onde nos conheceu',
+                        value:
+                          row.lead_source +
+                          (row.lead_source === 'Outro' && row.lead_source_other
+                            ? ` — ${row.lead_source_other}`
+                            : ''),
+                      });
+                    }
+                    /* A resposta aberta é o insumo mais rico do questionário:
+                       aparece cortada no card e inteira quando o card abre. */
+                    if (row.answers?.expectations) {
+                      const txt = String(row.answers.expectations).trim();
+                      chips.push({
+                        label: ANSWER_CHIP_LABEL.expectations,
+                        value: txt.length > 72 ? `${txt.slice(0, 72)}…` : txt,
+                      });
+                    }
 
                     /* Botão de WhatsApp: o texto do dono já vem pronto, com o
-                       nome da pessoa e as plataformas que ela marcou. */
+                       nome da pessoa e as plataformas que ela marcou. As que
+                       ela quer CRIAR vêm primeiro — é onde a gente pode
+                       abrir um grupo agora. */
                     const quer = wanted.flatMap((g) => g.items.map((p) => p.name));
                     const usa = used.flatMap((g) => g.items.map((p) => p.name));
                     const plataformas = quer.length ? quer : usa;
@@ -851,7 +847,7 @@ export default function OnboardingReport() {
                           <div className="ob-response-groups">
                             {wanted.length > 0 && (
                               <div className="ob-group-block">
-                                <span className="ob-group-title">Quer dividir</span>
+                                <span className="ob-group-title">Quer criar grupo</span>
                                 {wanted.map((g) => (
                                   <div className="ob-platform-group" key={g.key}>
                                     <span className="ob-platform-group-label">{g.label}</span>
@@ -877,7 +873,7 @@ export default function OnboardingReport() {
 
                             {used.length > 0 && (
                               <div className="ob-group-block">
-                                <span className="ob-group-title">Já usa</span>
+                                <span className="ob-group-title">Quer entrar em grupo</span>
                                 {used.map((g) => (
                                   <div className="ob-platform-group" key={g.key}>
                                     <span className="ob-platform-group-label">{g.label}</span>
@@ -937,6 +933,17 @@ export default function OnboardingReport() {
 
                         {open && (
                           <div className="ob-detail-grid">
+                            {row.answers?.expectations && (
+                              <div className="ob-detail-item is-wide">
+                                <span className="ob-detail-q">
+                                  O que espera encontrar na plataforma?
+                                </span>
+                                <span className="ob-detail-a ob-detail-quote">
+                                  “{row.answers.expectations}”
+                                </span>
+                              </div>
+                            )}
+
                             {row.lead_source && (
                               <div className="ob-detail-item">
                                 <span className="ob-detail-q">Onde nos encontraram</span>
@@ -951,18 +958,12 @@ export default function OnboardingReport() {
 
                             {distribution.map((q) => {
                               const value = row.answers?.[q.column];
-                              const isBool = q.column === 'already_shares';
-                              const isList = q.column === 'shares_with';
                               const step = ONBOARDING_STEPS.find((s) => s.column === q.column);
 
-                              let text = '—';
-                              if (isBool) {
-                                text = value === true ? 'Sim' : value === false ? 'Não' : '—';
-                              } else if (isList && Array.isArray(value) && value.length) {
-                                text = value.map((v) => labelForValue(step, v)).join(', ');
-                              } else if (value !== null && value !== undefined && value !== '') {
-                                text = labelForValue(step, value);
-                              }
+                              const text =
+                                value === null || value === undefined || value === ''
+                                  ? '—'
+                                  : labelForValue(step, value);
 
                               return (
                                 <div className="ob-detail-item" key={q.key}>

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowRight, Users, Shield, Clock, CheckCircle, ExternalLink, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { visibilityColumnAvailable } from '../lib/groupVisibility';
+import SiteFooter from '../components/SiteFooter';
 import './SeoPages.css';
 
 const ENHANCED = {
@@ -165,12 +167,17 @@ function PlatformPage() {
       setPlatform(data);
       document.title = `${data.full_name || data.name} - Compartilhe e Economize na DividePass`;
 
-      const { data: groups } = await supabase
+      // Contagem/preço dos grupos da plataforma: só os PÚBLICOS contam
+      // (grupo privado não aparece para o público).
+      const hasVisibility = await visibilityColumnAvailable();
+      let groupsQuery = supabase
         .from('groups')
         .select('price_per_slot')
         .eq('service_id', data.id)
         .eq('status', 'open')
         .eq('approval_status', 'approved');
+      if (hasVisibility) groupsQuery = groupsQuery.eq('visibility', 'public');
+      const { data: groups } = await groupsQuery;
 
       if (groups && groups.length > 0) {
         const prices = groups.map(g => Number(g.price_per_slot)).filter(p => p > 0);
@@ -390,6 +397,8 @@ function PlatformPage() {
           </div>
         </div>
       </div>
+
+      <SiteFooter variant="dark" />
     </div>
   );
 }

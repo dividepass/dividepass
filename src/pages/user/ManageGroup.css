@@ -811,6 +811,33 @@
   margin-left: 0.5rem;
 }
 
+/* Aviso de assinatura pendente (o grupo ainda esta em formacao) */
+.manage-subscription-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  padding: 0.9rem 1.05rem;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-left: 3px solid var(--warning, #F59E0B);
+  border-radius: var(--radius-md);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.manage-subscription-banner > svg { color: var(--warning, #F59E0B); flex-shrink: 0; }
+
+.manage-subscription-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.manage-subscription-text strong { font-size: 0.92rem; color: var(--text-main); }
+.manage-subscription-text span { font-size: 0.83rem; color: var(--text-muted); line-height: 1.45; }
+
 /* Credential Type Grid */
 .cred-type-grid {
   display: grid;
@@ -1568,6 +1595,26 @@
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+/* Prévia das regrinhas no card "Regras do grupo": é a lista que o membro
+   lê no detalhe, no checkout e nas credenciais. */
+.manage-rules-preview {
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.manage-rules-preview-title {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-soft, var(--text-muted));
   margin-bottom: 0.5rem;
 }
 

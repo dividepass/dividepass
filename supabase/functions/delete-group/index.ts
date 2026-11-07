@@ -50,7 +50,12 @@ Deno.serve(async (req) => {
       .eq("id", user.id)
       .single();
 
-    if (caller?.role !== "admin" && group.owner_id !== user.id) {
+    // Admin do sistema: as regras de privacidade/acerto NÃO valem para ele.
+    // (mesma fonte do public.is_admin() do banco: users.role OU
+    // app_metadata.role do JWT)
+    const isAdmin = caller?.role === "admin" || user.app_metadata?.role === "admin";
+
+    if (!isAdmin && group.owner_id !== user.id) {
       return new Response(JSON.stringify({ error: "Permission denied" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -78,6 +83,78 @@ Deno.serve(async (req) => {
       0,
     );
     const hasPaidMembers = paidCount > 0;
+
+    // 1c. QUEM PODE APAGAR O GRUPO
+    // - admin do sistema: apaga sempre. O registro do dinheiro continua no
+    //   banco (o pagamento é desacoplado do grupo) e a equipe recebe o
+    //   pedido de acerto.
+    // - dono do grupo (usuário comum): a regra vale para ele. Com pagamento
+    //   confirmado, a exclusão vira pedido para a equipe, porque o acerto com
+    //   quem pagou não pode ser feito no automático.
+    if (!isAdmin && hasPaidMembers) {
+      const resumo = [
+        `Quero encerrar o grupo "${group.name}".`,
+        "",
+        `Pagamentos confirmados: ${paidCount}`,
+        `Total recebido: R$ ${paidTotal.toFixed(2)}`,
+        `Membros notificados na exclusão: ${memberIds.length}`,
+        "",
+        "A exclusão precisa ser feita pela equipe DividePass para que os valores de quem pagou sejam acertados.",
+      ].join("\n");
+
+      // Abre o chamado para a equipe. Se a tabela de tickets não estiver
+      // disponível, o pedido ainda é registrado em platform_events.
+      let ticketId = null;
+      try {
+        const { data: ticket, error: ticketError } = await supabaseAdmin
+          .from("support_tickets")
+          .insert({
+            user_id: user.id,
+            subject: `Encerrar grupo com pagamento — ${group.name}`,
+            category: "billing",
+            priority: "high",
+            archived: false,
+          })
+          .select("id")
+          .single();
+
+        if (!ticketError && ticket) {
+          ticketId = ticket.id;
+          await supabaseAdmin.from("support_messages").insert({
+            ticket_id: ticket.id,
+            user_id: user.id,
+            message: resumo,
+          });
+        }
+      } catch {
+        ticketId = null;
+      }
+
+      await supabaseAdmin.from("platform_events").insert({
+        event_type: "group_deletion_requested",
+        title: "Exclusão de grupo com pagamentos — remover membros",
+        message: `O dono do grupo "${group.name}" pediu a exclusão. ${paidCount} pagamento(s) recebido(s), total de R$ ${paidTotal.toFixed(2)}. Necessário remover os membros do grupo e acertar os valores de quem pagou (estorno ou transferência).`,
+        metadata: JSON.stringify({
+          group_id,
+          group_name: group.name,
+          paid_count: paidCount,
+          paid_total: paidTotal,
+          payer_ids: (paidPayments || []).map(p => p.user_id),
+          member_ids: memberIds,
+          requested_by: user.id,
+          ticket_id: ticketId,
+        }),
+        created_by: user.id,
+      });
+
+      return new Response(JSON.stringify({
+        error: `Este grupo tem ${paidCount} pagamento(s) confirmado(s) (R$ ${paidTotal.toFixed(2)}). A exclusão de grupos com dinheiro recebido é feita pela equipe DividePass, para que o acerto com quem pagou seja feito.${ticketId ? " Abrimos um chamado com esse pedido." : ""}`,
+        code: "group_has_payments",
+        paid_count: paidCount,
+        paid_total: paidTotal,
+        ticket_id: ticketId,
+      }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     // 2. Cancel all subscriptions for this group
     const { data: subs } = await supabaseAdmin
@@ -118,8 +195,8 @@ Deno.serve(async (req) => {
     await supabaseAdmin.from("platform_events").insert({
       event_type: "group_deleted",
       title: "Grupo removido",
-      message: `O grupo "${group.name}" foi removido por ${caller?.role === "admin" ? "administrador" : "criador"}. ${subs?.length || 0} assinatura(s) cancelada(s). ${memberIds.length} membro(s) notificado(s).`,
-      metadata: JSON.stringify({ group_id, group_name: group.name, subscriptions_cancelled: subs?.length || 0, members_notified: memberIds.length }),
+      message: `O grupo "${group.name}" foi removido por ${isAdmin ? "administrador" : "criador"}. ${subs?.length || 0} assinatura(s) cancelada(s). ${memberIds.length} membro(s) notificado(s).`,
+      metadata: JSON.stringify({ group_id, group_name: group.name, subscriptions_cancelled: subs?.length || 0, members_notified: memberIds.length, deleted_by_admin: isAdmin }),
       created_by: user.id,
     });
 
@@ -129,7 +206,7 @@ Deno.serve(async (req) => {
       await supabaseAdmin.from("platform_events").insert({
         event_type: "group_deletion_requested",
         title: "Exclusão de grupo com pagamentos — remover membros",
-        message: `O grupo "${group.name}" foi removido pelo dono com ${paidCount} pagamento(s) recebido(s), total de R$ ${paidTotal.toFixed(2)}. Necessário remover os membros do grupo e acertar os valores de quem pagou (estorno ou transferência).`,
+        message: `O grupo "${group.name}" foi removido ${isAdmin ? "por um administrador" : "pelo dono"} com ${paidCount} pagamento(s) recebido(s), total de R$ ${paidTotal.toFixed(2)}. Necessário remover os membros do grupo e acertar os valores de quem pagou (estorno ou transferência).`,
         metadata: JSON.stringify({
           group_id,
           group_name: group.name,
@@ -143,13 +220,41 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 6. Delete the group
+    // 6. Desacopla os pagamentos do grupo ANTES do DELETE.
+    // O registro do dinheiro continua no banco (o grupo que some é o grupo,
+    // não o histórico financeiro) e o DELETE deixa de bater na chave
+    // estrangeira payments_group_id_fkey. Se o DELETE falhar, os pagamentos
+    // voltam a apontar para o grupo (nada fica pela metade).
+    const { data: pagamentos } = await supabaseAdmin
+      .from("payments")
+      .select("id")
+      .eq("group_id", group_id);
+
+    const paymentIds = (pagamentos || []).map(p => p.id);
+
+    if (paymentIds.length > 0) {
+      await supabaseAdmin
+        .from("payments")
+        .update({ group_id: null })
+        .in("id", paymentIds);
+    }
+
+    // 7. Delete the group
     const { error: deleteError } = await supabaseAdmin
       .from("groups")
       .delete()
       .eq("id", group_id);
 
-    if (deleteError) throw deleteError;
+    if (deleteError) {
+      // desfaz o desacoplamento: o grupo continua como estava
+      if (paymentIds.length > 0) {
+        await supabaseAdmin
+          .from("payments")
+          .update({ group_id })
+          .in("id", paymentIds);
+      }
+      throw deleteError;
+    }
 
     return new Response(JSON.stringify({
       success: true,
@@ -157,9 +262,12 @@ Deno.serve(async (req) => {
       members_notified: memberIds.length,
       paid_count: paidCount,
       paid_total: paidTotal,
+      payments_detached: paymentIds.length,
+      deleted_by_admin: isAdmin,
     }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const message = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });

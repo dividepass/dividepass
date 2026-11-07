@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Avatar Cabelo longo">
+  <defs><clipPath id="c"><circle cx="64" cy="64" r="64"/></clipPath></defs>
+  <g clip-path="url(#c)">
+    <rect width="128" height="128" fill="undefined"/>
+    
+    <path d="M14 128C14 102 36 90 64 90C92 90 114 102 114 128Z" fill="#0D9488"/>
+    <rect x="55" y="70" width="18" height="22" rx="9" fill="#DDA47C"/>
+    <ellipse cx="64" cy="52" rx="25" ry="29" fill="#EFC3A0"/>
+    <circle cx="39" cy="56" r="5.6" fill="#EFC3A0"/>
+    <circle cx="89" cy="56" r="5.6" fill="#EFC3A0"/>
+    <g fill="#C4552B">
+        <path d="M34 58C30 28 46 14 64 14C82 14 98 28 94 58L94 80L85 80L85 46C81 34 73 30 64 30C55 30 47 34 43 46L43 80L34 80Z"/>
+      </g>
+    <path d="M44 40Q52 36 60 40" stroke="#C4552B" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M68 40Q76 36 84 40" stroke="#C4552B" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <g>
+          <ellipse cx="52" cy="52" rx="7.5" ry="8.5" fill="#FFFFFF"/>
+          <circle cx="52" cy="52.5" r="4.4" fill="#2B2118"/>
+          <circle cx="53.8" cy="49.8" r="1.6" fill="#FFFFFF"/>
+        </g><g>
+          <ellipse cx="76" cy="52" rx="7.5" ry="8.5" fill="#FFFFFF"/>
+          <circle cx="76" cy="52.5" r="4.4" fill="#2B2118"/>
+          <circle cx="77.8" cy="49.8" r="1.6" fill="#FFFFFF"/>
+        </g>
+    
+    
+    <path d="M52 68Q64 80 76 68" stroke="#8E3B45" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+    
+    
+  </g>
+</svg>

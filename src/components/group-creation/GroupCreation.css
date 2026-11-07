@@ -1,0 +1,1329 @@
+/* =============================================================================
+   COMPONENTES COMPARTILHADOS DA CRIAÇÃO DE GRUPO
+   -----------------------------------------------------------------------------
+   Usados pelas DUAS rotas de criação:
+     - /dashboard/my-groups/create  (usuário)
+     - /admin/groups/new            (admin)
+
+   Prefixo `gc-` em todas as classes: o app tem arquivos de estilo com nomes
+   repetidos e a ordem de import decide quem vence (ver memória do projeto).
+   ============================================================================= */
+
+/* ---------------------------------------------------------------- trilha */
+.gc-steps {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.gc-steps::-webkit-scrollbar { display: none; }
+
+.gc-step {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.gc-step + .gc-step::before {
+  content: '';
+  flex: 1;
+  height: 2px;
+  min-width: 10px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-right: 0.25rem;
+}
+
+.gc-step.done + .gc-step::before,
+.gc-step.active + .gc-step::before {
+  background: var(--primary);
+}
+
+.gc-step-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: none;
+  border: none;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.2s, background 0.2s;
+}
+
+.gc-step-btn:disabled { cursor: default; opacity: 0.55; }
+
+.gc-step-btn:not(:disabled):hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.gc-step-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.gc-step.active .gc-step-dot {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.gc-step.done .gc-step-dot {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.gc-step-label { overflow: hidden; text-overflow: ellipsis; }
+
+/* ------------------------------------------------- busca de plataforma */
+.gc-search {
+  position: relative;
+  margin-bottom: 1.1rem;
+}
+
+.gc-search-box {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.gc-search-box:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.gc-search-box svg { color: var(--text-muted); flex-shrink: 0; }
+
+.gc-search-box input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-size: 0.95rem;
+}
+
+.gc-search-box input::placeholder { color: var(--text-soft); }
+
+.gc-search-clear {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0;
+}
+
+.gc-search-clear:hover { color: var(--text-main); }
+
+.gc-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 0.6rem;
+}
+
+.gc-section-title .gc-badge {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.68rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.gc-platform-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 0.6rem;
+}
+
+.gc-platform {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-main);
+  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+
+.gc-platform:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-xs);
+}
+
+.gc-platform.selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.gc-platform-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  font-weight: 700;
+  color: #fff;
+}
+
+.gc-platform-icon img { width: 100%; height: 100%; object-fit: cover; }
+
+.gc-platform-info { min-width: 0; flex: 1; }
+
+.gc-platform-name {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gc-platform-meta {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.gc-empty {
+  padding: 1.4rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* --------------------------------------------------------- modal/popup */
+.gc-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  z-index: 1000;
+  animation: gc-fade 0.15s ease-out;
+}
+
+@keyframes gc-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.gc-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 100%;
+  max-width: 460px;
+  padding: 1.5rem;
+  animation: gc-pop 0.18s ease-out;
+}
+
+@keyframes gc-pop {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.gc-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0 0 0.6rem;
+}
+
+.gc-modal-text {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0 0 1.1rem;
+}
+
+.gc-modal-platform {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface-soft);
+  border-radius: var(--radius-md);
+  margin-bottom: 1.1rem;
+}
+
+.gc-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------- planos */
+.gc-plan-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.gc-plan {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.95rem 1.05rem;
+  cursor: pointer;
+  color: var(--text-main);
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+
+.gc-plan:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.gc-plan.selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+.gc-plan-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.gc-plan-name {
+  font-weight: 700;
+  font-size: 0.98rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.gc-plan-check {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.gc-plan-price {
+  font-weight: 700;
+  color: var(--primary);
+  white-space: nowrap;
+  font-size: 0.95rem;
+}
+
+.gc-plan-price small {
+  display: block;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-align: right;
+}
+
+.gc-plan-details {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.gc-plan-details li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.gc-plan-details svg { flex-shrink: 0; margin-top: 2px; color: var(--text-soft); }
+
+.gc-plan-range {
+  margin-top: 0.7rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.gc-plan-range strong { color: var(--text-main); }
+
+/* -------------------------------------------------------- visibilidade */
+/* Rotulo de secao no padrao das telas novas ("VISIBILIDADE NA PLATAFORMA",
+   "STATUS DA ASSINATURA", "VAGAS DISPONÍVEIS", "COMUNICAÇÃO"). */
+.gc-section-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin: 0 0 0.7rem;
+}
+
+.gc-visibility-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem;
+}
+
+.gc-visibility-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  text-align: center;
+  padding: 1.4rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-main);
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+}
+
+.gc-visibility-card:hover { border-color: var(--primary); transform: translateY(-1px); }
+
+/* selecionado: fundo azul-claro e titulo roxo */
+.gc-visibility-card.selected {
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.08);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+.gc-visibility-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  margin-bottom: 0.35rem;
+}
+
+.gc-visibility-icon.is-public {
+  background: rgba(79, 70, 229, 0.14);
+  color: var(--primary);
+}
+
+.gc-visibility-icon.is-private {
+  background: rgba(245, 158, 11, 0.16);
+  color: var(--warning);
+}
+
+.gc-visibility-title {
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.gc-visibility-card.selected .gc-visibility-title { color: var(--primary); }
+
+.gc-visibility-desc {
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+/* -------------------------------------------------------------- resumo */
+.gc-summary {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.05rem 1.15rem;
+}
+
+.gc-summary h3 {
+  margin: 0 0 0.8rem;
+  font-size: 1rem;
+  color: var(--text-main);
+}
+
+.gc-summary ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.gc-summary li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.88rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.gc-summary li:last-child { border-bottom: none; padding-bottom: 0; }
+.gc-summary li span { color: var(--text-muted); }
+.gc-summary li strong { color: var(--text-main); text-align: right; }
+
+/* ------------------------------------------------------------ políticas */
+.gc-policies {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.05rem 1.15rem;
+  background: var(--surface);
+}
+
+.gc-policies-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  margin: 0 0 0.6rem;
+}
+
+.gc-policies-title svg { color: var(--warning); }
+
+.gc-policies ul {
+  margin: 0 0 0.9rem;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.gc-policies li {
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.gc-policies li strong { color: var(--text-main); }
+
+.gc-policies-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.7rem 0.8rem;
+  background: var(--surface-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: var(--text-main);
+}
+
+.gc-policies-check input {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* --------------------------------------------------------------- avisos */
+.gc-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-top: 1rem;
+}
+
+.gc-note svg { flex-shrink: 0; margin-top: 2px; }
+
+.gc-note.info { background: var(--primary-soft); color: var(--text-main); }
+.gc-note.info svg { color: var(--primary); }
+.gc-note.warn { background: rgba(245, 158, 11, 0.12); color: var(--text-main); }
+.gc-note.warn svg { color: var(--warning); }
+.gc-note.error { background: rgba(239, 68, 68, 0.12); color: var(--text-main); }
+.gc-note.error svg { color: var(--error); }
+.gc-note.success { background: rgba(16, 185, 129, 0.12); color: var(--text-main); }
+.gc-note.success svg { color: var(--success); }
+.gc-note code {
+  background: rgba(148, 163, 184, 0.18);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.82em;
+}
+
+/* --------------------------------------------------------- campos extras */
+.gc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.gc-field > label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.gc-field input,
+.gc-field select,
+.gc-field textarea {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  color: var(--text-main);
+  font-size: 0.92rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  width: 100%;
+}
+
+.gc-field input:focus,
+.gc-field select:focus,
+.gc-field textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.gc-field small { font-size: 0.76rem; color: var(--text-muted); }
+
+.gc-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0 1rem;
+}
+
+.gc-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.gc-tag {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-main);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.gc-tag:hover { border-color: var(--primary); }
+
+.gc-tag.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* ------------------------------------------------- tipos de regrinha */
+.gc-rule-types {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.gc-rule-type {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.7rem;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.gc-rule-type:hover { border-color: var(--primary); }
+
+.gc-rule-type.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.gc-rule-type-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 5px;
+  color: #fff;
+}
+
+.gc-rule-type.active .gc-rule-type-check {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.gc-rule-type-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.gc-rule-type-body strong {
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.gc-rule-type-body small {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.gc-rule-custom-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.7rem;
+}
+
+.gc-rule-custom-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 0.83rem;
+  color: var(--text-main);
+}
+
+.gc-rule-custom-item > svg { color: var(--text-muted); flex-shrink: 0; }
+.gc-rule-custom-item > span { flex: 1; min-width: 0; }
+
+.gc-rule-custom-item button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 4px;
+}
+
+.gc-rule-custom-item button:hover { color: var(--danger, #ef4444); }
+
+.gc-rule-custom-add {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.gc-rule-custom-add input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  color: var(--text-main);
+  font-size: 0.92rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.gc-rule-custom-add input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.gc-rule-custom-add button { flex-shrink: 0; }
+.gc-rule-custom-add button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+@media (max-width: 640px) {
+  .gc-rule-types { grid-template-columns: 1fr; }
+  .gc-rule-custom-add { flex-direction: column; align-items: stretch; }
+}
+
+/* --------------------------------------------------------- custo/planos */
+.gc-price-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface-soft);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.gc-price-box strong { color: var(--text-main); }
+
+.gc-suggestion {
+  background: none;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gc-suggestion:hover { background: var(--primary-soft); }
+
+/* --------------------------------------------- taxa de adesão (linha reta) */
+.gc-fee-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface-soft);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+.gc-fee-line strong {
+  color: var(--text-main);
+  font-size: 0.95rem;
+}
+
+.gc-fee-line small {
+  flex: 1 1 100%;
+  font-size: 0.76rem;
+  color: var(--text-soft);
+  line-height: 1.4;
+}
+
+/* ------------------------------------------------- valor por pessoa */
+.gc-per-slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+.gc-per-slot strong {
+  color: var(--primary);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.gc-per-slot strong small {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------ simulação de recebimento */
+.gc-simulation {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.9rem 1rem;
+  margin-top: 1rem;
+}
+
+.gc-simulation h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.92rem;
+  color: var(--text-main);
+}
+
+.gc-simulation-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.4rem 0;
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+
+.gc-simulation-row + .gc-simulation-row { border-top: 1px solid var(--border); }
+
+.gc-simulation-row strong {
+  font-size: 1rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* o que o cliente paga: azul, em negrito */
+.gc-simulation-row.is-client strong { color: var(--primary); }
+
+/* a taxa da plataforma: vermelha, um pouco menor */
+.gc-simulation-row.is-fee strong {
+  color: var(--error);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+/* o líquido do dono: verde, em negrito */
+.gc-simulation-row.is-net strong { color: var(--success); }
+
+/* ------------------------------------------------------ etapa de vagas */
+/* Card "VAGAS DISPONÍVEIS": stepper (- numero +) e a caixa verde do
+   quanto o dono recebe por mês. */
+.gc-slots-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 1.3rem 1.15rem 1.15rem;
+  text-align: center;
+}
+
+.gc-slots-card .gc-section-label { text-align: left; }
+
+.gc-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.4rem;
+  margin: 0.4rem 0 1.1rem;
+}
+
+.gc-stepper-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, transform 0.15s;
+}
+
+.gc-stepper-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+  transform: translateY(-1px);
+}
+
+.gc-stepper-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.gc-stepper-value {
+  min-width: 3rem;
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--text-main);
+  line-height: 1;
+  text-align: center;
+}
+
+.gc-receive-box {
+  background: var(--surface-soft);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.gc-receive-box strong {
+  color: var(--success);
+  font-weight: 800;
+  font-size: 1.08rem;
+}
+
+.gc-receive-box small {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.76rem;
+  color: var(--text-soft);
+}
+
+.gc-receive-box.is-empty strong { color: var(--text-soft); }
+
+/* --------------------------------------------- status da assinatura */
+.gc-subscription-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.gc-subscription-card {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.95rem 1.05rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-main);
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+}
+
+.gc-subscription-card:hover { transform: translateY(-1px); }
+
+.gc-subscription-card.is-success:hover { border-color: var(--success); }
+.gc-subscription-card.is-warning:hover { border-color: var(--warning); }
+
+/* selecionado: borda e fundo na cor da opcao */
+.gc-subscription-card.is-success.selected {
+  border-color: var(--success);
+  background: rgba(16, 185, 129, 0.09);
+}
+
+.gc-subscription-card.is-warning.selected {
+  border-color: var(--warning);
+  background: rgba(245, 158, 11, 0.11);
+}
+
+.gc-subscription-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  color: #fff;
+}
+
+.gc-subscription-icon.is-success { background: var(--success); }
+.gc-subscription-icon.is-warning { background: var(--warning); }
+
+.gc-subscription-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.gc-subscription-body strong {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.gc-subscription-body small {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* --------------------------------------------------- comunicacao/chat */
+.gc-block { margin-top: 1.3rem; }
+
+/* Dica curta embaixo de um campo (planos da plataforma). */
+.gc-field-hint {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* Resumo do plano: o que o usuário vai ver no card. */
+.plan-editor-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.85rem 0;
+}
+
+.plan-editor-summary span {
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.gc-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.95rem 1.05rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.gc-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.gc-toggle-text strong {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.gc-toggle-text span {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+.gc-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 46px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--border-strong);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.gc-switch.on { background: var(--primary); }
+
+.gc-switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.35);
+  transition: transform 0.2s;
+}
+
+.gc-switch.on .gc-switch-knob { transform: translateX(20px); }
+
+@media (max-width: 640px) {
+  .gc-platform-grid { grid-template-columns: 1fr; }
+  .gc-step-label { display: none; }
+  .gc-visibility-grid { grid-template-columns: 1fr; }
+}
+
+/* ------------------------------------------- editor de planos (admin) */
+.plans-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+  flex-wrap: wrap;
+}
+
+.plans-editor-head h2 { margin-bottom: 0.35rem; }
+.plans-editor-head .section-desc { margin: 0; max-width: 62ch; }
+
+.plans-editor-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+/* Rodapé do editor de planos: botão "Salvar planos" separado. */
+.plans-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.plans-editor-footer .gc-field-hint { margin-top: 0; max-width: 56ch; }
+
+.plans-editor-footer .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.plan-editor-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.1rem;
+  background: var(--surface-soft);
+}
+
+.plan-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.plan-editor-head strong { font-size: 0.95rem; color: var(--text-main); }
+
+.plan-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.plan-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0 1rem;
+}
+
+.plan-editor-card .gc-field { margin-bottom: 0.85rem; }
+
+@media (max-width: 640px) {
+  .plan-editor-grid { grid-template-columns: 1fr; }
+}
+
+/* --------------------------------------------- gerenciamento de acesso (IA) */
+/* Bloco "Deixar a DividePass gerenciar o e-mail do grupo com IA" (etapa de
+   credenciais). Explica o que acontece e por que Recommended. */
+.gc-managed-note {
+  margin-top: 0.9rem;
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.gc-managed-note-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.gc-managed-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.gc-managed-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.gc-managed-steps strong { color: var(--text-main); }
+
+.gc-managed-step-num {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.gc-managed-note-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.85rem 0 0;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.gc-managed-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.7rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}

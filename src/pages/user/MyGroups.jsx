@@ -6,7 +6,7 @@ import { supabase } from '../../lib/supabase';
 import GroupTags from '../../components/GroupTags';
 import './MyGroups.css';
 
-function DeleteGroupModal({ groupName, onConfirm, onCancel, loading }) {
+function DeleteGroupModal({ groupName, onConfirm, onCancel, loading, error }) {
   return (
     <div className="confirm-modal-overlay" onClick={onCancel}>
       <div className="confirm-modal" onClick={e => e.stopPropagation()}>
@@ -19,6 +19,12 @@ function DeleteGroupModal({ groupName, onConfirm, onCancel, loading }) {
           Tem certeza de que deseja excluir o grupo <strong>{groupName}</strong>?<br />
           Esta ação não pode ser desfeita.
         </p>
+        {error && (
+          <div className="confirm-modal-error">
+            <AlertTriangle size={16} />
+            <span>{error}</span>
+          </div>
+        )}
         <div className="confirm-modal-actions">
           <button className="btn btn-outline" onClick={onCancel} disabled={loading}>Cancelar</button>
           <button className="btn btn-danger" onClick={onConfirm} disabled={loading}>
@@ -37,6 +43,7 @@ function MyGroups() {
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -56,11 +63,15 @@ function MyGroups() {
     })();
   }, [user]);
 
-  const handleDeleteClick = (group) => setDeleteTarget(group);
+  const handleDeleteClick = (group) => {
+    setDeleteError('');
+    setDeleteTarget(group);
+  };
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    setDeleteError('');
     // apaga as credenciais junto (rascunhos podem ter uma linha gravada)
     await supabase.from('group_credentials').delete().eq('group_id', deleteTarget.id);
     const { error } = await supabase.from('groups').delete().eq('id', deleteTarget.id);
@@ -68,7 +79,19 @@ function MyGroups() {
     if (!error) {
       setGroups(prev => prev.filter(g => g.id !== deleteTarget.id));
       setDeleteTarget(null);
+      return;
     }
+    // O RLS barra a exclusão quando o grupo tem pagamento confirmado (a
+    // regra vale para o usuário comum; para o admin, não). O erro cru do
+    // PostgREST ("row-level security policy") não diz nada disso.
+    const msg = String(error.message || '');
+    const bloqueadoPorPolitica =
+      /row-level security|permission denied/i.test(msg);
+    setDeleteError(
+      bloqueadoPorPolitica
+        ? 'Este grupo tem pagamento confirmado, então a exclusão é feita pela equipe DividePass para que os valores de quem pagou sejam acertados. Abra um chamado na Suporte.'
+        : `Não foi possível excluir o grupo: ${msg || 'erro desconhecido'}`
+    );
   };
 
   if (loading) {
@@ -193,8 +216,9 @@ function MyGroups() {
         <DeleteGroupModal
           groupName={deleteTarget.name}
           onConfirm={handleDeleteConfirm}
-          onCancel={() => setDeleteTarget(null)}
+          onCancel={() => { setDeleteTarget(null); setDeleteError(''); }}
           loading={deleting}
+          error={deleteError}
         />
       )}
     </div>

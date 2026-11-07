@@ -8,6 +8,25 @@ const corsHeaders = {
 };
 
 /**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * REGRA DE OURO DESTE WEBHOOK (o bug que custava pagamento)
+ *
+ * Responder 200 para o IO Pay significa "entrega concluída, não tenta de novo".
+ * O IO Pay NÃO reenvia um webhook que respondeu 200. Antes desta versão, o
+ * webhook respondia 200 em cinco caminhos de falha (não leu a transação no
+ * gateway, não achou a tentativa, referência divergente, referência inválida e
+ * confirmação que falhou) — e o dinheiro ficava preso no gateway enquanto o
+ * painel mostrava o pagamento como "Aprovado" (porque o status vem do gateway)
+ * e a assinatura continuava "Pendente", sem o cliente entrar no grupo.
+ *
+ * Agora: tudo que é retryable responde 5xx (o gateway reenvia) e a
+ * confirmação é idempotente (a guarda é a linha em `payments`), então reenviar
+ * é seguro. Só responde 200 quando não há nada a fazer (pagamento pendente,
+ * pagamento recusado, fatura quitada).
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
  * A IO Pay responde a transacao em varios formatos dependendo do endpoint
  * ({"success":{...}}, {"data":{...}}, {"result":{...}}, ou o objeto cru).
  * Sem desembrulhar, `transactionData.reference_id` vem undefined e o webhook
@@ -35,11 +54,18 @@ function extractResponseData(payload: any): any {
  *
  * Por isso: busca a linha mais ANTIGA (a de criacao, que e a que carrega
  * `external_reference` e `coupon_id`) com `.limit(1)`, nunca `.maybeSingle()`.
+ *
+ * Fallback pela REFERENCIA EXTERNA: se o gateway reenviar o id num formato
+ * diferente do que gravamos, a busca pelo id falha e o pagamento morria ali.
+ * A referencia (`grupo:usuario:tipo`) e unica por pagamento e vem da propria
+ * transacao no gateway, entao ela serve de chave secundaria.
  */
-async function findAttempt(supabaseAdmin: any, transactionId: string) {
+async function findAttempt(supabaseAdmin: any, transactionId: string, externalReference?: string) {
+  const colunas = "id, gateway_transaction_id, external_reference, user_id, group_id, payment_method";
+
   const { data, error } = await supabaseAdmin
     .from("payment_attempts")
-    .select("id, gateway_transaction_id, external_reference, user_id, group_id, payment_method")
+    .select(colunas)
     .eq("gateway_transaction_id", transactionId)
     .order("created_at", { ascending: true })
     .limit(1);
@@ -48,7 +74,30 @@ async function findAttempt(supabaseAdmin: any, transactionId: string) {
     console.error("[iopay-webhook] erro ao ler payment_attempts:", error.message);
     return null;
   }
-  return (data && data[0]) || null;
+
+  const tentativa = (data && data[0]) || null;
+  if (tentativa || !externalReference) return tentativa;
+
+  const { data: porReferencia, error: errRef } = await supabaseAdmin
+    .from("payment_attempts")
+    .select(colunas)
+    .eq("external_reference", externalReference)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (errRef) {
+    console.error("[iopay-webhook] erro ao buscar tentativa pela referencia:", errRef.message);
+    return null;
+  }
+
+  const fallback = (porReferencia && porReferencia[0]) || null;
+  if (fallback) {
+    console.warn(
+      "[iopay-webhook] id do gateway difere do gravado — achamos pela referencia externa:",
+      { sought: transactionId, found: fallback.gateway_transaction_id },
+    );
+  }
+  return fallback;
 }
 
 export default {
@@ -121,8 +170,16 @@ export default {
       }
 
       if (!transactionData) {
-        console.error("Could not fetch IOPay transaction:", transactionId);
-        return Response.json({ received: true }, { headers: corsHeaders });
+        // 5xx (e nao 200): o IO Pay reenvia quando a resposta falha. Responder
+        // 200 aqui encerra a entrega e o pagamento fica preso no gateway.
+        console.error(
+          "[iopay-webhook] Could not fetch IOPay transaction (503 para reenviar):",
+          transactionId,
+        );
+        return new Response(
+          JSON.stringify({ error: "gateway read failed" }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
 
       // Parse external reference from reference_id
@@ -142,14 +199,20 @@ export default {
       // A transacao precisa ter sido criada por nos (payment_attempts).
       // Sem isso, qualquer transaction_id valido do gateway IO Pay — inclusive
       // de outra loja — poderia ser jogado no webhook para ativar uma vaga.
-      const attempt = await findAttempt(supabaseAdmin, transactionId);
+      const attempt = await findAttempt(supabaseAdmin, transactionId, externalRef);
 
       if (!attempt) {
+        // 503 (retryable): a tentativa pode ser gravada logo depois do
+        // pagamento (corrida entre o create-payment e o gateway). Com 200 o
+        // IO Pay nunca mais chamaria e o pagamento ficaria perdido.
         console.error(
-          "[iopay-webhook] transacao sem pagamento registrado — webhook ignorado:",
+          "[iopay-webhook] transacao sem pagamento registrado — 503 para reenviar:",
           transactionId,
         );
-        return Response.json({ received: true }, { headers: corsHeaders });
+        return new Response(
+          JSON.stringify({ error: "attempt not found" }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
 
       // A referencia da transacao precisa ser a mesma que gravamos na tentativa.
@@ -159,10 +222,13 @@ export default {
         attempt.external_reference !== externalRef
       ) {
         console.error(
-          "[iopay-webhook] referencia divergente entre tentativa e gateway — webhook ignorado",
+          "[iopay-webhook] referencia divergente entre tentativa e gateway — 503 para reenviar",
           { esperado: attempt.external_reference, recebido: externalRef },
         );
-        return Response.json({ received: true }, { headers: corsHeaders });
+        return new Response(
+          JSON.stringify({ error: "reference mismatch" }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
 
       const rawStatus = String(transactionData.status || body.status || "pending").toLowerCase().trim();
@@ -239,8 +305,13 @@ export default {
       }
 
       if (parts.length < 3) {
-        console.error("Invalid external reference:", externalRef);
-        return Response.json({ received: true }, { headers: corsHeaders });
+        // 503: referencia fora do formato esperado. O reenvio custa barato e o
+        // job de reconciliacao (`reconcile-payments`) é a rede de seguranca.
+        console.error("[iopay-webhook] Invalid external reference (503 para reenviar):", externalRef);
+        return new Response(
+          JSON.stringify({ error: "invalid external reference" }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
 
       const groupId = parts[0];
@@ -295,7 +366,9 @@ export default {
         custom_cycle_months: paymentData?.custom_cycle_months || subInfo?.custom_cycle_months || null,
       });
 
-      if (!confirmResult?.success && status !== "pending") {
+      const confirmOk = confirmResult?.success === true;
+
+      if (!confirmOk && status !== "pending") {
         console.error(
           "[iopay-webhook] confirmPayment nao confirmou:",
           confirmResult?.error || "erro desconhecido",
@@ -319,6 +392,26 @@ export default {
 
       if (logErr) {
         console.error("[iopay-webhook] falha ao registrar o log do webhook:", logErr.message);
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // PAGAMENTO APROVADO E SEM LIBERAÇÃO → 503 (o gateway reenvia).
+      //
+      // A confirmação é idempotente (a guarda é a linha em `payments`), então
+      // reenviar não duplica assinatura, vínculo, pagamento nem e-mail. O
+      // `confirmPayment` também deixa registrado o evento "Pagamento aprovado
+      // sem liberação" no painel, e o job `reconcile-payments` (15 min) é a
+      // rede de segurança para o caso de o gateway desistir de reenviar.
+      // ─────────────────────────────────────────────────────────────────────
+      if (status === "approved" && !confirmOk) {
+        return new Response(
+          JSON.stringify({
+            received: true,
+            confirmed: false,
+            error: confirmResult?.error || "confirm failed",
+          }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
 
       return Response.json(

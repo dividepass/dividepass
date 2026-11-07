@@ -23,7 +23,7 @@ Deno.serve(async (req: Request) => {
     // Fetch active subscriptions
     let subQuery = supabase
       .from("user_subscriptions")
-      .select("id, user_id, group_id, status")
+      .select("id, user_id, group_id, status, renewal_due_at, next_charge_at, expires_at")
       .eq("status", "active");
 
     if (group_id) {
@@ -47,35 +47,76 @@ Deno.serve(async (req: Request) => {
       // Check existing group_member
       const { data: existing } = await supabase
         .from("group_members")
-        .select("id, status, payment_status")
+        .select("id, status, payment_status, subscription_deadline, joined_at")
         .eq("group_id", sub.group_id)
         .eq("user_id", sub.user_id)
         .maybeSingle();
 
-      if (existing && existing.status === "active" && existing.payment_status === "active") {
+      // O PRAZO "paga até" (a mesma data que a assinatura usa para renovar).
+      // Sem ele no vínculo, ninguém consegue dizer se o período ainda vale —
+      // e a pessoa fica trancada fora da tela de credenciais mesmo tendo
+      // pago. `expires_at` é DATE: vale até o FIM do dia.
+      const prazo: string | null =
+        sub.renewal_due_at ||
+        sub.next_charge_at ||
+        (sub.expires_at ? `${sub.expires_at}T23:59:59.999Z` : null);
+
+      const semPrazo = Boolean(prazo) && !existing?.subscription_deadline;
+
+      if (existing && existing.status === "active" && existing.payment_status === "active" && !semPrazo) {
         alreadyOk++;
         continue;
       }
 
       // Upsert group_member to active
+      const patch: Record<string, unknown> = {
+        group_id: sub.group_id,
+        user_id: sub.user_id,
+        status: "active",
+        payment_status: "active",
+        left_at: null,
+        joined_at: existing?.joined_at || new Date().toISOString(),
+      };
+      if (prazo) patch.subscription_deadline = prazo;
+
       const { error: upsertErr } = await supabase
         .from("group_members")
-        .upsert({
-          group_id: sub.group_id,
-          user_id: sub.user_id,
-          status: "active",
-          payment_status: "active",
-          joined_at: existing?.joined_at || new Date().toISOString(),
-        }, { onConflict: "group_id, user_id" });
+        .upsert(patch, { onConflict: "group_id, user_id" });
 
-      if (upsertErr) {
-        errors++;
-        errorDetails.push(`${sub.user_id}@${sub.group_id}: ${upsertErr.message}`);
-        console.error(`[sync-members] Upsert error for ${sub.user_id}@${sub.group_id}:`, upsertErr);
-      } else {
+      if (!upsertErr) {
         synced++;
         console.log(`[sync-members] Synced ${sub.user_id} → group ${sub.group_id}`);
+        continue;
       }
+
+      // Sem constraint (group_id, user_id) o ON CONFLICT não funciona:
+      // atualiza a linha existente e, se não houver nenhuma, insere.
+      const { data: updated, error: updErr } = await supabase
+        .from("group_members")
+        .update(patch)
+        .eq("group_id", sub.group_id)
+        .eq("user_id", sub.user_id)
+        .select("id");
+
+      if (updErr) {
+        errors++;
+        errorDetails.push(`${sub.user_id}@${sub.group_id}: ${updErr.message}`);
+        console.error(`[sync-members] Update error for ${sub.user_id}@${sub.group_id}:`, updErr);
+        continue;
+      }
+
+      if (!updated || updated.length === 0) {
+        const { error: insErr } = await supabase.from("group_members").insert(patch);
+        if (insErr) {
+          errors++;
+          errorDetails.push(`${sub.user_id}@${sub.group_id}: ${insErr.message}`);
+          console.error(`[sync-members] Insert error for ${sub.user_id}@${sub.group_id}:`, insErr);
+          continue;
+        }
+      }
+
+      synced++;
+      console.log(`[sync-members] Synced ${sub.user_id} → group ${sub.group_id}`);
     }
 
     // Also sync group_members that have active subscriptions but missing user_subscriptions

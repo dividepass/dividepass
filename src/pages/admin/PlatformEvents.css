@@ -376,3 +376,55 @@
     padding: 1rem;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Celular — a página de eventos é uma folha de largura inteira.
+   ───────────────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .pe-header {
+    margin-bottom: 1rem;
+  }
+
+  .pe-header h1 {
+    font-size: 1.2rem;
+  }
+
+  .pe-header p {
+    font-size: 0.8rem;
+  }
+
+  /* A tabela rola de lado, mas a primeira coluna fica grudada: o
+     operador vê o nome do grupo enquanto arrasta. */
+  .admin-content .table-responsive {
+    -webkit-overflow-scrolling: touch;
+    /* Sombras nas bordas: sinaliza que há mais coluna fora da tela. */
+    background:
+      linear-gradient(to right, var(--surface) 30%, rgba(0, 0, 0, 0)) left center / 24px 100% no-repeat,
+      linear-gradient(to left, var(--surface) 30%, rgba(0, 0, 0, 0)) right center / 24px 100% no-repeat;
+    background-attachment: local, local;
+  }
+
+  .groups-list-table th:first-child,
+  .groups-list-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--surface);
+    box-shadow: 1px 0 0 var(--border);
+  }
+
+  .groups-list-table th:first-child {
+    background: var(--bg-secondary, #0d1117);
+    z-index: 2;
+  }
+
+  .groups-list-table td {
+    padding: 0.45rem 0.7rem;
+    font-size: 0.8rem;
+  }
+
+  .groups-list-table th {
+    padding: 0.45rem 0.7rem;
+    font-size: 0.66rem;
+  }
+}

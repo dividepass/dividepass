@@ -108,6 +108,13 @@ verify_jwt = false
 import_map = "./functions/receive-email-code/deno.json"
 entrypoint = "./functions/receive-email-code/index.ts"
 
+# Cria a caixa de e-mail gerenciada do grupo (cPanel/UAPI) e liga a busca de
+# codigo. Exige sessao: so o dono do grupo ou um admin pode chamar.
+[functions.provision-group-mailbox]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/provision-group-mailbox/index.ts"
+
 [functions.check-entrance-deadline]
 enabled = true
 verify_jwt = false
@@ -129,6 +136,29 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/iopay-webhook/index.ts"
 
+# Webhook da Woovi (Pix Automático).
+#
+# verify_jwt = false é OBRIGATÓRIO: a Woovi chama essa URL direto do
+# servidor deles, sem sessão e sem JWT. Com verify_jwt = true (padrão) o
+# gateway do Supabase responde 401 e nenhuma confirmação de pagamento chega.
+#
+# A autenticação real da Woovi é o AppID no header `Authorization` da API
+# deles — o webhook da Woovi manda o corpo do evento, e a gente valida o
+# correlationID (que só o DividePass gera) antes de confirmar qualquer
+# pagamento.
+[functions.woovi-webhook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/woovi-webhook/index.ts"
+
+# Polling do status do pagamento (usado pelo checkout enquanto a aba está
+# aberta). Aqui verify_jwt = true é o CORRETO: quem chama é o navegador do
+# usuário logado, e a função valida o token antes de consultar a Woovi.
+[functions.check-woovi-tx]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/check-woovi-tx/index.ts"
+
 [functions.send-group-alert]
 enabled = true
 verify_jwt = false
@@ -144,7 +174,69 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/send-notification/index.ts"
 
+# Avisa a lista de espera de um serviço que uma vaga abriu.
+# A propria funcao valida a sessao e quem pode chamar (admin ou dono do grupo),
+# entao o gateway nao precisa bloquear antes.
+[functions.notify-service-watchers]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/notify-service-watchers/index.ts"
+
 [functions.grant-testimonial-reward]
 enabled = true
 verify_jwt = true
 entrypoint = "./functions/grant-testimonial-reward/index.ts"
+
+# Reconciliação de pagamentos ("paguei e não fui add ao grupo").
+# Roda com `verify_jwt = false` (o cron manda o segredo guardado em
+# app_settings, e segredo não é JWT — com verify_jwt = true o gateway
+# responde 401 ANTES do código rodar e a reconciliação nunca acontece).
+[functions.reconcile-payments]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/reconcile-payments/index.ts"
+
+# Exclusão de conta. É chamada pelo app com o JWT do próprio usuário, então
+# aqui o gateway PODE (e deve) exigir o JWT.
+[functions.delete-account]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/delete-account/index.ts"
+
+# ============================================================================
+# PULSE CODING (revenda)
+# ============================================================================
+# [functions.pulse-admin]
+# Painel do admin: saldo, sync do catálogo, remapeamento, dry_run.
+# Chamado pelo navegador COM o JWT do admin, então o gateway exige o JWT
+# (verify_jwt = true, o padrão do projeto).
+[functions.pulse-admin]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/pulse-admin/index.ts"
+
+# [functions.pulse-webhook]
+# A Pulse chama esta URL direto do servidor deles, sem sessão e sem JWT.
+# Por isso verify_jwt = false E a validação acontece dentro do código, pelo
+# header X-Pulse-Signature (HMAC-SHA256 do corpo cru).
+[functions.pulse-webhook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/pulse-webhook/index.ts"
+
+# [functions.pulse-entrega]
+# O cliente busca a SUA entrega com o próprio JWT. Aqui verify_jwt = true é o
+# correto: quem chama é o navegador do cliente logado.
+[functions.pulse-entrega]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/pulse-entrega/index.ts"
+
+# [functions.pulse-poll]
+# Job de polling dos pedidos pendentes (rede de segurança do webhook).
+# O cron manda o segredo guardado em app_settings, e segredo não é JWT —
+# com verify_jwt = true o gateway responde 401 ANTES do código rodar.
+[functions.pulse-poll]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/pulse-poll/index.ts"

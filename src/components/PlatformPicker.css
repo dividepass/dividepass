@@ -28,6 +28,77 @@
   padding-right: 2px;
 }
 
+/* Dentro dos blocos por categoria quem rola é o container: cada bloco
+   acompanha o tamanho do conteúdo dele. */
+.platform-picker-grid.is-grouped {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
+.platform-picker-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.platform-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.platform-picker-group-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.platform-picker-none-row {
+  display: flex;
+  padding-bottom: 0.15rem;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 0.1rem;
+}
+
+.platform-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--text-muted);
+}
+
+.platform-picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.platform-picker-search button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+}
+
 .platform-pill {
   display: inline-flex;
   align-items: center;

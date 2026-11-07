@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Shield, Users, CreditCard, Headphones, ArrowRight, CheckCircle } from 'lucide-react';
+import SiteFooter from '../components/SiteFooter';
 import './SeoPages.css';
 
 function Sobre() {
@@ -115,6 +116,8 @@ function Sobre() {
           </Link>
         </div>
       </div>
+
+      <SiteFooter variant="dark" />
     </div>
   );
 }

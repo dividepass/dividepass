@@ -1,0 +1,328 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   ADMIN NO CELULAR — o contrato de densidade do painel
+   ---------------------------------------------------------------------------
+   O painel do DividePass é usado pelo operador no celular, com o polegar. As
+   três regras abaixo valem para TODA página do admin:
+
+   1. TABELA VIRA CARTÃO. Nenhuma lista principal exige rolagem lateral para
+      ser lida. A linha da tabela vira um cartão empilhado e cada coluna
+      vira uma linha rótulo → valor.
+
+   2. FILTRO NÃO EMPILHA. Uma fileira de filtros por linha vira grade de 2
+      colunas (ou faixa rolável). Filtro que ocupa a tela inteira empurra o
+      conteúdo para baixo e é a primeira coisa que faz o painel parecer
+      "quebrado".
+
+   3. NENHUM SCROLL ANINHADO. Painel com rolagem própria dentro da página
+      obriga o operador a rolar dois eixos. No celular a lista cresce e a
+      página rola uma vez só.
+
+   Para participar do contrato, a tabela recebe `ad-card-table` e cada <td>
+   recebe `data-label="Nome da coluna"`. Papel da célula:
+     .ad-lead    — identidade (avatar, nome, e-mail) — ocupa a linha inteira
+     .ad-pick    — seleção em lote — vira o quadrado no canto do cartão
+     .ad-actions — rodapé de ações — ganha fio divisório
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ------------------------------------------------------------------ */
+/* 0. Ações do topo da página                                           */
+/* ------------------------------------------------------------------ */
+.admin-content .admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* 1. Tabela → cartão                                                 */
+/* ------------------------------------------------------------------ */
+@media (max-width: 720px) {
+  /* O contêiner de rolagem deixa de rolar: em modo cartão não existe
+     largura mínima para alcançar. */
+  .admin-content .ad-cards .table-responsive {
+    overflow-x: visible;
+  }
+
+  .admin-content .ad-card-table {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Sem moldura dupla: o cartão é o cartão, não um cartão dentro de
+     outro cartão. */
+  .admin-content .admin-card:has(> .ad-card-table) {
+    padding: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+
+  .admin-content .ad-card-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .admin-content .ad-card-table,
+  .admin-content .ad-card-table tbody,
+  .admin-content .ad-card-table tr,
+  .admin-content .ad-card-table td {
+    display: block;
+    width: auto;
+    float: none;
+  }
+
+  .admin-content .ad-card-table tr {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0.7rem 0.8rem;
+    margin: 0 0 0.55rem;
+    box-shadow: var(--shadow-xs);
+  }
+
+  .admin-content .ad-card-table tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .admin-content .ad-card-table tbody tr:hover {
+    background: var(--surface);
+  }
+
+  .admin-content .ad-card-table td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.9rem;
+    padding: 0.24rem 0;
+    border: none;
+    text-align: right;
+    font-size: 0.85rem;
+    color: var(--text-main);
+    min-width: 0;
+  }
+
+  .admin-content .ad-card-table td > * {
+    min-width: 0;
+  }
+
+  /* Rótulo da coluna: fonte pequena, à esquerda, e o valor encosta na
+     direita. É o que substitui o cabeçalho da tabela. */
+  .admin-content .ad-card-table td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-soft);
+    text-align: left;
+    line-height: 1.6;
+  }
+
+  /* Identidade: nome + e-mail no topo do cartão, sem rótulo. */
+  .admin-content .ad-card-table td.ad-lead {
+    justify-content: flex-start;
+    text-align: left;
+    padding-bottom: 0.55rem;
+  }
+
+  .admin-content .ad-card-table td.ad-lead::before {
+    content: none;
+  }
+
+  /* Seleção em lote: quadrado flutuante no canto do cartão. */
+  .admin-content .ad-card-table td.ad-pick {
+    position: absolute;
+    top: 0.62rem;
+    left: 0.72rem;
+    padding: 0;
+    width: auto;
+  }
+
+  .admin-content .ad-card-table td.ad-pick::before {
+    content: none;
+  }
+
+  .admin-content .ad-card-table--pick td.ad-lead {
+    padding-left: 1.9rem;
+  }
+
+  /* Ações: rodapé do cartão. */
+  .admin-content .ad-card-table td.ad-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.55rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .admin-content .ad-card-table td.ad-actions::before {
+    content: none;
+  }
+
+  /* O rodapé ocupa a linha inteira: os botões ficam em linha, encostados
+     à direita (sem isso eles quebram um por linha e o cartão cresce).
+     O botão solto (sem wrapper) mantém o próprio tamanho. */
+  .admin-content .ad-card-table td.ad-actions > * {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  /* Variante em grade: duas colunas de metadados por linha. */
+  .admin-content .ad-card-table--grid tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 0.85rem;
+    align-items: start;
+  }
+
+  .admin-content .ad-card-table--grid td {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 0.12rem;
+    text-align: left;
+  }
+
+  .admin-content .ad-card-table--grid td::before {
+    line-height: 1.4;
+  }
+
+  .admin-content .ad-card-table--grid td.ad-lead,
+  .admin-content .ad-card-table--grid td.ad-actions {
+    grid-column: 1 / -1;
+  }
+
+  .admin-content .ad-card-table--grid td.ad-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
+  /* O container da tabela deixa de ser uma caixa: os cartões são as caixas. */
+  .admin-content .ad-cards {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+    overflow: visible;
+    padding: 0;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 2. Cabeçalho de página compacto                                    */
+/* ------------------------------------------------------------------ */
+@media (max-width: 720px) {
+  .admin-content .admin-header {
+    margin-bottom: 1rem;
+    gap: 0.6rem;
+  }
+
+  .admin-content .admin-header h1 {
+    font-size: 1.2rem;
+    line-height: 1.25;
+    margin-bottom: 0.1rem;
+  }
+
+  .admin-content .page-subtitle {
+    font-size: 0.8rem;
+  }
+
+  /* Botões de ação do topo: dois por linha, sem estourar a largura. */
+  .admin-content .admin-header-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .admin-content .admin-header-actions .btn {
+    padding: 0.6rem 0.5rem;
+    font-size: 0.78rem;
+    gap: 0.35rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Botão sozinho (não cabe em par) ocupa a linha inteira. */
+  .admin-content .admin-header-actions .btn:only-child {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 3. Faixa rolável — abas, chips e períodos                         */
+/* ------------------------------------------------------------------ */
+@media (max-width: 720px) {
+  .admin-content .ad-scroll-row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    margin: 0 -0.75rem;
+    padding: 0.1rem 0.75rem 0.35rem;
+  }
+
+  .admin-content .ad-scroll-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .admin-content .ad-scroll-row > * {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. Filtros em grade de 2 colunas                                   */
+/* ------------------------------------------------------------------ */
+@media (max-width: 720px) {
+  .admin-content .ad-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+    width: 100%;
+  }
+
+  .admin-content .ad-filter-grid > * {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .admin-content .ad-filter-grid > .ad-filter-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Sem rolagem aninhada                                            */
+/* ------------------------------------------------------------------ */
+@media (max-width: 720px) {
+  .admin-content .activity-list,
+  .admin-content .support-list,
+  .admin-content .ev-list,
+  .admin-content .ob-response-list {
+    max-height: none;
+    overflow: visible;
+  }
+}

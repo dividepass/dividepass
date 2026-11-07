@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronUp, ArrowRight, Search } from 'lucide-react';
+import SiteFooter from '../components/SiteFooter';
 import './SeoPages.css';
 
 const FAQ_DATA = [
@@ -193,6 +194,8 @@ function Faq() {
           </Link>
         </div>
       </div>
+
+      <SiteFooter variant="dark" />
     </div>
   );
 }

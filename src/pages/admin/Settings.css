@@ -274,3 +274,112 @@
 .gateway-credentials .form-group {
   margin-bottom: 0;
 }
+
+/* Abas de credenciais: escolher qual gateway editar SEM ativar nenhum. */
+.gateway-cred-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0 1.5rem 0.5rem;
+}
+
+.gateway-cred-tab {
+  padding: 0.4rem 0.85rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.gateway-cred-tab:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.gateway-cred-tab.active {
+  border-color: var(--primary);
+  background: rgba(79, 70, 229, 0.06);
+  color: var(--primary);
+}
+
+/* Divisao de gateway por metodo (PIX / cartao). */
+.split-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface, transparent);
+  cursor: pointer;
+}
+
+.split-toggle input[type="checkbox"] {
+  margin-top: 0.2rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.split-toggle strong {
+  display: block;
+  color: var(--secondary);
+  font-size: 0.92rem;
+}
+
+.split-toggle-hint {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-muted, #8b8b9a);
+}
+
+.split-gateway-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.split-gateway-grid .form-group {
+  margin-bottom: 0;
+}
+
+/* Onde a divisao vale: so no checkout V2 (teste) ou em todos. */
+.split-scope-group {
+  margin-top: 1rem;
+}
+
+.split-scope-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.split-scope-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  cursor: pointer;
+}
+
+.split-scope-option input[type="radio"] {
+  margin-top: 0.25rem;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.split-scope-option strong {
+  display: block;
+  color: var(--secondary);
+  font-size: 0.88rem;
+}

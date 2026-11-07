@@ -1,6 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getGatewaySettings } from "../create-payment/handlers/settings.ts";
 import { notifyAdminPayment } from "../_shared/admin-payment-email.ts";
+// A confirmação compartilhada é a ÚNICA implementação de "o que fazer quando o
+// gateway aprova". O polling delegou para ela (ver `confirmIOPayment`).
+import { confirmPayment } from "../confirm-payment/index.ts";
 
 /** Obtém official_price e paid_amount (após cupom) para rastrear economia de assinatura. */
 async function getSavingsData(
@@ -107,6 +110,29 @@ function calculateNextChargeDate(cycle: string, customDays?: number | null, cust
   return d;
 }
 
+/**
+ * Confirmação do pagamento — DELEGA para a confirmação compartilhada.
+ *
+ * POR QUE MUDOU
+ * -------------
+ * Esta função era uma CÓPIA de ~450 linhas da confirmação que o webhook usa
+ * (`confirm-payment/index.ts`). Duas cópias da mesma regra é a receita do
+ * "paguei e não entrei no grupo": o polling confirmava de um jeito (sem
+ * e-mail para o cliente, sem `billing_cycles`, sem faturas vencidas
+ * quitadas) e o webhook de outro (com tudo).
+ *
+ * No caso real de 01/11/2026 a Fran pagou R$ 59,40 no grupo "Netflix C/
+ * Anúncio" (PIX), o gateway aprovou, e a pessoa ficou fora do grupo sem
+ * nenhum e-mail da DividePass — o polling e o webhook nunca chegaram a uma
+ * versão única do "o que fazer quando o pagamento foi aprovado".
+ *
+ * Agora existe UM lugar só que decide isso: `confirmPayment`. O polling, o
+ * webhook do gateway, a confirmação manual do admin e o job de reconciliação
+ * passam todos por ele — mesmo comportamento, mesmos e-mails, mesmos eventos.
+ *
+ * A ÚNICA parte que continua aqui é a FATURA, que não existe na confirmação
+ * compartilhada (é um pagamento avulso, não uma assinatura).
+ */
 async function confirmIOPayment(
   supabaseAdmin: any,
   group_id: string,
@@ -115,16 +141,15 @@ async function confirmIOPayment(
   amount: number,
   gateway_payment_id: string,
   billingCycleHint?: string | null,
-  customCycleDays?: number | null,
-  customCycleMonths?: number | null,
+  customCycleDays?: string | null,
+  customCycleMonths?: string | null,
   paymentMethod?: string | null,
   cardLast4?: string | null,
   cardBrand?: string | null,
   cardId?: string | null,
   invoiceId?: string | null,
 ): Promise<{ success: boolean; error?: string }> {
-  console.log(`[confirmIOPayment] START type=${payment_type} user=${user_id} group=${group_id} amount=${amount} cycle=${billingCycleHint}`);
-
+  // ── FATURA ────────────────────────────────────────────────────────────────
   if (payment_type === "invoice") {
     try {
       if (invoiceId) {
@@ -134,9 +159,16 @@ async function confirmIOPayment(
           gateway_transaction_id: gateway_payment_id,
         }).eq("id", invoiceId);
       } else {
-        const { data: invToUpdate } = await supabaseAdmin.from("invoices")
-          .select("id").eq("user_id", user_id).eq("group_id", group_id).eq("status", "pending")
-          .order("due_date", { ascending: true }).limit(1).maybeSingle();
+        const { data: invToUpdate } = await supabaseAdmin
+          .from("invoices")
+          .select("id")
+          .eq("user_id", user_id)
+          .eq("group_id", group_id)
+          .eq("status", "pending")
+          .order("due_date", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
         if (invToUpdate) {
           await supabaseAdmin.from("invoices").update({
             status: "paid",
@@ -146,11 +178,19 @@ async function confirmIOPayment(
         }
       }
 
-    supabaseAdmin.from("payments").insert({
-      user_id, amount, method: paymentMethod || "pix", status: "paid",
-      payment_type: "invoice", group_id, transaction_code: gateway_payment_id,
-      gateway: "iopay", notes: "Fatura via PIX",
-    }).then(({ error }: any) => { if (error) console.error("[confirmIOPayment] payments error:", error); });
+      supabaseAdmin.from("payments").insert({
+        user_id,
+        amount,
+        method: paymentMethod || "pix",
+        status: "paid",
+        payment_type: "invoice",
+        group_id,
+        transaction_code: gateway_payment_id,
+        gateway: "iopay",
+        notes: "Fatura via PIX",
+      }).then(({ error }: any) => {
+        if (error) console.error("[confirmIOPayment] payments error:", error);
+      });
 
       console.log(`[confirmIOPayment] DONE invoice`);
       return { success: true };
@@ -159,411 +199,33 @@ async function confirmIOPayment(
     }
   }
 
-  if (payment_type === "entrance") {
-    try {
-      const { error } = await supabaseAdmin
-        .from("group_members")
-        .update({
-          status: "active",
-          payment_status: "entrance_paid",
-          entrance_paid_at: new Date().toISOString(),
-          entrance_payment_id: gateway_payment_id,
-          gateway_payment_id,
-          subscription_deadline: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-        })
-        .eq("group_id", group_id)
-        .eq("user_id", user_id);
-      if (error) {
-        console.error("[confirmIOPayment] group_members update error:", error);
-        const { error: upsertErr } = await supabaseAdmin
-          .from("group_members")
-          .upsert({
-            group_id, user_id,
-            status: "active",
-            payment_status: "entrance_paid",
-            entrance_paid_at: new Date().toISOString(),
-            entrance_payment_id: gateway_payment_id,
-            gateway_payment_id,
-            subscription_deadline: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-          }, { onConflict: "group_id, user_id" });
-        if (upsertErr) {
-          return { success: false, error: "group_members failed: " + upsertErr.message };
-        }
-      }
-    } catch (e: any) {
-      return { success: false, error: "group_members error: " + e.message };
-    }
-
-    supabaseAdmin.from("payments").insert({
-      user_id, amount, method: paymentMethod || "credit_card", status: "paid",
-      payment_type: "entrance", group_id, transaction_code: gateway_payment_id,
-      gateway: "iopay", notes: "Taxa de adesão",
-    }).then(({ error }: any) => { if (error) console.error("[confirmIOPayment] payments error:", error); });
-
-    await registerCouponUsage(supabaseAdmin, gateway_payment_id, user_id, "entrance");
-
-    console.log(`[confirmIOPayment] DONE entrance`);
-    return { success: true };
-  }
-
-  if (payment_type === "combined") {
-    // Combined: entrance + first subscription in one payment
-    try {
-      const { data: group } = await supabaseAdmin
-        .from("groups")
-        .select("entrance_fee, price_per_slot, service_id, name, owner_id, billing_cycle, is_official")
-        .eq("id", group_id)
-        .single();
-
-      const entranceAmount = group?.entrance_fee || 0;
-      const subscriptionAmount = group?.price_per_slot || 0;
-      const cycle = billingCycleHint || group?.billing_cycle || "monthly";
-      const days = customCycleDays || null;
-      const months = customCycleMonths || null;
-
-      // 1. Mark entrance as paid
-      await supabaseAdmin
-        .from("group_members")
-        .upsert({
-          group_id, user_id,
-          status: "active",
-          payment_status: "entrance_paid",
-          entrance_paid_at: new Date().toISOString(),
-          entrance_payment_id: gateway_payment_id,
-          gateway_payment_id,
-        }, { onConflict: "group_id, user_id" });
-
-      // 2. Record entrance payment
-      await supabaseAdmin.from("payments").insert({
-        user_id, amount: entranceAmount, method: paymentMethod || "pix", status: "paid",
-        payment_type: "entrance", group_id, transaction_code: gateway_payment_id,
-        gateway: "iopay", notes: "Taxa de adesão (pagamento combinado)",
-      });
-
-      // 3. Create/update subscription with ONLY monthly amount
-      const nextChargeAt = calculateNextChargeDate(cycle, days, months);
-
-      const { data: subInfo } = await supabaseAdmin
-        .from("user_subscriptions")
-        .select("id")
-        .eq("group_id", group_id).eq("user_id", user_id)
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
-
-      if (subInfo?.id) {
-        await supabaseAdmin
-          .from("user_subscriptions")
-          .update({
-            status: "active",
-            gateway_status: "authorized",
-            gateway_subscription_id: gateway_payment_id,
-            next_charge_at: nextChargeAt.toISOString(),
-            renewal_due_at: nextChargeAt.toISOString(),
-            billing_status: "active",
-            retry_count: 0,
-            last_charge_at: new Date().toISOString(),
-            billing_cycle: cycle,
-            payment_method: paymentMethod || null,
-            custom_cycle_days: days,
-            custom_cycle_months: months,
-            amount: subscriptionAmount,
-            ...(cardId ? { card_id: cardId } : {}),
-            ...(cardLast4 ? { card_last4: cardLast4 } : {}),
-            ...(cardBrand ? { card_brand: cardBrand } : {}),
-          })
-          .eq("id", subInfo.id);
-      } else {
-        await supabaseAdmin.from("user_subscriptions").insert({
-          user_id, group_id, service_id: group?.service_id,
-          billing_cycle: cycle, amount: subscriptionAmount,
-          status: "active", gateway: "iopay", gateway_subscription_id: gateway_payment_id,
-          payment_method: paymentMethod || null,
-          next_charge_at: nextChargeAt.toISOString(),
-          renewal_due_at: nextChargeAt.toISOString(),
-          billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
-          started_at: new Date().toISOString(),
-          custom_cycle_days: days,
-          custom_cycle_months: months,
-          ...(cardId ? { card_id: cardId } : {}),
-          ...(cardLast4 ? { card_last4: cardLast4 } : {}),
-          ...(cardBrand ? { card_brand: cardBrand } : {}),
-        });
-      }
-
-      // 4. Update member to active
-      await supabaseAdmin
-        .from("group_members")
-        .upsert({
-          group_id, user_id,
-          status: "active",
-          payment_status: "active",
-          joined_at: new Date().toISOString(),
-        }, { onConflict: "group_id, user_id" });
-
-      // 5. Record subscription payment
-      await supabaseAdmin.from("payments").insert({
-        user_id, amount: subscriptionAmount, method: paymentMethod || "subscription", status: "paid",
-        payment_type: "subscription", group_id, transaction_code: gateway_payment_id,
-        gateway: "iopay", notes: "1ª mensalidade (pagamento combinado)",
-      });
-
-      await registerCouponUsage(supabaseAdmin, gateway_payment_id, user_id, "combined");
-
-      console.log(`[confirmIOPayment] DONE combined`);
-      return { success: true };
-    } catch (e: any) {
-      console.error("[confirmIOPayment] combined error:", e);
-      return { success: false, error: "combined error: " + e.message };
-    }
-  }
-
-  // SUBSCRIPTION
-  try {
-    const { data: subInfo } = await supabaseAdmin
-      .from("user_subscriptions")
-      .select("id, billing_cycle, custom_cycle_months, custom_cycle_days, payment_method, card_id, card_last4, card_brand")
-      .eq("group_id", group_id)
-      .eq("user_id", user_id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const cycle = billingCycleHint || subInfo?.billing_cycle || "monthly";
-    const days = customCycleDays || subInfo?.custom_cycle_days || null;
-    const months = customCycleMonths || subInfo?.custom_cycle_months || null;
-    const nextChargeAt = calculateNextChargeDate(cycle, days, months);
-
-    if (subInfo?.id) {
-      const { error: subErr } = await supabaseAdmin
-        .from("user_subscriptions")
-        .update({
-          status: "active",
-          gateway_status: "authorized",
-          gateway_subscription_id: gateway_payment_id,
-          next_charge_at: nextChargeAt.toISOString(),
-          // Pagamento aprovado: a renovacao passa a ser data + ciclo. Esta e a
-          // data que a regra de 7 dias usa (ela nao anda a cada retry).
-          renewal_due_at: nextChargeAt.toISOString(),
-          billing_status: "active",
-          retry_count: 0,
-          last_charge_at: new Date().toISOString(),
-          billing_cycle: cycle,
-          payment_method: paymentMethod || subInfo?.payment_method || null,
-          custom_cycle_days: days,
-          custom_cycle_months: months,
-          ...(cardId ? { card_id: cardId } : {}),
-          ...(cardLast4 ? { card_last4: cardLast4 } : {}),
-          ...(cardBrand ? { card_brand: cardBrand } : {}),
-        })
-        .eq("id", subInfo.id);
-      if (subErr) {
-        console.error("[confirmIOPayment] subscription update error:", subErr);
-        return { success: false, error: "subscription update failed: " + subErr.message };
-      }
-      console.log(`[confirmIOPayment] subscription updated: id=${subInfo.id} cycle=${cycle} next=${nextChargeAt.toISOString()}`);
-
-      // Assinatura regularizada: o membro volta a ter acesso no grupo.
-      // (Durante a carencia ele fica 'overdue'; depois de cancelado, o
-      // pagamento refaz o vinculo.)
-      await supabaseAdmin
-        .from("group_members")
-        .update({
-          status: "active",
-          payment_status: "active",
-          left_at: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("group_id", group_id)
-        .eq("user_id", user_id);
-    } else {
-      console.error("[confirmIOPayment] No subscription found! Creating fallback...");
-      const { data: grp } = await supabaseAdmin.from("groups").select("service_id").eq("id", group_id).maybeSingle();
-      const { error: insErr } = await supabaseAdmin.from("user_subscriptions").insert({
-        user_id, group_id, service_id: grp?.service_id,
-        billing_cycle: cycle, amount,
-        status: "active", gateway: "iopay", gateway_subscription_id: gateway_payment_id,
-        payment_method: paymentMethod || null,
-        next_charge_at: nextChargeAt.toISOString(),
-        renewal_due_at: nextChargeAt.toISOString(),
-        billing_status: "active", retry_count: 0, last_charge_at: new Date().toISOString(),
-        started_at: new Date().toISOString(),
-        custom_cycle_days: days,
-        custom_cycle_months: months,
-        ...(cardId ? { card_id: cardId } : {}),
-        ...(cardLast4 ? { card_last4: cardLast4 } : {}),
-        ...(cardBrand ? { card_brand: cardBrand } : {}),
-      });
-      if (insErr) {
-        console.error("[confirmIOPayment] subscription insert error:", insErr);
-        return { success: false, error: "subscription insert failed: " + insErr.message };
-      }
-    }
-  } catch (e: any) {
-    console.error("[confirmIOPayment] subscription error:", e);
-    return { success: false, error: "subscription error: " + e.message };
-  }
-
-  // Fatura vencida do ciclo que está sendo pago: precisa ser quitada, senão
-  // continua aparecendo como pendente no painel de cobrança mesmo depois do
-  // pagamento. A fatura do próximo ciclo (vencimento futuro) fica pendente de
-  // propósito.
-  try {
-    const today = new Date().toISOString().split("T")[0];
-    const { data: dueInvoices } = await supabaseAdmin
-      .from("invoices")
-      .select("id, amount")
-      .eq("group_id", group_id)
-      .eq("user_id", user_id)
-      .eq("status", "pending")
-      .lte("due_date", today);
-
-    const due = dueInvoices || [];
-    if (due.length > 0) {
-      const paidAmount = Number(amount);
-      const dueTotal = due.reduce((sum, i) => sum + Number(i.amount || 0), 0);
-
-      // O pagamento cobre exatamente as faturas vencidas: quando a soma bate,
-      // quita todas; caso contrário, só a fatura de mesmo valor.
-      const toSettle = Math.abs(dueTotal - paidAmount) < 0.01
-        ? due
-        : due.filter((i) => Math.abs(Number(i.amount) - paidAmount) < 0.01);
-
-      for (const inv of toSettle) {
-        const { error: invErr } = await supabaseAdmin
-          .from("invoices")
-          .update({ status: "paid", paid_at: new Date().toISOString() })
-          .eq("id", inv.id);
-        if (invErr) console.error("[confirmIOPayment] invoice settle error:", invErr);
-        else console.log(`[confirmIOPayment] fatura vencida quitada: ${inv.id} (${inv.amount})`);
-      }
-    }
-  } catch (e: any) {
-    console.error("[confirmIOPayment] invoices settle exception:", e);
-  }
-
-  // group_members: update existing row, or upsert if missing — CRITICAL
-  try {
-    const { data: existingMember, error: selErr } = await supabaseAdmin
-      .from("group_members")
-      .select("id")
-      .eq("group_id", group_id)
-      .eq("user_id", user_id)
-      .maybeSingle();
-
-    if (selErr) {
-      console.error("[confirmIOPayment] group_members select error:", selErr);
-    }
-
-    if (existingMember) {
-      const { error } = await supabaseAdmin
-        .from("group_members")
-        .update({
-          status: "active",
-          payment_status: "active",
-          joined_at: new Date().toISOString(),
-        })
-        .eq("group_id", group_id)
-        .eq("user_id", user_id);
-      if (error) {
-        console.error("[confirmIOPayment] group_members update error:", error);
-        return { success: false, error: "group_members update failed: " + error.message };
-      }
-      console.log("[confirmIOPayment] group_members updated OK");
-    } else {
-      const { error: upsertErr } = await supabaseAdmin
-        .from("group_members")
-        .upsert({
-          group_id, user_id,
-          status: "active",
-          payment_status: "active",
-          joined_at: new Date().toISOString(),
-        }, { onConflict: "group_id, user_id" });
-      if (upsertErr) {
-        console.error("[confirmIOPayment] group_members upsert error:", upsertErr);
-        return { success: false, error: "group_members upsert failed: " + upsertErr.message };
-      }
-      console.log("[confirmIOPayment] group_members upsert OK");
-    }
-  } catch (e: any) {
-    console.error("[confirmIOPayment] group_members exception:", e);
-    return { success: false, error: "group_members exception: " + e.message };
-  }
-
-  // billing_cycles
-  try {
-    const { data: sub } = await supabaseAdmin
-      .from("user_subscriptions").select("id")
-      .eq("group_id", group_id).eq("user_id", user_id)
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (sub?.id) {
-      const { data: existingRows } = await supabaseAdmin
-        .from("billing_cycles").select("id")
-        .eq("subscription_id", sub.id).eq("status", "pending")
-        .order("created_at", { ascending: false }).limit(1);
-      const existing = (existingRows && existingRows[0]) || null;
-      if (!existing) {
-        const { error: bcErr } = await supabaseAdmin.from("billing_cycles").insert({
-          subscription_id: sub.id, user_id, group_id, amount,
-          charge_date: nextChargeAt.toISOString().split("T")[0],
-          status: "pending", attempt_number: 0,
-        });
-        if (bcErr) console.error("[confirmIOPayment] billing_cycles error:", bcErr);
-      }
-    }
-  } catch (e) { console.error("[confirmIOPayment] billing_cycles exception:", e); }
-
-  // Fire-and-forget: payments (with savings tracking), events
-  const savingsData = await getSavingsData(supabaseAdmin, group_id, gateway_payment_id, amount);
-  supabaseAdmin.from("payments").insert({
-    user_id, amount,
-    official_price: savingsData.official_price,
-    paid_amount: savingsData.paid_amount,
-    method: "credit_card", status: "paid",
-    payment_type: "subscription", group_id, transaction_code: gateway_payment_id,
-    gateway: "iopay", notes: "Assinatura",
-  }).then(({ error }: any) => { if (error) console.error("[confirmIOPayment] payments error:", error); });
-
-  // Fetch user and group names for the event message
-  Promise.all([
-    supabaseAdmin.from("users").select("name").eq("id", user_id).maybeSingle(),
-    supabaseAdmin.from("groups").select("name").eq("id", group_id).maybeSingle(),
-  ]).then(([{ data: usr }, { data: grp }]) => {
-    const userName = usr?.name || "Usuário";
-    const groupName = grp?.name || "Grupo";
-    supabaseAdmin.from("platform_events").insert({
-      event_type: "payment", title: "Pagamento confirmado",
-      message: `${userName} confirmou pagamento de R$ ${amount.toFixed(2)} no grupo "${groupName}".`,
-      metadata: JSON.stringify({ user_id, group_id, amount, payment_type, gateway: "iopay", transaction_id: gateway_payment_id, user_name: usr?.name, group_name: grp?.name }),
-      created_by: user_id,
-    }).then(({ error }: any) => { if (error) console.error("[confirmIOPayment] event error:", error); });
-  }).catch(e => {
-    console.error("[confirmIOPayment] event name lookup error:", e);
-    supabaseAdmin.from("platform_events").insert({
-      event_type: "payment", title: "Pagamento confirmado",
-      message: `Pagamento de R$ ${amount.toFixed(2)} confirmado.`,
-      metadata: JSON.stringify({ user_id, group_id, amount, payment_type, gateway: "iopay", transaction_id: gateway_payment_id }),
-      created_by: user_id,
-    }).then(({ error }: any) => { if (error) console.error("[confirmIOPayment] event fallback error:", error); });
+  // ── ADESÃO / ASSINATURA ───────────────────────────────────────────────────
+  //
+  // `confirmPayment` já faz: assinatura ativa, fatura vencida quitada,
+  // vínculo no grupo, linha em `payments`, `billing_cycles`, eventos no
+  // painel, e os DOIS e-mails do cliente ("recebemos seu pagamento" e "você
+  // entrou no grupo").
+  const result = await confirmPayment({
+    gateway: "iopay",
+    group_id,
+    user_id,
+    payment_type,
+    amount,
+    status: "approved",
+    gateway_payment_id,
+    payment_method: paymentMethod || "pix",
+    billing_cycle: billingCycleHint || null,
+    custom_cycle_days: customCycleDays || null,
+    custom_cycle_months: customCycleMonths || null,
   });
 
-  // Member joined event (fire-and-forget)
-  Promise.all([
-    supabaseAdmin.from("groups").select("name").eq("id", group_id).maybeSingle(),
-    supabaseAdmin.from("users").select("name").eq("id", user_id).maybeSingle(),
-  ]).then(([{ data: grp }, { data: usr }]) => {
-    supabaseAdmin.from("platform_events").insert({
-      event_type: "member_joined",
-      title: "Membro ingressou no grupo",
-      message: `${usr?.name || user_id} ingressou no grupo "${grp?.name || group_id}".`,
-      metadata: JSON.stringify({ user_id, group_id, amount, gateway: "iopay" }),
-      created_by: user_id,
-    }).then(({ error }: any) => { if (error) console.error("[confirmIOPayment] member_joined event error:", error); });
-  }).catch(e => console.error("[confirmIOPayment] member_joined lookup error:", e));
+  if (!result?.success) {
+    console.error(
+      `[confirmIOPayment] confirmPayment falhou (${payment_type}): ${result?.error}`,
+    );
+  }
 
-  // Registrar cupom APÓS pagamento confirmado
-  await registerCouponUsage(supabaseAdmin, gateway_payment_id, user_id, "subscription");
-
-  console.log(`[confirmIOPayment] DONE subscription`);
-  return { success: true };
+  return { success: !!result?.success, error: result?.error };
 }
 
 // ── Helper: registrar uso de cupom APÓS confirmação de pagamento ──────────────
@@ -940,29 +602,48 @@ export default {
       const paymentType = await resolvePaymentType(supabaseAdmin, bodyPaymentType, group_id, user_id, member?.payment_status);
       console.log(`[check-iopay-tx] STEP 6: resolved_type=${paymentType} sub_status=${sub?.status} member_payment=${member?.payment_status}`);
 
-      // Uma assinatura vencida continua "active" no banco: o status só muda
-      // quando o acesso é encerrado de vez. Sem esta checagem, a renovação de
-      // uma assinatura vencida era tratada como "já confirmada" e o
-      // next_charge_at nunca avançava — o usuário pagava e continuava
-      // vencido, sem acesso e sem fatura quitada.
-      const renewalRef = sub?.next_charge_at || sub?.expires_at || null;
-      const renewalIsOverdue = renewalRef
-        ? new Date(renewalRef).getTime() < Date.now()
-        : false;
+      // ── O PAGAMENTO JÁ FOI APLICADO? ────────────────────────────────────
+      //
+      // A pergunta certa é "ESSA transação já foi registrada em `payments`",
+      // e NÃO "o vínculo do membro parece ativo".
+      //
+      // O checkout cria o vínculo em `group_members` com
+      // `payment_status = 'active'` ANTES do pagamento (é assim que o grupo
+      // reserva a vaga). Então olhar só o vínculo dava "já confirmado" para
+      // um pagamento que NUNCA foi aplicado.
+      //
+      // Não é teoria: em 01/11/2026 a Fran pagou R$ 59,40 no grupo "Netflix
+      // C/ Anúncio", o gateway aprovou e o polling respondeu
+      // `confirmed: true` sem liberar nada — o front mostrou a tela de
+      // "pagamento aprovado" e a pessoa ficou fora do grupo, sem e-mail.
+      //
+      // E o efeito era o pior dos dois: o polling parava de tentar. Agora,
+      // quando a confirmação falha, o próximo round do polling TENTA DE
+      // NOVO (a cada 10s, por 10 minutos).
+      let paymentAlreadyApplied = false;
+      try {
+        const { data: paidRows } = await supabaseAdmin
+          .from("payments")
+          .select("id, payment_type")
+          .eq("transaction_code", transaction_id)
+          .eq("status", "paid")
+          .limit(5);
 
-      // Already confirmed in DB?
-      // For subscription: only consider active if the SUBSCRIPTION itself is active, not just the entrance
-      // For entrance: check if entrance is already paid
-      let alreadyConfirmedInDB = false;
-      if (paymentType === "subscription") {
-        alreadyConfirmedInDB = sub?.status === "active" && member?.payment_status === "active" && !renewalIsOverdue;
-      } else if (paymentType === "entrance") {
-        alreadyConfirmedInDB = member?.payment_status === "entrance_paid" || member?.payment_status === "active";
-      } else {
-        alreadyConfirmedInDB = sub?.status === "active" || member?.payment_status === "active";
+        const paidTypes = (paidRows || []).map((p: any) => p.payment_type);
+        paymentAlreadyApplied =
+          paymentType === "combined"
+            ? paidTypes.includes("entrance") && paidTypes.includes("subscription")
+            : paidTypes.includes(paymentType);
+
+        console.log(
+          `[check-iopay-tx] PAGAMENTO JÁ APLICADO? tx=${transaction_id} ` +
+          `tipos_pagos=[${paidTypes.join(",")}] tipo=${paymentType} -> ${paymentAlreadyApplied}`,
+        );
+      } catch (paymentsErr: any) {
+        console.error("[check-iopay-tx] falha ao ler payments:", paymentsErr);
       }
-      if (alreadyConfirmedInDB) {
-        console.log(`[check-iopay-tx] ALREADY CONFIRMED: sub=${sub?.status} member=${member?.payment_status}`);
+
+      if (paymentAlreadyApplied) {
         return Response.json({
           transaction_id, status, confirmed: true,
           amount: pollAmount, payment_method,

@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Loader2, Shield, ChevronLeft, CreditCard, CheckCircle, ScrollText, Clock, QrCode, Copy, RotateCcw, AlertTriangle, Plus, Eye, EyeOff, Tag, X } from 'lucide-react';
+import { Loader2, Shield, ChevronLeft, ChevronRight, CreditCard, CheckCircle, ScrollText, Clock, QrCode, Copy, RotateCcw, AlertTriangle, Plus, Eye, EyeOff, Tag, X } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
+import { useGatewayPorMetodo } from '../../hooks/useGatewayPorMetodo';
 import { supabase } from '../../lib/supabase';
 import { reportGoogleAdsConversion } from '../../lib/googleAds';
 import IOPayCardForm from '../../components/IOPayCardForm';
+import GroupRules from '../../components/GroupRules';
 import jsQR from 'jsqr';
+import { QRCodeCanvas } from 'qrcode.react';
 import '../../components/IOPayCardForm.css';
 import './Checkout.css';
 
@@ -68,13 +71,145 @@ const GATEWAY_NAMES = {
   asaas: 'Asaas',
   iopay: 'IOPay',
   pagarme: 'Pagar.me',
+  woovi: 'Woovi',
 };
 
 const GATEWAYS_REDIRECT = ['mercadopago', 'stripe'];
-const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe'];
+const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe', 'woovi'];
 const GATEWAYS_WITH_CARD_FORM = ['iopay', 'pagarme'];
+// Gateways que aceitam SOMENTE Pix (não temos formulário de cartão na Woovi
+// ainda). Neles o seletor "Cartão | PIX" mostra só o PIX.
+const GATEWAYS_PIX_ONLY = ['woovi'];
+// Gateways cujo backend aceita `payment_type: 'combined'` (adesão + 1ª
+// mensalidade na MESMA transação). Nos outros o fluxo continua em 2 etapas
+// (adesão e depois assinatura): sem suporte no gateway, mandar 'combined'
+// cobraria só a mensalidade e a taxa de adesão ficaria de fora.
+const GATEWAYS_COMBINED = ['iopay', 'mercadopago', 'woovi'];
 
-function Checkout() {
+/**
+ * Endpoint de polling do status do pagamento.
+ *
+ * Cada gateway tem a sua própria function de consulta. A Woovi usa
+ * `check-woovi-tx`, que sabe consultar tanto uma cobrança avulsa (charge)
+ * quanto um mandate de Pix Automático (subscription) — no fluxo de
+ * assinatura, o `transaction_id` é o id do mandate, não o de uma cobrança.
+ */
+function pollEndpointFor(gateway) {
+  return gateway === 'woovi' ? 'check-woovi-tx' : 'check-iopay-tx';
+}
+
+/**
+ * QR Code do Pix, em três fontes (nesta ordem):
+ *
+ *   1. `pix_qrcode`     — PNG em base64 (alguns gateways devolvem assim);
+ *   2. `pix_qrcode_url` — URL da imagem (a Woovi devolve o `qrCodeImage`);
+ *   3. `pix_copy_paste` — o código EMV. Aqui o QR é GERADO no browser.
+ *
+ * O 3º caso é o do Pix Automático da Woovi: o mandate não vem com imagem,
+ * só com o código EMV. Sem isso o usuário veria apenas um ícone de QR e
+ * teria que copiar o código à mão.
+ */
+function PixQrCode({ result, size = 200 }) {
+  if (!result) return null;
+
+  if (result.pix_qrcode) {
+    return <img src={`data:image/png;base64,${result.pix_qrcode}`} alt="QR Code PIX" className="pix-qrcode" />;
+  }
+  if (result.pix_qrcode_url) {
+    return <img src={result.pix_qrcode_url} alt="QR Code PIX" className="pix-qrcode" />;
+  }
+  if (result.pix_copy_paste) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+        <QRCodeCanvas
+          value={result.pix_copy_paste}
+          size={size}
+          level="M"
+          style={{ borderRadius: '8px', background: '#fff', padding: '8px' }}
+        />
+      </div>
+    );
+  }
+  return <QrCode size={48} style={{ margin: '0 auto 1rem', color: 'var(--primary)' }} />;
+}
+
+/**
+ * Bloco do mandate de Pix Automático (Woovi).
+ *
+ * No fluxo "adesão + 1ª mensalidade", a Woovi devolve DOIS artefatos:
+ *
+ *   1. o QR de PAGAMENTO — a cobrança de agora (adesão + 1º ciclo);
+ *   2. o QR do MANDATE — o pagador escaneia para AUTORIZAR a cobrança
+ *      automática das renovações. Este segundo QR não cobra nada no ato.
+ *
+ * Quando o mandate é o próprio meio de pagamento (fluxo só de assinatura, na
+ * Jornada 3 da Woovi), o backend devolve `separate_qr: false` e este bloco
+ * não aparece: o QR que o cliente escaneia já paga o 1º ciclo e já arma a
+ * recorrência.
+ */
+function PixAutomaticBox({ recurrence }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!recurrence?.enabled || !recurrence?.separate_qr || !recurrence?.copy_paste) {
+    return null;
+  }
+
+  const copiar = () => {
+    navigator.clipboard.writeText(recurrence.copy_paste);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const quando = recurrence.first_charge_at
+    ? new Date(recurrence.first_charge_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })
+    : null;
+
+  return (
+    <div className="iopay-pix-result" style={{ marginTop: '1.25rem' }}>
+      <h3>Autorize a cobrança automática</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+        Escaneie o QR abaixo no aplicativo do seu banco para autorizar o
+        <strong> Pagamento Automático</strong>. Com isso, as próximas mensalidades
+        {quando ? ` (a partir de ${quando})` : ''} são cobradas sozinhas, sem você
+        precisar pagar de novo. Autorizar não cobra nada agora.
+      </p>
+
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '0.75rem' }}>
+        <QRCodeCanvas
+          value={recurrence.copy_paste}
+          size={200}
+          level="M"
+          style={{ borderRadius: '8px', background: '#fff', padding: '8px' }}
+        />
+      </div>
+
+      <div className="pix-copy-paste">{recurrence.copy_paste}</div>
+      <button className="btn btn-outline btn-full" onClick={copiar} style={{ marginBottom: '0.5rem' }}>
+        {copied ? <><CheckCircle size={14} /> Copiado!</> : <><Copy size={14} /> Copiar Código do Pagamento Automático</>}
+      </button>
+
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+        Sem essa autorização a sua assinatura continua válida — mas a renovação
+        precisará ser feita manualmente.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * CHECKOUT
+ *
+ * `variante`:
+ *   'v1' → o checkout de produção (é o que está no ar e funciona). A
+ *          divisão por método NÃO se aplica aqui, a não ser que o admin
+ *          troque o escopo para "todos" de propósito.
+ *   'v2' → o checkout de TESTE (/v2/checkout/:groupSlug). É onde a
+ *          integração Woovi é testada sem mexer no V1.
+ *
+ * O resto do componente é o mesmo nos dois: a única coisa que muda é de
+ * onde vem o gateway (o padrão, ou o do método escolhido).
+ */
+function CheckoutPagina({ variante }) {
   const { groupSlug } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -93,11 +228,14 @@ function Checkout() {
   // Confirmação de que a taxa de adesão foi paga, checada direto em payments.
   // Complementa group_members.payment_status quando o webhook atrasa.
   const [entrancePaidState, setEntrancePaid] = useState(false);
-  const [activeGateway, setActiveGateway] = useState('mercadopago');
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [gatewayResult, setGatewayResult] = useState(null);
   const [gatewayWaiting, setGatewayWaiting] = useState(false);
   const [pollingTimedOut, setPollingTimedOut] = useState(false);
+  // O gateway aprovou mas a liberação no grupo falhou. Guardamos a mensagem
+  // para mostrar quando o polling expira — durante o polling ainda pode se
+  // resolver sozinho (a cada 10s tentamos de novo).
+  const [confirmErrorMsg, setConfirmErrorMsg] = useState(null);
   const [pollingElapsed, setPollingElapsed] = useState(0);
   const [verifying, setVerifying] = useState(false);
   const [pixCopyDecoded, setPixCopyDecoded] = useState(null);
@@ -115,6 +253,10 @@ function Checkout() {
   const [couponCode, setCouponCode] = useState('');
   const [couponResult, setCouponResult] = useState(null);
   const [validatingCoupon, setValidatingCoupon] = useState(false);
+  // Passo 1 (adesão): a pessoa já leu a explicação e clicou em "Próximo".
+  // Só existe no fluxo de pagamento ÚNICO — é o que elimina o segundo
+  // pagamento (adesão separada + assinatura).
+  const [introAdesao, setIntroAdesao] = useState(false);
   const [couponError, setCouponError] = useState('');
   const [paymentSuccess, setPaymentSuccess] = useState(null);
   const [testimonialRewardNotice, setTestimonialRewardNotice] = useState(null);
@@ -209,19 +351,67 @@ function Checkout() {
     return () => { cancelled = true; };
   }, [groupSlug, localDetails]);
 
-  // Fetch active gateway
-  useEffect(() => {
-    const fetchGateway = async () => {
-      const { data } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'active_gateway')
-        .maybeSingle();
-      if (data?.value) setActiveGateway(data.value);
-    };
-    fetchGateway();
-  }, []);
+  // ── GATEWAY: PADRÃO + DIVISÃO POR MÉTODO ────────────────────────────────
+  //
+  // O gateway pode ser UM só (o de sempre, `active_gateway`) ou DOIS, um para
+  // o PIX e outro para o cartão — por exemplo, Woovi (Pix Automático) no PIX
+  // e IO Pay no cartão de crédito.
+  //
+  // Com a divisão DESLIGADA (padrão), `activeGateway` é o gateway de sempre
+  // e o checkout se comporta exatamente como hoje.
+  const cfgGateway = useGatewayPorMetodo(variante);
 
+  // O gateway que ATENDE o método escolhido agora. É este valor que aparece
+  // na tela ("via Woovi") e que decide o formulário (cartão ou QR).
+  //
+  // No checkout V1 isso é SEMPRE o gateway padrão (o de sempre). No V2, é o
+  // gateway configurado para o método — se a divisão estiver ligada.
+  const activeGateway = cfgGateway.gatewayDoMetodo(paymentMethod);
+
+  // Os gateways de CADA método — usados para decidir o que OFERECER.
+  // (com a divisão desligada, os dois são o gateway de sempre)
+  const gatewayDoPix = cfgGateway.gatewayDoMetodo('pix');
+  const gatewayDoCard = cfgGateway.gatewayDoMetodo('card');
+
+  // O que o seletor de método pode oferecer.
+  //
+  // Estes dois NÃO podem usar o `activeGateway`: com a divisão ligada, o
+  // gateway do método escolhido muda conforme o clique, e o botão "Cartão"
+  // sumiria justamente quando o usuário clicasse em PIX (a Woovi é
+  // Pix-only). A disponibilidade é uma propriedade do PAR de gateways
+  // configurado, não do método selecionado.
+  const pixDisponivel = GATEWAYS_WITH_PIX.includes(gatewayDoPix);
+  const cartaoDisponivel = !GATEWAYS_PIX_ONLY.includes(gatewayDoCard);
+
+  // O seletor "Cartão | PIX" aparece quando existe um caminho de pagamento
+  // para mais de um método.
+  //
+  //   - SEM divisão: quem decide é o gateway de sempre (hoje o seletor
+  //     aparece nos fluxos da IO Pay);
+  //   - COM divisão: quem decide é o PAR configurado (PIX + cartão) — e é
+  //     justamente aí que o botão "Cartão" precisa continuar aparecendo
+  //     mesmo com o PIX selecionado, porque a Woovi é Pix-only mas o cartão
+  //     continua na IO Pay.
+  const mostrarSeletorMetodo = cfgGateway.usarSplit
+    ? pixDisponivel || cartaoDisponivel
+    : activeGateway === 'iopay';
+
+  // Cada método precisa ser atendido pelo gateway daquele método:
+  //
+  //   - a Woovi (Pix Automático) só aceita PIX — se o gateway do método
+  //     escolhido não suporta o método, o seletor troca para o outro;
+  //   - com a divisão desligada, o gateway é o de sempre: vale a regra de
+  //     hoje (forçar PIX quando a Woovi é a gateway ativa).
+  useEffect(() => {
+    if (!cfgGateway.carregado) return;
+    if (paymentMethod === 'card' && GATEWAYS_PIX_ONLY.includes(activeGateway)) {
+      setPaymentMethod('pix');
+      return;
+    }
+    if (paymentMethod === 'pix' && !GATEWAYS_WITH_PIX.includes(activeGateway)) {
+      setPaymentMethod('card');
+    }
+  }, [cfgGateway.carregado, activeGateway, paymentMethod]);
   // Auto-apply testimonial reward if available
   useEffect(() => {
     if (!user || !details?.group) return;
@@ -458,7 +648,12 @@ function Checkout() {
       const accessToken = sessionData?.session?.access_token;
       if (!accessToken) throw new Error('Você precisa estar logado.');
 
-      const gwPaymentMethod = GATEWAYS_WITH_PIX.includes(activeGateway) ? paymentMethod : undefined;
+      // Com a DIVISÃO por método, o método SEMPRE precisa ir no body: é ele que diz
+      // ao backend qual gateway usar. Sem divisão, vale a regra de hoje.
+      const gwPaymentMethod =
+        (cfgGateway.usarSplit || GATEWAYS_WITH_PIX.includes(activeGateway))
+          ? paymentMethod
+          : undefined;
 
       const payload = {
         group_id: details.group.id,
@@ -467,6 +662,10 @@ function Checkout() {
         reason: `Taxa de Adesão - ${service?.name || service?.full_name}`,
         payment_method: gwPaymentMethod,
         gateway: activeGateway,
+        // Diz ao backend que ESTA cobrança é de um checkout que aceita a
+        // divisão por método (o V2). No V1 a flag não vai — então o
+        // checkout de produção nunca é afetado.
+        split_gateway: variante === 'v2',
       };
 
       if (couponResult?.valid) {
@@ -507,7 +706,7 @@ function Checkout() {
         paymentTypeRef.current = 'entrance';
         setGatewayResult(data);
         setGatewayWaiting(true);
-        startPaymentPolling('entrance');
+        startPaymentPolling('entrance', data.gateway);
         setProcessing(false);
         return;
       }
@@ -551,7 +750,12 @@ function Checkout() {
       const { group: grp, service: svc } = details;
       const cycleMonths = monthsForCycle(selectedCycle, grp);
       const cycleDays = daysForCycle(selectedCycle, grp);
-      const gwPaymentMethod = GATEWAYS_WITH_PIX.includes(activeGateway) ? paymentMethod : undefined;
+      // Com a DIVISÃO por método, o método SEMPRE precisa ir no body: é ele que diz
+      // ao backend qual gateway usar. Sem divisão, vale a regra de hoje.
+      const gwPaymentMethod =
+        (cfgGateway.usarSplit || GATEWAYS_WITH_PIX.includes(activeGateway))
+          ? paymentMethod
+          : undefined;
 
       const entranceAmount = hasEntranceFee ? Number(group.entrance_fee) : 0;
       const subscriptionAmount = Number(group.price_per_slot) * cycleMonths;
@@ -571,6 +775,10 @@ function Checkout() {
         force_new_plan: true,
         payment_method: gwPaymentMethod,
         gateway: activeGateway,
+        // Diz ao backend que ESTA cobrança é de um checkout que aceita a
+        // divisão por método (o V2). No V1 a flag não vai — então o
+        // checkout de produção nunca é afetado.
+        split_gateway: variante === 'v2',
       };
 
       if (couponResult?.valid) {
@@ -611,7 +819,7 @@ function Checkout() {
         paymentTypeRef.current = 'combined';
         setGatewayResult(data);
         setGatewayWaiting(true);
-        startPaymentPolling('combined');
+        startPaymentPolling('combined', data.gateway);
         setProcessing(false);
         return;
       }
@@ -655,7 +863,12 @@ function Checkout() {
       const { group: grp, service: svc } = details;
       const cycleMonths = monthsForCycle(selectedCycle, grp);
       const cycleDays = daysForCycle(selectedCycle, grp);
-      const gwPaymentMethod = GATEWAYS_WITH_PIX.includes(activeGateway) ? paymentMethod : undefined;
+      // Com a DIVISÃO por método, o método SEMPRE precisa ir no body: é ele que diz
+      // ao backend qual gateway usar. Sem divisão, vale a regra de hoje.
+      const gwPaymentMethod =
+        (cfgGateway.usarSplit || GATEWAYS_WITH_PIX.includes(activeGateway))
+          ? paymentMethod
+          : undefined;
 
       const payload = {
         group_id: grp.id,
@@ -671,6 +884,10 @@ function Checkout() {
         force_new_plan: true,
         payment_method: gwPaymentMethod,
         gateway: activeGateway,
+        // Diz ao backend que ESTA cobrança é de um checkout que aceita a
+        // divisão por método (o V2). No V1 a flag não vai — então o
+        // checkout de produção nunca é afetado.
+        split_gateway: variante === 'v2',
       };
 
       if (couponResult?.valid) {
@@ -711,7 +928,7 @@ function Checkout() {
         paymentTypeRef.current = 'subscription';
         setGatewayResult(data);
         setGatewayWaiting(true);
-        startPaymentPolling('subscription');
+        startPaymentPolling('subscription', data.gateway);
         setProcessing(false);
         return;
       }
@@ -820,7 +1037,7 @@ function Checkout() {
     if (autoVerifyTimerRef.current) { clearTimeout(autoVerifyTimerRef.current); autoVerifyTimerRef.current = null; }
   };
 
-  const startPaymentPolling = (pollPaymentType = 'entrance') => {
+  const startPaymentPolling = (pollPaymentType = 'entrance', pollGateway = null) => {
     const startTime = Date.now();
     const MAX_WAIT = 10 * 60 * 1000;
     const POLL_INTERVAL = 10 * 1000;
@@ -843,7 +1060,7 @@ function Checkout() {
         const txId = paymentTxRef.current;
         if (!accessToken || !txId) return;
 
-        const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-iopay-tx`, {
+        const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${pollEndpointFor(pollGateway)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -883,10 +1100,21 @@ function Checkout() {
         if (txResult.confirmed) {
           clearInterval(interval);
           stopElapsedTimer();
+          // `subscriptionAmount` é o valor do CICLO (preço mensal x meses).
+          // Usar o preço mensal aqui mostrava um total menor que o cobrado.
           const amount = pollPaymentType === 'entrance' ? Number(group.entrance_fee) : 
-                         pollPaymentType === 'combined' ? Number(group.entrance_fee) + Number(group.price_per_slot) : Number(group.price_per_slot);
+                         pollPaymentType === 'combined' ? Number(group.entrance_fee) + subscriptionAmount : subscriptionAmount;
           handlePaymentSuccess(pollPaymentType, amount);
           return;
+        }
+
+        // O gateway aprovou mas a liberação no grupo falhou. O polling
+        // CONTINUA (a cada 10s tentamos de novo) — mas guardamos a mensagem
+        // para explicar o cliente quando a espera acabar, em vez de deixá-lo
+        // no vazio achando que o pagamento foi perdido.
+        if (txResult.confirm_error) {
+          console.warn('[Checkout] Pagamento aprovado, liberação pendente:', txResult.confirm_error);
+          setConfirmErrorMsg(txResult.confirm_error);
         }
 
         // Direct DB fallback: check if payment already confirmed
@@ -900,7 +1128,7 @@ function Checkout() {
           if (memberCheck?.payment_status === 'entrance_paid' || memberCheck?.payment_status === 'active') {
             clearInterval(interval);
             stopElapsedTimer();
-            handlePaymentSuccess(pollPaymentType, Number(group.entrance_fee) + (pollPaymentType === 'combined' ? Number(group.price_per_slot) : 0));
+            handlePaymentSuccess(pollPaymentType, Number(group.entrance_fee) + (pollPaymentType === 'combined' ? subscriptionAmount : 0));
             return;
           }
         } else {
@@ -1009,13 +1237,14 @@ function Checkout() {
           clearInterval(interval);
           stopElapsedTimer();
           const amount = paymentType === 'entrance' ? Number(group.entrance_fee) : 
-                         paymentType === 'combined' ? Number(group.entrance_fee) + Number(group.price_per_slot) : Number(group.price_per_slot);
+                         paymentType === 'combined' ? Number(group.entrance_fee) + subscriptionAmount : subscriptionAmount;
           handlePaymentSuccess(paymentType, amount);
           return;
         }
 
         if (txResult.confirm_error) {
           console.error('[Checkout] Confirm error from backend:', txResult.confirm_error);
+          setConfirmErrorMsg(txResult.confirm_error);
           clearInterval(interval);
           stopElapsedTimer();
           setGatewayWaiting(false);
@@ -1034,7 +1263,7 @@ function Checkout() {
           if (memberCheck?.payment_status === 'entrance_paid' || memberCheck?.payment_status === 'active') {
             clearInterval(interval);
             stopElapsedTimer();
-            handlePaymentSuccess(paymentType, Number(group.entrance_fee) + (paymentType === 'combined' ? Number(group.price_per_slot) : 0));
+            handlePaymentSuccess(paymentType, Number(group.entrance_fee) + (paymentType === 'combined' ? subscriptionAmount : 0));
             return;
           }
         } else {
@@ -1131,7 +1360,7 @@ function Checkout() {
       const customDays = daysForCycle(selectedCycle, group) || null;
       const customMonths = selectedCycle === 'custom' ? (group.custom_cycle_months || null) : null;
 
-      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-iopay-tx`, {
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${pollEndpointFor(gatewayResult?.gateway)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1160,7 +1389,7 @@ function Checkout() {
       if (txResult.confirmed) {
         setPollingTimedOut(false);
         const amount = pt === 'entrance' ? Number(group.entrance_fee) : 
-                       pt === 'combined' ? Number(group.entrance_fee) + Number(group.price_per_slot) : Number(group.price_per_slot);
+                       pt === 'combined' ? Number(group.entrance_fee) + subscriptionAmount : subscriptionAmount;
         handlePaymentSuccess(pt, amount);
         return;
       }
@@ -1329,7 +1558,10 @@ function Checkout() {
             {group.rules && (
               <div className="checkout-rules">
                 <ScrollText size={18} />
-                <div><strong>Regras do grupo</strong><p>{group.rules}</p></div>
+                <div>
+                  <strong>Regras do grupo</strong>
+                  <GroupRules rules={group.rules} />
+                </div>
               </div>
             )}
             <div className="summary-row"><span>Preço mensal</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
@@ -1358,6 +1590,30 @@ function Checkout() {
 
   const entrancePaid = hasEntranceFee && (entrancePaidState || memberStatus?.payment_status === 'entrance_paid' || memberStatus?.payment_status === 'awaiting_subscription' || memberStatus?.payment_status === 'active');
   const entranceExpired = hasEntranceFee && (memberStatus?.payment_status === 'expired' || memberStatus?.payment_status === 'overdue' || memberStatus?.payment_status === 'cancelled');
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FLUXO DE PAGAMENTO ÚNICO (adesão + 1ª mensalidade na mesma cobrança)
+  //
+  // Antes eram DOIS pagamentos: a taxa de adesão e, depois, a assinatura.
+  // Muita gente pagava a taxa, achava que já tinha pago tudo e não voltava
+  // para o segundo passo (e a taxa não voltava). Agora a etapa 1 é SÓ a
+  // explicação da adesão e a etapa 2 cobra as duas coisas de UMA VEZ.
+  //
+  // A taxa continua sendo ÚNICA: o que vira recorrência é o valor do ciclo
+  // (preço mensal x meses), nunca a taxa de adesão.
+  //
+  // Só vale para os gateways que aceitam `payment_type: 'combined'` — nos
+  // outros (asaas, pagarme, stripe) o fluxo antigo em 2 etapas continua.
+  // ─────────────────────────────────────────────────────────────────────────
+  const gatewaySuportaCombinado = GATEWAYS_COMBINED.includes(activeGateway);
+  const usoFluxoUnico = hasEntranceFee && gatewaySuportaCombinado;
+  const pagamentoUnico = usoFluxoUnico && !entrancePaid && !entranceExpired;
+
+  // Handler e valor cobrados na tela de pagamento. No fluxo único é a
+  // COMBINAÇÃO (adesão + 1ª mensalidade na mesma transação); nos demais, só
+  // a assinatura. As telas que não têm taxa de adesão continuam iguais.
+  const iniciarPagamento = pagamentoUnico ? handleCombinedPayment : handleSubscriptionPayment;
+  const valorCobrado = pagamentoUnico ? entranceAmount + finalSubscriptionAmount : finalSubscriptionAmount;
 
   const handleResetPayment = async () => {
     try {
@@ -1472,9 +1728,89 @@ function Checkout() {
   }
 
   // ============================================
-  // STEP 1: Mostrar pagamento da taxa de entrada
+  // STEP 1 (pagamento único): SÓ a explicação da taxa de adesão
   // ============================================
-  if (hasEntranceFee && !entrancePaid && !entranceExpired) {
+  // Aqui NÃO acontece cobrança nenhuma. O pagamento (adesão + 1ª mensalidade)
+  // acontece na etapa 2, em UMA transação só — é isso que elimina o segundo
+  // pagamento, que era onde a maioria das pessoas parava.
+  if (pagamentoUnico && !introAdesao) {
+    return (
+      <div className="fade-in checkout-page">
+        <button onClick={() => navigate(-1)} className="back-btn">
+          <ChevronLeft size={18} /> Voltar
+        </button>
+        <div className="page-header">
+          <h1>Passo 1 de 2 — Taxa de Adesão</h1>
+          <p>Entenda como funciona a entrada no grupo. O pagamento é feito em uma única cobrança, na próxima etapa.</p>
+        </div>
+
+        <div className="checkout-grid checkout-simple">
+          <div className="checkout-summary">
+            <h3>Resumo</h3>
+            <div className="summary-item summary-service">
+              <div className="summary-icon" style={{ backgroundColor: service?.color }}>{service?.icon}</div>
+              <div><h4>{service?.full_name}</h4><p>{group.name}{group.plan_type ? ` • ${group.plan_type}` : group.plan_type_custom ? ` • ${group.plan_type_custom}` : ''}</p></div>
+            </div>
+
+            <div className="entrance-fee-highlight">
+              <div className="entrance-fee-header">
+                <span className="entrance-fee-icon">!</span>
+                <strong>Taxa de Adesão: {formatCurrency(entranceAmount)}</strong>
+              </div>
+              <p className="entrance-fee-desc">Valor único, cobrado junto com a primeira mensalidade. Você paga tudo em uma cobrança só.</p>
+            </div>
+
+            <div className="adesao-info-box">
+              <h4>O que é a Taxa de Adesão?</h4>
+              <p>A Taxa de Adesão é um pagamento único cobrado pela plataforma para você ingressar neste grupo e concluir sua participação.</p>
+              <ul className="adesao-info-list">
+                <li>Ela é cobrada apenas uma única vez, na entrada no grupo.</li>
+                <li>Ela NÃO faz parte da mensalidade e não entra na sua assinatura recorrente.</li>
+                <li>A partir do próximo mês você paga somente a mensalidade da assinatura.</li>
+                <li>Na próxima etapa você vê o total (adesão + 1ª mensalidade) e paga em uma única cobrança.</li>
+              </ul>
+            </div>
+
+            <div className="payment-flow-steps">
+              <div className="payment-step active">
+                <div className="step-number">1</div>
+                <span>Entender a adesão</span>
+              </div>
+              <div className="payment-step-line" />
+              <div className="payment-step">
+                <div className="step-number">2</div>
+                <span>Pagamento único</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="checkout-payment">
+            <div className="payment-provider">
+              <div className="provider-badge"><Shield size={28} /></div>
+              <h3>Uma única cobrança</h3>
+              <p>Na próxima etapa você paga a taxa de adesão e a primeira mensalidade juntas — sem segunda tela de pagamento.</p>
+            </div>
+
+            <div className="payment-buttons">
+              <button
+                className="btn btn-primary btn-full btn-lg"
+                onClick={() => setIntroAdesao(true)}
+              >
+                <><ChevronRight size={18} /> Continuar para o pagamento</>
+              </button>
+            </div>
+            <p className="secure-note"><Shield size={14} /> Você confere o valor total antes de pagar</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================
+  // STEP 1 (fluxo antigo — gateway sem suporte a 'combined'):
+  // Mostrar pagamento da taxa de entrada
+  // ============================================
+  if (hasEntranceFee && !entrancePaid && !entranceExpired && !pagamentoUnico) {
     return (
       <div className="fade-in checkout-page">
         <button onClick={() => navigate(-1)} className="back-btn">
@@ -1555,13 +1891,7 @@ function Checkout() {
           <div className="checkout-payment">
             {gatewayResult?.gateway && (gatewayResult?.pix_copy_paste || gatewayResult?.pix_qrcode_url || gatewayResult?.pix_qrcode) ? (
               <div className="iopay-pix-result">
-                {gatewayResult.pix_qrcode && (
-                  <img src={`data:image/png;base64,${gatewayResult.pix_qrcode}`} alt="QR Code PIX" className="pix-qrcode" />
-                )}
-                {!gatewayResult.pix_qrcode && gatewayResult.pix_qrcode_url && (
-                  <img src={gatewayResult.pix_qrcode_url} alt="QR Code PIX" className="pix-qrcode" />
-                )}
-                {!gatewayResult.pix_qrcode && !gatewayResult.pix_qrcode_url && <QrCode size={48} style={{ margin: '0 auto 1rem', color: 'var(--primary)' }} />}
+                <PixQrCode result={gatewayResult} />
                 <h3>Pague via PIX</h3>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
                   Escaneie o QR Code acima ou copie o código abaixo
@@ -1596,8 +1926,13 @@ function Checkout() {
                 {pollingTimedOut && (
                   <div className="pix-waiting">
                     <p style={{ fontSize: '0.85rem', marginBottom: '0.75rem', color: 'var(--text-muted)' }}>
-                      A verificação automática não detectou o pagamento. Verifique manualmente ou gere um novo QR Code.
+                      A verificação automática não confirmou o seu pagamento a tempo. Se o pagamento já saiu, ele não se perdeu: o sistema refaz a conferência a cada 15 minutos e libera o acesso sozinho — você recebe um e-mail assim que entrar no grupo. Não pague de novo. Para resolver agora, use o botão abaixo ou chame a gente no WhatsApp.
                     </p>
+                    {confirmErrorMsg && (
+                      <p style={{ fontSize: '0.8rem', marginBottom: '0.6rem', color: 'var(--text-muted)' }}>
+                        O gateway já confirmou o seu pagamento; a liberação do acesso no grupo é que ainda está sendo processada.
+                      </p>
+                    )}
                     <button className="btn btn-primary btn-full" onClick={handleManualVerify} disabled={verifying}>
                       {verifying ? (<><Loader2 size={16} className="spin" /> Verificando...</>) : (<>Verificar Pagamento Novamente</>)}
                     </button>
@@ -1605,6 +1940,18 @@ function Checkout() {
                       Gerar Novo QR Code
                     </button>
                   </div>
+                )}
+
+                {/* Mandato de Pix Automático (Woovi). Só aparece quando o QR de
+                    pagamento é OUTRO artefato — no fluxo de assinatura pura o
+                    próprio QR já paga e já arma a recorrência. */}
+                <PixAutomaticBox recurrence={gatewayResult?.recurrence} />
+
+                {gatewayResult?.recurrence?.fallback && (
+                  <p className="iopay-method-note" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
+                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora.
+                    Seu pagamento está valendo normalmente, mas as próximas renovações precisarão ser feitas por você.
+                  </p>
                 )}
               </div>
             ) : (
@@ -1646,21 +1993,25 @@ function Checkout() {
                   </div>
                 ) : (
                   <>
-                    {GATEWAYS_WITH_PIX.includes(activeGateway) && (
+                    {pixDisponivel && (
                       <div className="iopay-method-selector">
-                        <button
-                          type="button"
-                          className={`iopay-method-btn ${paymentMethod === 'card' ? 'active' : ''}`}
-                          onClick={() => setPaymentMethod('card')}
-                        >
-                          <CreditCard size={16} /> Cartão
-                        </button>
+                        {cartaoDisponivel && (
+                          <button
+                            type="button"
+                            className={`iopay-method-btn ${paymentMethod === 'card' ? 'active' : ''}`}
+                            onClick={() => setPaymentMethod('card')}
+                          >
+                            <CreditCard size={16} /> Cartão
+                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoCard] || gatewayDoCard}` : ''}
+                          </button>
+                        )}
                         <button
                           type="button"
                           className={`iopay-method-btn ${paymentMethod === 'pix' ? 'active' : ''}`}
                           onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                         >
                           <QrCode size={16} /> PIX
+                          {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoPix] || gatewayDoPix}` : ''}
                         </button>
                       </div>
                     )}
@@ -1728,7 +2079,7 @@ function Checkout() {
   }
 
   // ============================================
-  // STEP 1.5: Entrada paga, aguardando assinatura
+  // STEP 2: pagamento
   // ============================================
   // Aceita 'entrance_paid' e 'awaiting_subscription'. Um pagamento só de
   // entrada deixa o membro como 'entrance_paid'; pagamento combinado já
@@ -1737,10 +2088,15 @@ function Checkout() {
     || memberStatus?.payment_status === 'awaiting_subscription'
     || entrancePaid === true;
 
-  if (hasEntranceFee && entranceConfirmed) {
-    const deadline = new Date(memberStatus.subscription_deadline);
+  // No FLUXO ÚNICO esta é a etapa 2 com a cobrança combinada (adesão + 1ª
+  // mensalidade na mesma transação). No fluxo antigo, é a etapa 2 da
+  // assinatura (a adesão já foi paga em uma cobrança separada).
+  if (hasEntranceFee && (entranceConfirmed || pagamentoUnico)) {
+    const deadline = memberStatus?.subscription_deadline ? new Date(memberStatus.subscription_deadline) : null;
     const now = new Date();
-    const hoursLeft = Math.max(0, (deadline - now) / (1000 * 60 * 60));
+    const hoursLeft = deadline ? Math.max(0, (deadline - now) / (1000 * 60 * 60)) : 0;
+    // Total da cobrança única: adesão + mensalidade do ciclo (com cupom).
+    const totalUnico = entranceAmount + finalSubscriptionAmount;
 
     return (
       <div className="fade-in checkout-page">
@@ -1748,8 +2104,17 @@ function Checkout() {
           <ChevronLeft size={18} /> Voltar
         </button>
         <div className="page-header">
-          <h1>Passo 2 de 2 — Assinatura Mensal</h1>
-          <p>Taxa de Adesão confirmada! Agora pague a assinatura para liberar o acesso.</p>
+          {pagamentoUnico ? (
+            <>
+              <h1>Passo 2 de 2 — Pagamento único</h1>
+              <p>Você paga a taxa de adesão e a primeira mensalidade em uma única cobrança.</p>
+            </>
+          ) : (
+            <>
+              <h1>Passo 2 de 2 — Assinatura Mensal</h1>
+              <p>Taxa de Adesão confirmada! Agora pague a assinatura para liberar o acesso.</p>
+            </>
+          )}
         </div>
 
         {error && (
@@ -1764,36 +2129,86 @@ function Checkout() {
 
         <div className="checkout-grid checkout-simple">
           <div className="checkout-summary">
-            <h3>Resumo da Assinatura</h3>
+            <h3>{pagamentoUnico ? 'Resumo do Pagamento' : 'Resumo da Assinatura'}</h3>
 
-            <div className="entrance-paid-badge">
-              <CheckCircle size={18} />
-              <span>Taxa de Adesão paga: {formatCurrency(entranceAmount)}</span>
-            </div>
-
-            <div className="deadline-warning">
-              <Clock size={18} />
-              <div>
-                <strong>Prazo: {Math.floor(hoursLeft)}h {Math.floor((hoursLeft % 1) * 60)}min restantes</strong>
-                <p>Complete o pagamento da assinatura antes do prazo para garantir sua vaga.</p>
+            {pagamentoUnico ? (
+              <div className="entrance-paid-badge" style={{ background: 'rgba(37, 99, 235, 0.08)', color: 'var(--primary)' }}>
+                <Shield size={18} />
+                <span>Taxa de Adesão (1x) + 1ª mensalidade em uma única cobrança</span>
               </div>
-            </div>
+            ) : (
+              <div className="entrance-paid-badge">
+                <CheckCircle size={18} />
+                <span>Taxa de Adesão paga: {formatCurrency(entranceAmount)}</span>
+              </div>
+            )}
+
+            {!pagamentoUnico && (
+              <div className="deadline-warning">
+                <Clock size={18} />
+                <div>
+                  <strong>Prazo: {Math.floor(hoursLeft)}h {Math.floor((hoursLeft % 1) * 60)}min restantes</strong>
+                  <p>Complete o pagamento da assinatura antes do prazo para garantir sua vaga.</p>
+                </div>
+              </div>
+            )}
 
             <div className="payment-flow-steps">
               <div className="payment-step completed">
                 <div className="step-number"><CheckCircle size={16} /></div>
-                <span>Taxa de Adesão</span>
+                <span>{pagamentoUnico ? 'Entender a adesão' : 'Taxa de Adesão'}</span>
               </div>
               <div className="payment-step-line completed" />
               <div className="payment-step active">
                 <div className="step-number">2</div>
-                <span>Assinatura Mensal</span>
+                <span>{pagamentoUnico ? 'Pagamento único' : 'Assinatura Mensal'}</span>
               </div>
             </div>
 
-            <div className="summary-row"><span>Preço mensal</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
-            {validSelectedCycle !== 'monthly' && (
-              <div className="summary-row"><span>Ciclo</span><strong>{getCycleLabel(validSelectedCycle, group)}</strong></div>
+            {pagamentoUnico ? (
+              <>
+                <div className="summary-row"><span>Taxa de Adesão (pagamento único)</span><strong>{formatCurrency(entranceAmount)}</strong></div>
+                <div className="summary-row"><span>Preço mensal</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
+                {validSelectedCycle !== 'monthly' && (
+                  <div className="summary-row"><span>Ciclo</span><strong>{getCycleLabel(validSelectedCycle, group)}</strong></div>
+                )}
+                <div className="summary-row"><span>1ª mensalidade ({getCycleLabel(validSelectedCycle, group)})</span><strong>{formatCurrency(finalSubscriptionAmount)}</strong></div>
+
+                {availableCycles.length > 1 && (
+                  <div className="cycle-selector" style={{ marginTop: '0.75rem' }}>
+                    <label>Ciclo de cobrança</label>
+                    <div className="cycle-options">
+                      {availableCycles.map(key => {
+                        const label = getCycleLabel(key, group);
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            className={`cycle-option ${validSelectedCycle === key ? 'selected' : ''}`}
+                            onClick={() => {
+                              // Trocar o ciclo muda o valor da mensalidade: o
+                              // cupom aplicado deixa de valer e é descartado
+                              // para o total mostrado continuar correto.
+                              setCouponResult(null);
+                              setCouponCode('');
+                              setSelectedCycleState(key);
+                            }}
+                          >
+                            <span className="cycle-label">{label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="summary-row"><span>Preço mensal</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
+                {validSelectedCycle !== 'monthly' && (
+                  <div className="summary-row"><span>Ciclo</span><strong>{getCycleLabel(validSelectedCycle, group)}</strong></div>
+                )}
+              </>
             )}
 
             {renderCouponInput('subscription', subscriptionAmount)}
@@ -1801,7 +2216,9 @@ function Checkout() {
             <div className="summary-row summary-total">
               <span>Total agora</span>
               <strong>
-                {couponResult?.valid && couponResult.original_amount === subscriptionAmount ? (
+                {pagamentoUnico ? (
+                  formatCurrency(totalUnico)
+                ) : couponResult?.valid && couponResult.original_amount === subscriptionAmount ? (
                   <>
                     <span className="original-price">{formatCurrency(subscriptionAmount)}</span>
                     {' '}
@@ -1815,13 +2232,7 @@ function Checkout() {
           <div className="checkout-payment">
             {gatewayResult?.gateway && (gatewayResult?.pix_copy_paste || gatewayResult?.pix_qrcode_url || gatewayResult?.pix_qrcode) ? (
               <div className="iopay-pix-result">
-                {gatewayResult.pix_qrcode && (
-                  <img src={`data:image/png;base64,${gatewayResult.pix_qrcode}`} alt="QR Code PIX" className="pix-qrcode" />
-                )}
-                {!gatewayResult.pix_qrcode && gatewayResult.pix_qrcode_url && (
-                  <img src={gatewayResult.pix_qrcode_url} alt="QR Code PIX" className="pix-qrcode" />
-                )}
-                {!gatewayResult.pix_qrcode && !gatewayResult.pix_qrcode_url && <QrCode size={48} style={{ margin: '0 auto 1rem', color: 'var(--primary)' }} />}
+                <PixQrCode result={gatewayResult} />
                 <h3>Pague via PIX</h3>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
                   Escaneie o QR Code acima ou copie o código abaixo
@@ -1856,8 +2267,13 @@ function Checkout() {
                 {pollingTimedOut && (
                   <div className="pix-waiting">
                     <p style={{ fontSize: '0.85rem', marginBottom: '0.75rem', color: 'var(--text-muted)' }}>
-                      A verificação automática não detectou o pagamento. Verifique manualmente ou gere um novo QR Code.
+                      A verificação automática não confirmou o seu pagamento a tempo. Se o pagamento já saiu, ele não se perdeu: o sistema refaz a conferência a cada 15 minutos e libera o acesso sozinho — você recebe um e-mail assim que entrar no grupo. Não pague de novo. Para resolver agora, use o botão abaixo ou chame a gente no WhatsApp.
                     </p>
+                    {confirmErrorMsg && (
+                      <p style={{ fontSize: '0.8rem', marginBottom: '0.6rem', color: 'var(--text-muted)' }}>
+                        O gateway já confirmou o seu pagamento; a liberação do acesso no grupo é que ainda está sendo processada.
+                      </p>
+                    )}
                     <button className="btn btn-primary btn-full" onClick={handleManualVerify} disabled={verifying}>
                       {verifying ? (<><Loader2 size={16} className="spin" /> Verificando...</>) : (<>Verificar Pagamento Novamente</>)}
                     </button>
@@ -1866,13 +2282,29 @@ function Checkout() {
                     </button>
                   </div>
                 )}
+
+                {/* Mandato de Pix Automático (Woovi). Só aparece quando o QR de
+                    pagamento é OUTRO artefato — no fluxo de assinatura pura o
+                    próprio QR já paga e já arma a recorrência. */}
+                <PixAutomaticBox recurrence={gatewayResult?.recurrence} />
+
+                {gatewayResult?.recurrence?.fallback && (
+                  <p className="iopay-method-note" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
+                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora.
+                    Seu pagamento está valendo normalmente, mas as próximas renovações precisarão ser feitas por você.
+                  </p>
+                )}
               </div>
             ) : (
               <>
                 <div className="payment-provider">
                   <div className="provider-badge"><CreditCard size={28} /></div>
-                  <h3>Pagar Assinatura</h3>
-                  <p>Pagamento recorrente mensal via {GATEWAY_NAMES[activeGateway] || activeGateway}.</p>
+                  <h3>{pagamentoUnico ? 'Pagar adesão + assinatura' : 'Pagar Assinatura'}</h3>
+                  <p>
+                    {pagamentoUnico
+                      ? `Uma única cobrança de ${formatCurrency(valorCobrado)} (adesão + 1ª mensalidade) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
+                      : `Pagamento recorrente mensal via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`}
+                  </p>
                 </div>
 
                 {gatewayResult?.needs_polling && gatewayWaiting ? (
@@ -1895,8 +2327,8 @@ function Checkout() {
                   </div>
                 ) : GATEWAYS_REDIRECT.includes(activeGateway) ? (
                   <div className="payment-buttons">
-                    <button className="btn btn-primary btn-full btn-lg" onClick={() => handleSubscriptionPayment()} disabled={processing}>
-                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar com {GATEWAY_NAMES[activeGateway]} — {formatCurrency(finalSubscriptionAmount)}</>)}
+                    <button className="btn btn-primary btn-full btn-lg" onClick={() => iniciarPagamento()} disabled={processing}>
+                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar com {GATEWAY_NAMES[activeGateway]} — {formatCurrency(valorCobrado)}</>)}
                     </button>
                     {couponResult?.valid && couponResult.original_amount === subscriptionAmount && (
                       <div className="checkout-payment-info">
@@ -1916,22 +2348,26 @@ function Checkout() {
                   </div>
                 ) : (
                   <>
-                    {activeGateway === 'iopay' && (
+                    {mostrarSeletorMetodo && (
                       <div className="iopay-method-selector">
-                        <button
-                          type="button"
-                          className={`iopay-method-btn ${paymentMethod === 'card' ? 'active' : ''}`}
-                          onClick={() => setPaymentMethod('card')}
-                        >
-                          <CreditCard size={16} /> Cartão
-                        </button>
-                        {GATEWAYS_WITH_PIX.includes(activeGateway) && (
+                        {cartaoDisponivel && (
+                          <button
+                            type="button"
+                            className={`iopay-method-btn ${paymentMethod === 'card' ? 'active' : ''}`}
+                            onClick={() => setPaymentMethod('card')}
+                          >
+                            <CreditCard size={16} /> Cartão
+                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoCard] || gatewayDoCard}` : ''}
+                          </button>
+                        )}
+                        {pixDisponivel && (
                           <button
                             type="button"
                             className={`iopay-method-btn ${paymentMethod === 'pix' ? 'active' : ''}`}
                             onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                           >
                             <QrCode size={16} /> PIX
+                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoPix] || gatewayDoPix}` : ''}
                           </button>
                         )}
                       </div>
@@ -1939,6 +2375,12 @@ function Checkout() {
                     {activeGateway === 'iopay' && paymentMethod === 'pix' && (
                       <p className="iopay-method-note" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
                         PIX gera fatura para pagamento manual. Sem cobrança automática.
+                      </p>
+                    )}
+
+                    {activeGateway === 'woovi' && (
+                      <p className="iopay-method-note" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                        Pagamento via PIX com <strong>Pagamento Automático</strong>: depois de pagar você autoriza o Pix Automático no app do seu banco, e as próximas mensalidades passam a ser cobradas sozinhas.
                       </p>
                     )}
 
@@ -1956,7 +2398,7 @@ function Checkout() {
                                   {revealedCards[card.id_card] ? <EyeOff size={14} /> : <Eye size={14} />}
                                 </button>
                               </span>
-                              <button className="btn btn-primary btn-sm" onClick={() => handleSubscriptionPayment(null, card.id_card || card.id)} disabled={processing}>
+                              <button className="btn btn-primary btn-sm" onClick={() => iniciarPagamento(null, card.id_card || card.id)} disabled={processing}>
                                 Pagar com este!
                               </button>
                             </div>
@@ -1973,8 +2415,8 @@ function Checkout() {
                             </button>
                           )}
                           <IOPayCardForm
-                            amount={subscriptionAmount}
-                            onCardDataReady={(token) => handleSubscriptionPayment(token)}
+                            amount={valorCobrado}
+                            onCardDataReady={(token) => iniciarPagamento(token)}
                             onError={setError}
                             disabled={processing}
                             resetKey={cardFormResetKey}
@@ -1983,11 +2425,11 @@ function Checkout() {
                       )
                     ) : (
                       <div className="payment-buttons">
-                        <button className="btn btn-primary btn-full btn-lg" onClick={() => handleSubscriptionPayment()} disabled={processing}>
+                        <button className="btn btn-primary btn-full btn-lg" onClick={() => iniciarPagamento()} disabled={processing}>
                           {processing ? (<><Loader2 size={18} className="spin" /> Processando...</>) : (
                             paymentMethod === 'pix'
-                              ? (<><QrCode size={18} /> Gerar PIX — {formatCurrency(finalSubscriptionAmount)}</>)
-                              : (<><CreditCard size={18} /> Pagar {formatCurrency(finalSubscriptionAmount)}</>)
+                              ? (<><QrCode size={18} /> Gerar PIX — {formatCurrency(valorCobrado)}</>)
+                              : (<><CreditCard size={18} /> Pagar {formatCurrency(valorCobrado)}</>)
                           )}
                         </button>
                         {couponResult?.valid && couponResult.original_amount === subscriptionAmount && (
@@ -2014,6 +2456,30 @@ function Checkout() {
             <p className="secure-note"><Shield size={14} /> Pagamento seguro</p>
           </div>
         </div>
+
+        {paymentSuccess && (
+          <div className="payment-success-overlay">
+            <div className="payment-success-card">
+              <div className="payment-success-icon">
+                <CheckCircle size={48} />
+              </div>
+              <h2>Pagamento Confirmado!</h2>
+              <p>Seu pagamento foi processado com sucesso.</p>
+              <div className="payment-success-amount">
+                {formatCurrency(paymentSuccess.amount)}
+              </div>
+              <p style={{ fontSize: '0.85rem' }}>
+                {paymentSuccess.type === 'entrance'
+                  ? 'Taxa de adesão paga. Agora realize a assinatura para ativar o acesso.'
+                  : 'Assinatura ativada! Redirecionando para suas credenciais...'}
+              </p>
+              <div className="payment-success-redirect">
+                <div className="spinner-small" />
+                Redirecionando em 8 segundos...
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2052,7 +2518,10 @@ function Checkout() {
           {group.rules && (
             <div className="checkout-rules">
               <ScrollText size={18} />
-              <div><strong>Regras do grupo</strong><p>{group.rules}</p></div>
+              <div>
+                <strong>Regras do grupo</strong>
+                <GroupRules rules={group.rules} />
+              </div>
             </div>
           )}
 
@@ -2080,13 +2549,7 @@ function Checkout() {
           <div className="checkout-payment">
             {gatewayResult?.gateway && (gatewayResult?.pix_copy_paste || gatewayResult?.pix_qrcode_url || gatewayResult?.pix_qrcode) ? (
               <div className="iopay-pix-result">
-                {gatewayResult.pix_qrcode && (
-                  <img src={`data:image/png;base64,${gatewayResult.pix_qrcode}`} alt="QR Code PIX" className="pix-qrcode" />
-                )}
-                {!gatewayResult.pix_qrcode && gatewayResult.pix_qrcode_url && (
-                  <img src={gatewayResult.pix_qrcode_url} alt="QR Code PIX" className="pix-qrcode" />
-                )}
-                {!gatewayResult.pix_qrcode && !gatewayResult.pix_qrcode_url && <QrCode size={48} style={{ margin: '0 auto 1rem', color: 'var(--primary)' }} />}
+                <PixQrCode result={gatewayResult} />
                 <h3>Pague via PIX</h3>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
                   Escaneie o QR Code acima ou copie o código abaixo
@@ -2121,8 +2584,13 @@ function Checkout() {
                 {pollingTimedOut && (
                   <div className="pix-waiting">
                     <p style={{ fontSize: '0.85rem', marginBottom: '0.75rem', color: 'var(--text-muted)' }}>
-                      A verificação automática não detectou o pagamento. Verifique manualmente ou gere um novo QR Code.
+                      A verificação automática não confirmou o seu pagamento a tempo. Se o pagamento já saiu, ele não se perdeu: o sistema refaz a conferência a cada 15 minutos e libera o acesso sozinho — você recebe um e-mail assim que entrar no grupo. Não pague de novo. Para resolver agora, use o botão abaixo ou chame a gente no WhatsApp.
                     </p>
+                    {confirmErrorMsg && (
+                      <p style={{ fontSize: '0.8rem', marginBottom: '0.6rem', color: 'var(--text-muted)' }}>
+                        O gateway já confirmou o seu pagamento; a liberação do acesso no grupo é que ainda está sendo processada.
+                      </p>
+                    )}
                     <button className="btn btn-primary btn-full" onClick={handleManualVerify} disabled={verifying}>
                       {verifying ? (<><Loader2 size={16} className="spin" /> Verificando...</>) : (<>Verificar Pagamento Novamente</>)}
                     </button>
@@ -2131,13 +2599,29 @@ function Checkout() {
                     </button>
                   </div>
                 )}
+
+                {/* Mandato de Pix Automático (Woovi). Só aparece quando o QR de
+                    pagamento é OUTRO artefato — no fluxo de assinatura pura o
+                    próprio QR já paga e já arma a recorrência. */}
+                <PixAutomaticBox recurrence={gatewayResult?.recurrence} />
+
+                {gatewayResult?.recurrence?.fallback && (
+                  <p className="iopay-method-note" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
+                    <AlertTriangle size={13} /> Não conseguimos ativar a cobrança automática agora.
+                    Seu pagamento está valendo normalmente, mas as próximas renovações precisarão ser feitas por você.
+                  </p>
+                )}
               </div>
             ) : (
               <>
                 <div className="payment-provider">
                   <div className="provider-badge"><CreditCard size={28} /></div>
-                  <h3>Pagar Assinatura</h3>
-                  <p>Pagamento recorrente mensal via {GATEWAY_NAMES[activeGateway] || activeGateway}.</p>
+                  <h3>{pagamentoUnico ? 'Pagar adesão + assinatura' : 'Pagar Assinatura'}</h3>
+                  <p>
+                    {pagamentoUnico
+                      ? `Uma única cobrança de ${formatCurrency(valorCobrado)} (adesão + 1ª mensalidade) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
+                      : `Pagamento recorrente mensal via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`}
+                  </p>
                 </div>
 
                 {availableCycles.length > 1 && (
@@ -2158,8 +2642,8 @@ function Checkout() {
 
                 {GATEWAYS_REDIRECT.includes(activeGateway) ? (
                   <div className="payment-buttons">
-                    <button className="btn btn-primary btn-full btn-lg" onClick={() => handleSubscriptionPayment()} disabled={processing}>
-                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar com {GATEWAY_NAMES[activeGateway]} — {formatCurrency(finalSubscriptionAmount)}</>)}
+                    <button className="btn btn-primary btn-full btn-lg" onClick={() => iniciarPagamento()} disabled={processing}>
+                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar com {GATEWAY_NAMES[activeGateway]} — {formatCurrency(valorCobrado)}</>)}
                     </button>
                     {couponResult?.valid && couponResult.original_amount === subscriptionAmount && (
                       <div className="checkout-payment-info">
@@ -2179,22 +2663,26 @@ function Checkout() {
                   </div>
                 ) : (
                   <>
-                    {activeGateway === 'iopay' && (
+                    {mostrarSeletorMetodo && (
                       <div className="iopay-method-selector">
-                        <button
-                          type="button"
-                          className={`iopay-method-btn ${paymentMethod === 'card' ? 'active' : ''}`}
-                          onClick={() => setPaymentMethod('card')}
-                        >
-                          <CreditCard size={16} /> Cartão
-                        </button>
-                        {GATEWAYS_WITH_PIX.includes(activeGateway) && (
+                        {cartaoDisponivel && (
+                          <button
+                            type="button"
+                            className={`iopay-method-btn ${paymentMethod === 'card' ? 'active' : ''}`}
+                            onClick={() => setPaymentMethod('card')}
+                          >
+                            <CreditCard size={16} /> Cartão
+                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoCard] || gatewayDoCard}` : ''}
+                          </button>
+                        )}
+                        {pixDisponivel && (
                           <button
                             type="button"
                             className={`iopay-method-btn ${paymentMethod === 'pix' ? 'active' : ''}`}
                             onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                           >
                             <QrCode size={16} /> PIX
+                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoPix] || gatewayDoPix}` : ''}
                           </button>
                         )}
                       </div>
@@ -2202,6 +2690,12 @@ function Checkout() {
                     {activeGateway === 'iopay' && paymentMethod === 'pix' && (
                       <p className="iopay-method-note" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
                         PIX gera fatura para pagamento manual. Sem cobrança automática.
+                      </p>
+                    )}
+
+                    {activeGateway === 'woovi' && (
+                      <p className="iopay-method-note" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                        Pagamento via PIX com <strong>Pagamento Automático</strong>: depois de pagar você autoriza o Pix Automático no app do seu banco, e as próximas mensalidades passam a ser cobradas sozinhas.
                       </p>
                     )}
 
@@ -2219,7 +2713,7 @@ function Checkout() {
                                   {revealedCards[card.id_card] ? <EyeOff size={14} /> : <Eye size={14} />}
                                 </button>
                               </span>
-                              <button className="btn btn-primary btn-sm" onClick={() => handleSubscriptionPayment(null, card.id_card || card.id)} disabled={processing}>
+                              <button className="btn btn-primary btn-sm" onClick={() => iniciarPagamento(null, card.id_card || card.id)} disabled={processing}>
                                 Pagar com este!
                               </button>
                             </div>
@@ -2236,8 +2730,8 @@ function Checkout() {
                             </button>
                           )}
                           <IOPayCardForm
-                            amount={subscriptionAmount}
-                            onCardDataReady={(data) => handleSubscriptionPayment(data)}
+                            amount={valorCobrado}
+                            onCardDataReady={(data) => iniciarPagamento(data)}
                             onError={setError}
                             disabled={processing}
                             resetKey={cardFormResetKey}
@@ -2246,11 +2740,11 @@ function Checkout() {
                       )
                     ) : (
                       <div className="payment-buttons">
-                        <button className="btn btn-primary btn-full btn-lg" onClick={() => handleSubscriptionPayment()} disabled={processing}>
+                        <button className="btn btn-primary btn-full btn-lg" onClick={() => iniciarPagamento()} disabled={processing}>
                           {processing ? (<><Loader2 size={18} className="spin" /> Processando...</>) : (
                             paymentMethod === 'pix'
-                              ? (<><QrCode size={18} /> Gerar PIX — {formatCurrency(finalSubscriptionAmount)}</>)
-                              : (<><CreditCard size={18} /> Pagar {formatCurrency(finalSubscriptionAmount)}</>)
+                              ? (<><QrCode size={18} /> Gerar PIX — {formatCurrency(valorCobrado)}</>)
+                              : (<><CreditCard size={18} /> Pagar {formatCurrency(valorCobrado)}</>)
                           )}
                         </button>
                         {couponResult?.valid && couponResult.original_amount === subscriptionAmount && (
@@ -2320,4 +2814,22 @@ function Checkout() {
   );
 }
 
-export default Checkout;
+/**
+ * CHECKOUT — o de produção e o de teste.
+ *
+ *   /checkout/:groupSlug         → V1: o que está no ar e funciona. A
+ *                                   divisão por método não se aplica aqui
+ *                                   (a não ser que o admin mude o escopo
+ *                                   para "todos" de propósito).
+ *   /v2/checkout/:groupSlug      → V2: o de TESTE. É aqui que a integração
+ *                                   Woovi é validada sem mexer no V1.
+ *
+ * As duas rotas usam o MESMO componente — o que muda é a `variante`.
+ *
+ * O V2 é INDENTIFICÁVEL para quem compra. Não existe banner, aviso, link ou
+ * texto que diga "checkout de teste": para o usuário é um checkout normal.
+ * Só o admin sabe que a URL existe.
+ */
+export default function Checkout({ variante = 'v1' }) {
+  return <CheckoutPagina variante={variante} />;
+}

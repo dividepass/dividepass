@@ -540,19 +540,26 @@ const baseQuery = supabaseAdmin
        * via NADA no painel, e a assinatura simplesmente nunca era cobrada.
        * Agora fica um `billing_cycles` com status "failed" e o motivo, o que
        * faz a assinatura aparecer na tela de falhas com acao de contorno.
+       *
+       * `recordCycle: false` → nao grava o ciclo. Usado pelos gateways que
+       * cobram a recorrencia por conta propria (Woovi/Pix Automatico): nesse
+       * caso NAO houve falha — o ciclo e confirmado pelo webhook — e gravar
+       * "failed" toda vez que o cron roda polui a tela de falhas do admin
+       * com falsos positivos.
        */
-      const recordSkip = async (sub: any, reason: string) => {
+      const recordSkip = async (sub: any, reason: string, options?: { recordCycle?: boolean }) => {
         results.skipped++;
         results.details.push({
           subscription_id: sub.id,
-          user_name: sub.user?.name || null,
-          user_email: sub.user?.email || null,
-          group_name: sub.group?.name || null,
-          service_name: sub.service?.name || null,
+          user_name: sub?.user?.name || null,
+          user_email: sub?.user?.email || null,
+          group_name: sub?.group?.name || null,
+          service_name: sub?.service?.name || null,
           amount: sub.amount,
           status: "skipped",
           error: reason,
         });
+        if (options?.recordCycle === false) return;
         try {
           await supabaseAdmin.from("billing_cycles").insert({
             subscription_id: sub.id,
@@ -585,6 +592,23 @@ const baseQuery = supabaseAdmin
           if (sub.gateway === "mercadopago") {
             console.log(`Skipping sub ${sub.id}: Mercado Pago handles its own recurring billing`);
             await recordSkip(sub, "Mercado Pago cobra a recorrencia por conta propria");
+            continue;
+          }
+
+          // A Woovi tem PIX AUTOMÁTICO: o pagador autoriza o mandato uma vez
+          // e a Woovi cobra sozinha no dia do vencimento. Se este cron
+          // cobrasse também, o cliente pagaria duas vezes.
+          //
+          // A confirmação chega pelo webhook `woovi-webhook`
+          // (PIX_AUTOMATIC_COBR_COMPLETED) e, se ele atrasar, pelo polling
+          // `check-woovi-tx`.
+          if (sub.gateway === "woovi") {
+            console.log(`Skipping sub ${sub.id}: Woovi cobra a recorrencia por conta propria (Pix Automatico)`);
+            await recordSkip(
+              sub,
+              "Woovi cobra a recorrencia por conta propria (Pix Automatico)",
+              { recordCycle: false },
+            );
             continue;
           }
 

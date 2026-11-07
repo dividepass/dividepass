@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
+import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import OnboardingFlow from '../../components/OnboardingFlow';
 import './OnboardingPage.css';
@@ -13,6 +14,11 @@ import './OnboardingPage.css';
  */
 export default function OnboardingPage() {
   const { profile, loading } = useAuth();
+  /* O fluxo avisa quando terminou. Sem isso, o refresh do perfil (que acontece
+     no "Concluir") já trazia onboarding_completed_at preenchido e esta página
+     redirecionava para o dashboard ANTES da tela de "Tudo pronto!" — o
+     usuário nunca via a confirmação de que as respostas foram salvas. */
+  const [finished, setFinished] = useState(false);
 
   if (loading) {
     return (
@@ -23,13 +29,13 @@ export default function OnboardingPage() {
   }
 
   // Já respondeu antes: não faz sentido mostrar de novo.
-  if (profile?.onboarding_completed_at) {
+  if (profile?.onboarding_completed_at && !finished) {
     return <Navigate to="/dashboard" replace />;
   }
 
   return (
     <div className="onboarding-page">
-      <OnboardingFlow />
+      <OnboardingFlow onFinished={() => setFinished(true)} />
     </div>
   );
 }

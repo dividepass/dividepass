@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Avatar Cachecol">
+  <defs><clipPath id="c"><circle cx="64" cy="64" r="64"/></clipPath></defs>
+  <g clip-path="url(#c)">
+    <rect width="128" height="128" fill="#FBE6EE"/>
+    
+    <path d="M14 128C14 102 36 90 64 90C92 90 114 102 114 128Z" fill="#475569"/>
+    <rect x="55" y="70" width="18" height="22" rx="9" fill="#8E5333"/>
+    <ellipse cx="64" cy="52" rx="25" ry="29" fill="#A96B44"/>
+    <circle cx="39" cy="56" r="5.6" fill="#A96B44"/>
+    <circle cx="89" cy="56" r="5.6" fill="#A96B44"/>
+    <path d="M38 54C35 30 48 18 64 18C80 18 93 30 90 54C86 38 78 30 64 30C50 30 42 38 38 54Z" fill="#231A17"/>
+        <g fill="#231A17"><path d="M36 46L30 30L46 40Z"/><path d="M92 46L98 30L82 40Z"/></g>
+    <path d="M44 40Q52 36 60 40" stroke="#231A17" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M68 40Q76 36 84 40" stroke="#231A17" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <g>
+          <ellipse cx="52" cy="52" rx="7.5" ry="8.5" fill="#FFFFFF"/>
+          <circle cx="52" cy="52.5" r="4.4" fill="#2B2118"/>
+          <circle cx="53.8" cy="49.8" r="1.6" fill="#FFFFFF"/>
+        </g><g>
+          <ellipse cx="76" cy="52" rx="7.5" ry="8.5" fill="#FFFFFF"/>
+          <circle cx="76" cy="52.5" r="4.4" fill="#2B2118"/>
+          <circle cx="77.8" cy="49.8" r="1.6" fill="#FFFFFF"/>
+        </g>
+    
+    <path d="M55 64Q64 60 73 64Q64 70 55 64Z" fill="#231A17"/>
+    <path d="M58 70Q64 75 70 70" stroke="#8E3B45" stroke-width="3" fill="none" stroke-linecap="round"/>
+    
+    <path d="M40 128C42 100 52 90 64 90C76 90 86 100 88 128Z" fill="#7C3AED"/>
+        <path d="M46 100C52 112 76 112 82 100C78 110 70 114 64 114C58 114 50 110 46 100Z" fill="#000" opacity="0.08"/>
+  </g>
+</svg>

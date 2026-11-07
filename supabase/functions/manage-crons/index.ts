@@ -37,6 +37,12 @@ const CRON_META: Record<string, { description: string; type: string; schedule: s
     schedule: "0 12 * * *",
     fullDescription: "Executa todo dia às 09h BRT. Envia os e-mails automáticos do cliente: (1) boas-vindas de quem se cadastrou e ainda não recebeu, (2) lembrete de renovação para as assinaturas que vencem nos próximos dias, (3) aviso de atraso para as que venceram e ainda estão dentro da carência de 7 dias. Cada evento tem trava de duplicidade (dedup_key), então rodar duas vezes não manda o mesmo e-mail duas vezes.",
   },
+  "reconcile-payments": {
+    description: "Reconciliação de pagamentos - libera quem pagou e não entrou no grupo",
+    type: "billing",
+    schedule: "*/15 * * * *",
+    fullDescription: "A cada 15 minutos. Caça as tentativas de pagamento (payment_attempts) do gateway que foram aprovadas mas nunca viraram acesso: pergunta o status real à IO Pay e, se estiver paga, roda a confirmação compartilhada (libera o grupo, cria a assinatura, registra o pagamento e manda os e-mails). É a rede de segurança para o caso 'paguei e não fui add ao grupo' — não depende do webhook do gateway nem de o cliente deixar a aba do checkout aberta. Também marca como recusadas as tentativas que o gateway recusou, para não ficarem pendentes para sempre.",
+  },
 };
 
 export default {

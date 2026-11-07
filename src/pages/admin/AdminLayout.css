@@ -262,6 +262,9 @@
   height: 100vh;
   overflow-y: auto;
   min-width: 0;
+  /* Rolagem com "inércia" no iOS — sem isso a lista de usuários trava
+     no dedo em vez de accompanying o gesto. */
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Trilha "Seção › Página" + sub-navegação. Fica no topo de todas as páginas. */
@@ -413,7 +416,7 @@
   }
 
   .admin-page-wrap {
-    padding: 1rem 0.75rem 3rem;
+    padding: 0.85rem 0.75rem calc(3rem + env(safe-area-inset-bottom));
   }
 
   .admin-card {

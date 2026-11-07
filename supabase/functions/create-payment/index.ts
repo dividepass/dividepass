@@ -1,11 +1,17 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  CHAVES_GATEWAY,
+  normalizarMetodo,
+  resolverGatewayParaPagamento,
+  splitAplicavel,
+} from "../_shared/gateway-por-metodo.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const VALID_GATEWAYS = ["mercadopago", "stripe", "asaas", "iopay", "pagarme"];
+const VALID_GATEWAYS = ["mercadopago", "stripe", "asaas", "iopay", "pagarme", "woovi"];
 
 export default {
   fetch: async (req: Request) => {
@@ -81,18 +87,60 @@ export default {
         user_id = invoice.user_id;
       }
 
-      // Prefer gateway from frontend body, fallback to DB
-      let gateway = bodyGateway;
-      if (!gateway || !VALID_GATEWAYS.includes(gateway)) {
-        const { data: gatewaySetting } = await supabaseAdmin
-          .from("app_settings")
-          .select("value")
-          .eq("key", "active_gateway")
-          .maybeSingle();
-        gateway = gatewaySetting?.value || "mercadopago";
+      // ── GATEWAY: quem decide é o BANCO, não o frontend ─────────────────────
+      //
+      // A DIVISÃO POR MÉTODO (split_gateway_*) permite que o PIX vá para um
+      // gateway e o cartão para outro. A configuração mora em `app_settings`
+      // e é lida aqui — assim um cliente antigo (ou desatualizado) não cobra
+      // no gateway errado, e o Admin continua sendo a única fonte de verdade.
+      //
+      // A EXCEÇÃO é a RENOVAÇÃO: a assinatura já tem um gateway e um
+      // `gateway_subscription_id` lá. Trocar agora deixaria DUAS cobranças
+      // vivas (a antiga continuando no gateway antigo e a nova no gateway
+      // novo) — e o dinheiro do usuário ia para o lugar errado.
+      const { data: gatewayRows } = await supabaseAdmin
+        .from("app_settings")
+        .select("key, value")
+        .in("key", CHAVES_GATEWAY);
+
+      const gatewaySettings: Record<string, string> = {};
+      for (const linha of gatewayRows || []) {
+        if (linha?.key) gatewaySettings[linha.key] = linha.value;
       }
 
-      console.log(`[create-payment] gateway=${gateway} type=${payment_type} group=${group_id}`);
+      const metodoPagamento = normalizarMetodo(body.payment_method);
+      const ehRenovacao = body.renewal === true;
+
+      let gatewayDaAssinatura: string | null = null;
+      if (ehRenovacao) {
+        const { data: sub } = await supabaseAdmin
+          .from("user_subscriptions")
+          .select("gateway")
+          .eq("user_id", user_id)
+          .eq("group_id", group_id)
+          .maybeSingle();
+        gatewayDaAssinatura = sub?.gateway || null;
+      }
+
+      const gateway = resolverGatewayParaPagamento({
+        settings: gatewaySettings,
+        metodo: metodoPagamento,
+        renewal: ehRenovacao,
+        gatewayAtual: gatewayDaAssinatura,
+        split: splitAplicavel(gatewaySettings, body.split_gateway === true),
+      });
+
+      if (!VALID_GATEWAYS.includes(gateway)) {
+        return new Response(
+          JSON.stringify({ error: "Gateway de pagamento inválido" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      console.log(
+        `[create-payment] gateway=${gateway} (pedido=${bodyGateway || "-"} metodo=${metodoPagamento || "-"}) ` +
+        `type=${payment_type} group=${group_id}`
+      );
 
       // ── Grupo aguardando aprovação ──────────────────────────────────────
       // Grupo criado por usuário só pode ser vendido depois da aprovação do
@@ -152,6 +200,10 @@ export default {
         }
         case "pagarme": {
           const mod = await import("./handlers/pagarme.ts");
+          return mod.default(req, ctx);
+        }
+        case "woovi": {
+          const mod = await import("./handlers/woovi.ts");
           return mod.default(req, ctx);
         }
         case "mercadopago":

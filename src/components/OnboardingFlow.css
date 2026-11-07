@@ -54,6 +54,25 @@
   margin-bottom: 1rem;
 }
 
+/* Etiqueta da pergunta: onde a pessoa está no caminho. A última pergunta
+   avisa que é a última — a pessoa sabe que falta um passo para terminar. */
+.ob-eyebrow {
+  display: block;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--primary);
+  margin-bottom: 0.45rem;
+}
+
+.ob-question-helper {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: -0.55rem 0 1rem;
+}
+
 .ob-sub {
   font-size: 0.88rem;
   line-height: 1.5;
@@ -378,6 +397,23 @@
 }
 
 .ob-textarea { margin-bottom: 1rem; }
+
+/* Bloco da resposta aberta: campo + dica embaixo. */
+.ob-text-block { margin-bottom: 0.5rem; }
+
+.ob-text-block .ob-textarea { margin-bottom: 0.45rem; }
+
+.ob-text-hint {
+  font-size: 0.76rem;
+  color: var(--text-soft);
+  margin: 0;
+}
+
+/* Botão de continuar travado (ex.: ainda faltam convidados). */
+.ob-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 .ob-yesno {
   display: grid;

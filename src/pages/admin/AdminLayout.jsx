@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ClipboardList,
   CreditCard,
+  Crown,
   FileText,
   Layers,
   LayoutDashboard,
@@ -17,6 +18,7 @@ import {
   Menu,
   MessageSquare,
   PiggyBank,
+  Plug,
   Receipt,
   Settings,
   Star,
@@ -34,6 +36,8 @@ import ThemeToggle from '../../components/ThemeToggle';
 import AdminNotifications from './AdminNotifications';
 import logoImg from '../../assets/logo.png';
 import './AdminLayout.css';
+// Contrato de densidade do painel no celular — vale para todas as páginas.
+import './admin-responsive.css';
 
 /**
  * Navegação do admin agrupada por INTENÇÃO DE USO, não por tabela do banco.
@@ -67,9 +71,11 @@ const NAV_SECTIONS = [
     items: [
       { to: '/admin/platforms', label: 'Plataformas', icon: Layers },
       { to: '/admin/service-plans', label: 'Planos', icon: FileText },
+      { to: '/admin/sponsored-offers', label: 'Ofertas patrocinadas', icon: Crown },
       { to: '/admin/coupons', label: 'Cupons', icon: Ticket },
       { to: '/admin/subscriptions', label: 'Assinaturas', icon: CreditCard },
       { to: '/admin/evolution', label: 'Evolução', icon: ChartLine },
+      { to: '/admin/pulse', label: 'Pulse Coding', icon: Plug },
     ],
   },
   {

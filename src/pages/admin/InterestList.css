@@ -1,8 +1,12 @@
+/* ═══ Lista de espera / interesses ═══ */
+
 .interest-list-page .admin-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .interest-list-page .admin-header .btn {
@@ -11,200 +15,505 @@
   gap: 6px;
 }
 
-.interest-accordion {
+/* ─────────────────────────── guia (3 passos) */
+.interest-guide {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1.25rem;
+}
+
+.interest-guide-step {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
 }
 
-.interest-accordion .service-section {
-  background: var(--card-bg, rgba(255,255,255,0.04));
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  border: 1px solid var(--border-color, #334155);
-}
-
-.interest-accordion .service-header {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.interest-accordion .service-header:hover {
-  background: var(--hover-bg, #1E293B);
-}
-
-.interest-accordion .service-info {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.interest-accordion .service-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-  display: flex;
+.interest-guide-num {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  font-weight: 700;
-  font-size: 18px;
-  flex-shrink: 0;
-}
-
-.interest-accordion .service-icon img {
   width: 24px;
   height: 24px;
-  object-fit: contain;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(79, 70, 229, 0.14);
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
-.interest-accordion .service-info h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary, #FFFFFF);
-}
-
-.interest-accordion .service-meta {
-  font-size: 13px;
-  color: var(--text-secondary, #64748B);
-}
-
-.interest-accordion .service-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary, #64748B);
-}
-
-.interest-entries {
-  padding: 0 20px 20px;
+.interest-guide-step div {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0.15rem;
 }
 
-.interest-entry-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 14px 16px;
-  background: var(--surface-bg, #1E293B);
-  border-radius: 10px;
-  border: 1px solid var(--border-color, #334155);
-  gap: 16px;
+.interest-guide-step strong {
+  font-size: 0.88rem;
+  color: var(--text-main);
 }
+
+.interest-guide-step span {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* ─────────────────────────── barra de filtros */
+.interest-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+.interest-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 10px);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.interest-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 0.88rem;
+}
+
+.interest-search .search-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 6px;
+}
+
+.interest-search .search-clear:hover { color: var(--text-main); }
+
+.interest-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 10px);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.interest-filter select {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.interest-check-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ─────────────────────────── barra de seleção */
+.interest-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.interest-selection-info {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.interest-selection-info svg { color: var(--primary); }
+
+.interest-warn-chip {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--warning);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.interest-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ─────────────────────────── tabela */
+.interest-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.interest-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.interest-table thead th {
+  text-align: left;
+  padding: 0.7rem 0.8rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.interest-table tbody td {
+  padding: 0.65rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+
+.interest-table tbody tr:last-child td { border-bottom: none; }
+.interest-table tbody tr:hover { background: var(--surface-soft); }
+.interest-table tbody tr.is-selected {
+  background: rgba(79, 70, 229, 0.08);
+}
+
+.interest-col-check { width: 36px; }
+.interest-col-check input { cursor: pointer; accent-color: var(--primary); }
 
 .entry-user {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 0.6rem;
   min-width: 0;
 }
 
 .entry-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--primary-color, #0EA5E9);
-  color: #fff;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-weight: 600;
-  font-size: 14px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(79, 70, 229, 0.14);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.entry-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
 }
 
 .entry-details strong {
-  display: block;
-  font-size: 14px;
-  color: var(--text-primary, #FFFFFF);
-  margin-bottom: 2px;
+  color: var(--text-main);
+  font-size: 0.87rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.entry-contact {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+.entry-email {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .contact-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-secondary, #64748B);
+  gap: 0.35rem;
+  color: var(--text);
+  white-space: nowrap;
 }
 
-.entry-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-  flex-shrink: 0;
+.contact-item svg { color: var(--text-muted); }
+
+.interest-no-contact {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.interest-service-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+
+.interest-service-chip img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 5px;
+}
+
+.interest-service-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.interest-group-cell,
+.interest-message-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
 }
 
 .entry-date {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-secondary, #64748B);
+  gap: 0.35rem;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.interest-actions-cell { width: 48px; text-align: right; }
+
+.interest-wa-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 0.45rem;
+  text-decoration: none;
+}
+
+.interest-no-results {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.interest-show-all {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.75rem auto 0;
+}
+
+/* ─────────────────────────── compositor */
+.interest-composer {
+  margin-top: 1.25rem;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  opacity: 0.72;
+  transition: opacity 0.2s, border-color 0.2s;
+}
+
+.interest-composer.is-active {
+  opacity: 1;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.25);
+}
+
+.interest-composer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.interest-composer-head h3 {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+  color: var(--text-main);
+}
+
+.interest-composer-head p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.interest-composer-badge {
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(79, 70, 229, 0.14);
+  color: var(--primary);
+  font-size: 0.74rem;
+  font-weight: 700;
   white-space: nowrap;
 }
 
-.entry-message {
-  margin: 0;
-  padding: 8px 12px;
-  background: var(--card-bg, rgba(255,255,255,0.04));
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--text-secondary, #64748B);
-  border: 1px solid var(--border-color, #334155);
-  max-width: 280px;
-  text-align: right;
+.interest-composer-grid {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) 2fr;
+  gap: 0.85rem;
+  margin-bottom: 0.85rem;
 }
 
-.empty-state {
+.interest-composer-grid .form-group label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.interest-composer-grid input,
+.interest-composer-grid textarea {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 10px);
+  background: var(--surface-soft);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.86rem;
+  resize: vertical;
+}
+
+.interest-composer-grid input:focus,
+.interest-composer-grid textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.interest-composer-grid input:disabled,
+.interest-composer-grid textarea:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.interest-channels { margin-bottom: 0.85rem; }
+
+.interest-channels > label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.interest-channels-list {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  background: var(--card-bg, rgba(255,255,255,0.04));
-  border-radius: 12px;
-  border: 1px dashed var(--border-color, #334155);
-  color: var(--text-secondary, #64748B);
-  font-size: 15px;
+  gap: 0.45rem;
+  flex-wrap: wrap;
 }
 
-@media (max-width: 640px) {
-  .interest-list-page .admin-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
+.interest-channel-btn {
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
 
-  .interest-entry-card {
-    flex-direction: column;
-  }
+.interest-channel-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--text-main); }
+.interest-channel-btn.active {
+  background: rgba(79, 70, 229, 0.14);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 700;
+}
+.interest-channel-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
-  .entry-meta {
-    align-items: flex-start;
-    width: 100%;
-  }
+.interest-channels-hint {
+  margin: 0.4rem 0 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
 
-  .entry-message {
-    text-align: left;
-    max-width: 100%;
-  }
+.interest-composer-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.75rem;
+  border-radius: var(--radius-sm, 10px);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error);
+  font-size: 0.82rem;
+}
+
+.interest-composer-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.interest-composer-footer .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.interest-success {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 1rem;
+  border-radius: var(--radius-sm, 10px);
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--success);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .interest-composer-grid { grid-template-columns: 1fr; }
+  .interest-table-wrap { overflow-x: auto; }
+  .interest-table { min-width: 860px; }
 }

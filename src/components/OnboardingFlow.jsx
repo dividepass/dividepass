@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, ArrowRight, ArrowLeft, Loader2, AlertCircle, CheckCircle2, Sparkles, Plus, X } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
@@ -7,10 +7,56 @@ import { saveAvatar } from '../lib/uploadAvatar';
 import { buildOnboardingPath, pickColumnValues, restoreAnswersFromProfile, ONBOARDING_STEPS } from '../lib/onboardingQuestions';
 import { maskPhone, onlyDigits, isValidPhone } from '../lib/maskPhone';
 import PlatformPicker, { NONE_PLATFORM } from './PlatformPicker';
+import AvatarPicker from './AvatarPicker';
+import Confetti from './Confetti';
 import './OnboardingFlow.css';
 
 // Últimos 10 dígitos: compara 11... com 55... como o mesmo contato.
 const right11 = (digits) => String(digits || '').slice(-10);
+
+/**
+ * Quantas indicações a etapa exige. O questionário define (`minInvites`); o
+ * padrão é 1 — pedir 2 fazia as pessoas largarem o onboarding no meio.
+ */
+const minConvidados = (step) => step?.minInvites ?? 1;
+
+/**
+ * Erro de coluna ausente: 42703 (Postgres, quando a coluna existe mas o
+ * INSERT não pode usá-la) ou PGRST204 (PostgREST, quando a coluna ainda
+ * NÃO existe no schema cache). É o sinal de que a migration do fluxo novo
+ * ainda não foi aplicada no banco.
+ */
+const isColunaFaltando = (err) => {
+  const msg = err?.message || '';
+  return (
+    err?.code === '42703' ||
+    err?.code === 'PGRST204' ||
+    /does not exist/i.test(msg) ||
+    /could not find the '.*' column/i.test(msg)
+  );
+};
+
+/**
+ * Dois telefones são o mesmo quando batem os dígitos NACIONAIS.
+ *
+ * O cadastro costuma gravar com DDI ("55 11 98888-7777") e a pessoa digita
+ * com DDD ("11 98888-7777") — comparar a string inteira deixaria o próprio
+ * número passar. A comparação pelos últimos dígitos resolve o DDI, mas
+ * confunde dois números de DDD diferente com o mesmo sufixo (11 e 21 com o
+ * mesmo 8 dígitos). Por isso: tira o DDI e compara o national inteiro.
+ */
+const mesmoTelefone = (a, b) => {
+  const nacional = (v) => {
+    let d = String(v || '').replace(/\D/g, '');
+    // DDI do Brasil: o número com DDI tem 13 dígitos (celular) ou 12 (fixo).
+    if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+    return d;
+  };
+
+  const x = nacional(a);
+  const y = nacional(b);
+  return !!x && !!y && x === y;
+};
 
 const SCREEN_AVATAR = 'avatar';
 const SCREEN_SURVEY = 'survey';
@@ -28,7 +74,7 @@ const SCREEN_DONE = 'done';
  * gravado ao terminar todas as etapas, e é esse campo que os gates de PWA e
  * push leem para não atrapalharem.
  */
-export default function OnboardingFlow() {
+export default function OnboardingFlow({ onFinished }) {
   const { profile, refreshProfile } = useAuth();
   const navigate = useNavigate();
 
@@ -39,8 +85,10 @@ export default function OnboardingFlow() {
 
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(null);
+  const [avatarPreset, setAvatarPreset] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const avatarInputRef = useRef(null);
+  /* Contador do confete: cada vez que muda, dispara de novo. */
+  const [celebrar, setCelebrar] = useState(0);
 
   // Estados dos passos de plataforma: current e interested podem virar
   // várias perguntas, então ficam separados de `answers`.
@@ -73,18 +121,30 @@ export default function OnboardingFlow() {
       // Respostas escalares.
       setAnswers(restoreAnswersFromProfile(pRes.data));
 
-      // Plataformas já respondidas: só "current" tem mapeamento direto de
-      // volta — "interested" é salvo sem a categoria, então fica pra
-      // quando refatorarmos com step_id em user_onboarding_interests.
-      const current = (iRes.data || []).filter((i) => i.kind === 'current');
-      if (current.length) {
-        setPlatformPicks((prev) => ({
-          ...prev,
-          current_platforms: current.map((i) => String(i.platform_id)).filter(Boolean),
-        }));
+      // Plataformas já respondidas. Cada pergunta de plataforma tem um
+      // `kind` próprio ('share' = quer criar, 'join' = quer entrar), então o
+      // mapeamento é direto: kind -> id do passo.
+      const stepByKind = Object.fromEntries(
+        ONBOARDING_STEPS.filter((s) => s.type === 'platforms').map((s) => [s.kind, s.id])
+      );
+      const picks = {};
+      for (const i of iRes.data || []) {
+        const stepId = stepByKind[i.kind];
+        if (!stepId || !i.platform_id) continue;
+        picks[stepId] = picks[stepId] || [];
+        picks[stepId].push(String(i.platform_id));
+      }
+      if (Object.keys(picks).length) {
+        setPlatformPicks((prev) => ({ ...prev, ...picks }));
       }
 
-      setInvites((invRes.data || []).map((iv) => ({ name: iv.name, phone: iv.phone })));
+      /* O próprio número da pessoa não vale como indicação: se ficou salvo
+         de uma tentativa anterior, ele sai da lista e não trava a etapa. */
+      setInvites(
+        (invRes.data || [])
+          .filter((iv) => !mesmoTelefone(iv.phone, profile?.phone))
+          .map((iv) => ({ name: iv.name, phone: iv.phone }))
+      );
 
       // Pula direto pra etapa salva.
       const savedPath = buildOnboardingPath(restoreAnswersFromProfile(pRes.data));
@@ -108,6 +168,15 @@ export default function OnboardingFlow() {
   const step = path[index];
   const isFirst = index === 0;
   const isLast = index === path.length - 1;
+
+  /* O botão de continuar só libera quando a etapa está satisfeita. Na etapa
+     de convidados, isso significa as 2 pessoas — antes o botão aparecia
+     clicável e só reclamava depois do clique. */
+  const canContinue = (() => {
+    if (!step) return false;
+    if (step.type === 'invites') return invites.length >= minConvidados(step);
+    return true;
+  })();
 
   const setAnswer = (stepId, value) => {
     setError('');
@@ -157,7 +226,7 @@ export default function OnboardingFlow() {
     // A etapa de indicações é a única que não usa `answers`: as pessoas
     // ficam em `invites`, porque viram linhas próprias na tabela.
     if (s.type === 'invites') {
-      const falta = (s.minInvites || 2) - invites.length;
+      const falta = minConvidados(s) - invites.length;
       if (falta > 0) {
         setError(
           falta === 1
@@ -222,6 +291,14 @@ export default function OnboardingFlow() {
       setInviteError('Digite um WhatsApp válido com DDD.');
       return;
     }
+    /* O próprio número da pessoa não vale como indicação. Sem esta regra o
+       jeito mais rápido de cumprir a etapa era digitar o número dela duas
+       vezes — e esse contato não serve para nada: não dá para avisar quem
+       já está cadastrado. */
+    if (mesmoTelefone(phone, profile?.phone)) {
+      setInviteError('Este número é idêntico ao seu do cadastro. Indique outra pessoa.');
+      return;
+    }
     // O mesmo contato não entra duas vezes nem com DDD diferente.
     const jaTem = invites.some((i) => i.phone === phone || right11(i.phone) === right11(phone));
     if (jaTem) {
@@ -241,19 +318,15 @@ export default function OnboardingFlow() {
     setInviteError('');
   };
 
-  const handleAvatarFile = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setAvatarFile(file);
-    const reader = new FileReader();
-    reader.onload = (ev) => setAvatarPreview(ev.target.result);
-    reader.readAsDataURL(file);
-  };
-
   const goToSurvey = async () => {
     setError('');
 
-    if (avatarFile && profile?.id) {
+    if ((!avatarFile && !avatarPreset) || !profile?.id) {
+      setError('Escolha um avatar ou envie uma foto para continuar.');
+      return;
+    }
+
+    if (avatarFile) {
       setUploading(true);
       try {
         await saveAvatar(avatarFile, profile.id);
@@ -264,6 +337,18 @@ export default function OnboardingFlow() {
         return;
       }
       setUploading(false);
+    } else if (avatarPreset) {
+      setUploading(true);
+      const { error: presetErr } = await supabase
+        .from('users')
+        .update({ avatar_url: avatarPreset.url })
+        .eq('id', profile.id);
+      setUploading(false);
+      if (presetErr) {
+        setError('Não foi possível salvar o avatar. Tente novamente.');
+        return;
+      }
+      await refreshProfile?.();
     }
 
     // Marca o início e a primeira etapa, pra retomada funcionar mesmo se o
@@ -282,6 +367,12 @@ export default function OnboardingFlow() {
   /**
    * Grava as respostas atuais + a etapa para onde o usuário está indo.
    * Idempotente: usado a cada "Continuar" (fire-and-forget) e no finish.
+   *
+   * Tolerante à migration pendente: se as colunas novas (group_intent,
+   * expectations) ou o CHECK do kind ainda não existirem no banco, o
+   * onboarding CONTINUA funcionando — salva o que o banco aceita e avisa no
+   * console. Sem isso, "Concluir" falharia e o usuário ficaria preso no
+   * primeiro acesso.
    */
   const persistProgress = async (nextStepId) => {
     if (!profile?.id) return;
@@ -291,7 +382,27 @@ export default function OnboardingFlow() {
       const { error: profileErr } = await supabase
         .from('user_onboarding_profiles')
         .upsert({ user_id: profile.id, ...row }, { onConflict: 'user_id' });
-      if (profileErr) throw profileErr;
+
+      if (profileErr) {
+        if (!isColunaFaltando(profileErr)) throw profileErr;
+
+        // Só as colunas que já existiam no schema antigo.
+        const legado = {};
+        for (const col of ['main_barrier', 'main_barrier_other']) {
+          if (row[col] !== undefined) legado[col] = row[col];
+        }
+        if (!Object.keys(legado).length) throw profileErr;
+
+        const { error: retryErr } = await supabase
+          .from('user_onboarding_profiles')
+          .upsert({ user_id: profile.id, ...legado }, { onConflict: 'user_id' });
+        if (retryErr) throw retryErr;
+
+        console.warn(
+          'Onboarding: as colunas group_intent/expectations ainda não existem no banco. ' +
+            'Aplique database/EXECUTAR-2026-11-02-onboarding-novo-fluxo.sql no SQL Editor do Supabase.'
+        );
+      }
     }
 
     // Plataformas são linhas individuais: uma por (usuário, plataforma, tipo).
@@ -329,10 +440,24 @@ export default function OnboardingFlow() {
     }
 
     if (interestRows.length) {
-      const { error: intErr } = await supabase
-        .from('user_onboarding_interests')
-        .upsert(interestRows, { onConflict: 'user_id,kind,platform_name', ignoreDuplicates: true });
-      if (intErr) throw intErr;
+      /* Uma escrita por 'kind': se o CHECK do banco ainda não aceitar um dos
+         tipos (migration nova não aplicada), os outros tipos continuam
+         sendo gravados. */
+      const porKind = {};
+      for (const r of interestRows) (porKind[r.kind] = porKind[r.kind] || []).push(r);
+
+      for (const [kind, lista] of Object.entries(porKind)) {
+        const { error: intErr } = await supabase
+          .from('user_onboarding_interests')
+          .upsert(lista, { onConflict: 'user_id,kind,platform_name', ignoreDuplicates: true });
+        if (intErr) {
+          console.warn(
+            `Onboarding: não foi possível salvar as plataformas do tipo "${kind}". ` +
+              'Aplique database/EXECUTAR-2026-11-02-onboarding-novo-fluxo.sql no SQL Editor do Supabase.',
+            intErr.message
+          );
+        }
+      }
     }
 
     if (invites.length) {
@@ -377,6 +502,10 @@ export default function OnboardingFlow() {
 
       await refreshProfile?.();
       setScreen(SCREEN_DONE);
+      setCelebrar((c) => c + 1);
+      // A página pai usa isso para não redirecionar para o dashboard antes
+      // de o usuário ver a confirmação de "Tudo pronto!".
+      onFinished?.();
     } catch (err) {
       console.error('Onboarding: falha ao salvar', err);
       setError('Não foi possível salvar suas respostas. Tente novamente.');
@@ -401,15 +530,17 @@ export default function OnboardingFlow() {
         {screen === SCREEN_AVATAR && (
           <>
             <div className="ob-icon"><Camera size={26} /></div>
-            <h2 id="ob-title" className="ob-title">Deixe o seu perfil mais completo</h2>
+            <h2 id="ob-title" className="ob-title">Escolha seu avatar</h2>
             <p className="ob-sub">
-              Uma foto de perfil ajuda outras pessoas a confiarem em você e deixa o seu
-              depoimento com cara de gente.
+              Suba uma foto ou escolha um avatar pronto. Quem divide grupos com você
+              reconhece mais rápido um rosto — e dá para trocar depois.
             </p>
 
             <div className="ob-avatar-area">
               {avatarPreview ? (
                 <img src={avatarPreview} alt="Pré-visualização do avatar" className="ob-avatar-img" />
+              ) : avatarPreset ? (
+                <img src={avatarPreset.url} alt="Pré-visualização do avatar" className="ob-avatar-img" />
               ) : profile?.avatar_url ? (
                 <img src={profile.avatar_url} alt="Seu avatar" className="ob-avatar-img" />
               ) : (
@@ -417,17 +548,27 @@ export default function OnboardingFlow() {
                   {(profile?.name || '?').charAt(0).toUpperCase()}
                 </div>
               )}
-              {!avatarFile && (
-                <button
-                  className="ob-avatar-edit"
-                  onClick={() => avatarInputRef.current?.click()}
-                  disabled={uploading}
-                  aria-label="Escolher foto"
-                >
-                  <Camera size={16} />
-                </button>
-              )}
             </div>
+
+            <AvatarPicker
+              compact
+              selectedPreset={avatarPreset?.id || null}
+              onSelectPreset={(preset) => {
+                setAvatarPreset(preset);
+                setAvatarFile(null);
+                setAvatarPreview(null);
+                setError('');
+              }}
+              onSelectFile={(file) => {
+                setAvatarFile(file);
+                setAvatarPreset(null);
+                setError('');
+                const reader = new FileReader();
+                reader.onload = (ev) => setAvatarPreview(ev.target.result);
+                reader.readAsDataURL(file);
+              }}
+              disabled={uploading}
+            />
 
             {error && (
               <div className="ob-error">
@@ -437,30 +578,24 @@ export default function OnboardingFlow() {
 
             <div className="ob-actions ob-actions-center">
               <button className="ob-btn-primary ob-btn-block" onClick={goToSurvey} disabled={uploading}>
-                {uploading ? <><Loader2 size={16} className="spin" /> Enviando...</> : <>Continuar <ArrowRight size={16} /></>}
+                {uploading ? <><Loader2 size={16} className="spin" /> Salvando...</> : <>Continuar <ArrowRight size={16} /></>}
               </button>
             </div>
-            <button
-              className="ob-upload-link"
-              onClick={() => setScreen(SCREEN_SURVEY)}
-              disabled={uploading}
-            >
-              {avatarFile ? 'Enviar a foto depois' : 'Agora não, quero pular essa etapa'}
-            </button>
-            <input
-              ref={avatarInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleAvatarFile}
-              hidden
-            />
           </>
         )}
 
         {screen === SCREEN_SURVEY && step && (
           <>
             {step.type !== 'info' && (
-              <h2 id="ob-title" className="ob-title ob-question">{step.title}</h2>
+              <>
+                <span className="ob-eyebrow">
+                  {isLast ? 'Última pergunta' : `Pergunta ${index} de ${path.length - 1}`}
+                </span>
+                <h2 id="ob-title" className="ob-title ob-question">{step.title}</h2>
+                {step.helper && step.type !== 'invites' && (
+                  <p className="ob-question-helper">{step.helper}</p>
+                )}
+              </>
             )}
 
             {step.type === 'info' && (
@@ -552,11 +687,15 @@ export default function OnboardingFlow() {
                 customInput={customInputs[step.id] || ''}
                 showNoneOption
                 showCustomOption
+                /* O catálogo tem 100+ serviços: sem busca e sem blocos por
+                   categoria, a pergunta vira uma rolagem infinita — e isso
+                   cansa mais do que a pergunta anterior. */
+                searchable
+                groupByCategory
                 onToggle={(ids) => setPlatform(step, ids)}
                 onCustomInputChange={(v) => setCustomInputs((p) => ({ ...p, [step.id]: v }))}
                 onAddCustom={() => addCustom(step)}
                 onRemoveCustom={(name) => removeCustom(step, name)}
-                helper={step.helper}
               />
             )}
 
@@ -586,7 +725,7 @@ export default function OnboardingFlow() {
                 )}
 
                 <div className="ob-invites-count">
-                  <strong>{invites.length}</strong> de {step.minInvites || 2} adicionadas
+                  <strong>{invites.length}</strong> de {minConvidados(step)} adicionada{minConvidados(step) === 1 ? '' : 's'}
                 </div>
 
                 <div className="ob-invites-form">
@@ -619,10 +758,10 @@ export default function OnboardingFlow() {
                     </span>
                   )}
 
-                  {invites.length < (step.minInvites || 2) && (
+                  {invites.length < minConvidados(step) && (
                     <p className="ob-invites-hint">
-                      Faltam <strong>{(step.minInvites || 2) - invites.length}</strong>{' '}
-                      {(step.minInvites || 2) - invites.length === 1 ? 'pessoa' : 'pessoas'} para continuar.
+                      Faltam <strong>{minConvidados(step) - invites.length}</strong>{' '}
+                      {minConvidados(step) - invites.length === 1 ? 'pessoa' : 'pessoas'} para continuar.
                     </p>
                   )}
                 </div>
@@ -630,13 +769,16 @@ export default function OnboardingFlow() {
             )}
 
             {step.type === 'text' && (
-              <textarea
-                className="ob-textarea"
-                value={answers[step.id] || ''}
-                onChange={(e) => setAnswer(step.id, e.target.value)}
-                placeholder={step.placeholder}
-                rows={4}
-              />
+              <div className="ob-text-block">
+                <textarea
+                  className="ob-textarea"
+                  value={answers[step.id] || ''}
+                  onChange={(e) => setAnswer(step.id, e.target.value)}
+                  placeholder={step.placeholder}
+                  rows={5}
+                />
+                <p className="ob-text-hint">Opcional — mas é a resposta que mais ajuda a gente.</p>
+              </div>
             )}
 
             {error && (
@@ -654,7 +796,7 @@ export default function OnboardingFlow() {
               <button
                 className="ob-btn-primary ob-next"
                 onClick={isLast ? finish : handleNext}
-                disabled={uploading}
+                disabled={uploading || !canContinue}
               >
                 {uploading ? (
                   <><Loader2 size={16} className="spin" /> Salvando...</>
@@ -670,6 +812,13 @@ export default function OnboardingFlow() {
 
         {screen === SCREEN_DONE && (
           <>
+            {/* Confete de conclusão: o questionário acabou e a pessoa precisa
+                sentir que valeu a pena. */}
+            {celebrar > 0 && (
+              <div className="confetti-overlay">
+                <Confetti fire={celebrar} fall={window.innerHeight} />
+              </div>
+            )}
             <div className="ob-icon ob-icon-done"><CheckCircle2 size={28} /></div>
             <h2 id="ob-title" className="ob-title">Tudo pronto!</h2>
             <p className="ob-sub">Agora a gente consegue montar as melhores opções para você.</p>

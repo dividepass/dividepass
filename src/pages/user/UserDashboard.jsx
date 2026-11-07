@@ -8,7 +8,13 @@ import { supabase } from '../../lib/supabase';
 import { saveAvatar } from '../../lib/uploadAvatar';
 import ServicesCarousel from '../../components/ServicesCarousel';
 import SubscriptionsCarousel from '../../components/SubscriptionsCarousel';
+import RecommendedServices from '../../components/RecommendedServices';
+import OpportunitiesSection from '../../components/OpportunitiesSection';
+import InterestPollCard from '../../components/InterestPollCard';
 import FeedbackModal from '../../components/FeedbackModal';
+import WhatsAppGroupCard from '../../components/WhatsAppGroupCard';
+import WhatsAppIcon from '../../components/WhatsAppIcon';
+import { useWhatsappVipUrl } from '../../hooks/useWhatsappVipUrl';
 import { calculateUserSavings, getSavingsSummary, getAdminAlerts, fmtPercentage } from '../../utils/savingsService';
 import './UserDashboard.css';
 
@@ -148,8 +154,9 @@ function SavingsServiceRow({ item, unavailable, expandedId, onToggle }) {
 
 function UserDashboard() {
   const { profile, refreshProfile } = useAuth();
-  const { currentUser, getActiveServices, getAvailableServices, isSubscribedToService, announcements, dismissAnnouncement, groups, streamingServices } = useAppDataContext();
+  const { currentUser, getActiveServices, getAvailableServices, isSubscribedToService, announcements, dismissAnnouncement, groups, streamingServices, servicePlans } = useAppDataContext();
   const { isStandalone, promptInstall } = usePwaInstall();
+  const whatsappVipUrl = useWhatsappVipUrl();
   const categoryBarRef = useRef(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -521,9 +528,23 @@ function UserDashboard() {
         </div>
       )}
 
-      <div className="page-header">
+      {/* Topo: saudação à esquerda e convite do Grupo VIP à direita.
+          A frase "Escolha um serviço no catálogo para começar." saiu de
+          propósito: no celular ela empurrava tudo para baixo e não dizia
+          nada que o card do WhatsApp não diga melhor. */}
+      <div className="page-header dashboard-header">
         <h1>Olá, {primeiroNome}! 👋</h1>
-        <p>{hasActiveServices ? 'Aqui está o resumo das suas assinaturas ativas.' : 'Escolha um serviço no catálogo para começar.'}</p>
+
+        <a
+          className="whatsapp-vip-chip"
+          href={whatsappVipUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Entrar no Grupo VIP da DividePass no WhatsApp"
+        >
+          <WhatsAppIcon size={18} />
+          <span>Entre no Grupo VIP 💜</span>
+        </a>
       </div>
 
       {/* Minhas Assinaturas — primeiro, com scroll horizontal automático */}
@@ -544,6 +565,17 @@ function UserDashboard() {
         </section>
       )}
 
+      {/* Recomendados para você — faixa compacta no topo.
+          Cada item é só logo + nome, em scroll horizontal, e as ofertas
+          patrocinadas entram no meio da faixa com um leve destaque.
+          A ordenação usa os interesses da pessoa (onboarding, votos, lista de
+          espera, categoria que já assina) e as ofertas patrocinadas. */}
+      <RecommendedServices
+        services={streamingServices}
+        groups={groups}
+        subscriptions={activeServicesAll}
+      />
+
       {/* Grupos Disponíveis */}
       <section className="available-groups-section">
         <div className="section-title-row">
@@ -554,6 +586,22 @@ function UserDashboard() {
         </div>
         <ServicesCarousel services={streamingServices} groups={groups} basePath="/dashboard/catalog/" />
       </section>
+
+      {/* Ofertas e oportunidades — vagas novas, ofertas de parceiros e
+          alternativas para economizar. */}
+      <OpportunitiesSection
+        services={streamingServices}
+        groups={groups}
+        servicePlans={servicePlans}
+      />
+
+      {/* Voto de interesse — ajuda a decidir quais grupos abrir primeiro */}
+      <InterestPollCard services={streamingServices} groups={groups} />
+
+      {/* Grupo Oficial no WhatsApp — convite para acompanhar as vagas que
+          surgem. Fica acima do feedback porque é o canal que gera retorno
+          imediato para a pessoa. */}
+      <WhatsAppGroupCard />
 
       {/* Feedback — CTA que convida o usuário a dizer o que falta na plataforma */}
       <section className="feedback-cta-card">

@@ -1,0 +1,413 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   PULSE CODING — painel do admin
+   ---------------------------------------------------------------------------
+   Duas telas: o catálogo importado (PulseCatalog) e o detalhe do pedido
+   (PulseOrderDetail). As duas usam as variáveis do tema do painel.
+
+   No celular vale o mesmo contrato do resto do admin (admin-responsive.css):
+   tabela vira cartão, filtro não empilha, nenhum scroll aninhado.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ------------------------------------------------------------------ */
+/* Cartões de resumo                                                   */
+/* ------------------------------------------------------------------ */
+.pulse-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.admin-content .pulse-stat {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+}
+
+.pulse-stat > svg {
+  color: var(--primary);
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.pulse-stat > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.pulse-stat span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.pulse-stat strong {
+  font-size: 1.32rem;
+  line-height: 1.15;
+  color: var(--text-main);
+}
+
+.pulse-stat small {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.pulse-stat-warn {
+  color: #b45309 !important;
+  font-weight: 700;
+}
+
+.pulse-status-text {
+  font-size: 1.05rem !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Abas e busca                                                         */
+/* ------------------------------------------------------------------ */
+.pulse-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
+}
+
+.pulse-tab {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm, 10px);
+  padding: 0.5rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.pulse-tab:hover {
+  color: var(--text-main);
+}
+
+.pulse-tab-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.pulse-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 10px);
+  background: var(--surface);
+  padding: 0 0.65rem;
+  color: var(--text-muted);
+}
+
+.pulse-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0.6rem 0;
+  color: var(--text-main);
+  font-size: 0.9rem;
+  outline: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tabela do catálogo                                                   */
+/* ------------------------------------------------------------------ */
+.pulse-title {
+  font-weight: 650;
+  color: var(--text-main);
+  font-size: 0.92rem;
+}
+
+.pulse-sub {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  margin-top: 0.1rem;
+}
+
+.pulse-muted {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.pulse-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pulse-tag-ok {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
+.pulse-tag-warn {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+}
+
+.pulse-tag-off {
+  background: rgba(148, 163, 184, 0.16);
+  color: #475569;
+}
+
+.pulse-tag-muted {
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
+}
+
+/* ------------------------------------------------------------------ */
+/* Alertas                                                              */
+/* ------------------------------------------------------------------ */
+.admin-content .pulse-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+  padding: 0.85rem 1rem;
+}
+
+.pulse-alert > svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.pulse-alert strong {
+  display: block;
+  color: var(--text-main);
+  font-size: 0.9rem;
+  margin-bottom: 0.15rem;
+}
+
+.pulse-alert p {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  margin: 0;
+}
+
+.pulse-alert-hint {
+  margin-top: 0.35rem !important;
+  font-size: 0.78rem !important;
+}
+
+.pulse-alert-error {
+  border-color: rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.07);
+}
+
+.pulse-alert-error > svg {
+  color: #dc2626;
+}
+
+.pulse-alert-warn {
+  border-color: rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.08);
+}
+
+.pulse-alert-warn > svg {
+  color: #b45309;
+}
+
+/* ------------------------------------------------------------------ */
+/* Estado vazio                                                         */
+/* ------------------------------------------------------------------ */
+.pulse-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: center;
+  padding: 2rem 1.25rem;
+  color: var(--text-muted);
+}
+
+.pulse-empty strong {
+  color: var(--text-main);
+  font-size: 0.98rem;
+}
+
+.pulse-empty p {
+  max-width: 34rem;
+  font-size: 0.85rem;
+  margin: 0 0 0.4rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Detalhe do pedido                                                    */
+/* ------------------------------------------------------------------ */
+.pulse-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 0.35rem;
+}
+
+.pulse-back:hover {
+  color: var(--text-main);
+}
+
+.pulse-creds {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.pulse-cred-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.8rem 0.9rem;
+  background: var(--surface);
+}
+
+.pulse-cred-box-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-weight: 650;
+  color: var(--text-main);
+  font-size: 0.9rem;
+  margin-bottom: 0.55rem;
+}
+
+.pulse-cred {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  min-width: 0;
+}
+
+.pulse-cred-label {
+  flex: 0 0 5.5rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.pulse-cred code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  color: var(--text-main);
+  background: transparent;
+}
+
+.pulse-cred-copy {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm, 8px);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.pulse-cred-copy:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Linha do tempo                                                       */
+/* ------------------------------------------------------------------ */
+.pulse-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pulse-event {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.pulse-event-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--primary);
+  margin-top: 0.4rem;
+  flex-shrink: 0;
+}
+
+.pulse-event strong {
+  display: block;
+  font-size: 0.86rem;
+  color: var(--text-main);
+}
+
+.pulse-event p {
+  margin: 0.1rem 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.pulse-event small {
+  font-size: 0.73rem;
+  color: var(--text-soft);
+}
+
+.pulse-links {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Celular: cards em grade, rótulo → valor                             */
+/* ------------------------------------------------------------------ */
+@media (max-width: 720px) {
+  .pulse-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
+  }
+
+  .admin-content .pulse-stat {
+    padding: 0.7rem 0.75rem;
+    gap: 0.5rem;
+  }
+
+  .pulse-stat strong {
+    font-size: 1.12rem;
+  }
+
+  .pulse-cred {
+    flex-wrap: wrap;
+  }
+
+  .pulse-cred-label {
+    flex: 0 0 100%;
+  }
+}

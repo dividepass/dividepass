@@ -1,74 +1,85 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, ArrowRight, Loader2, Save, Info, Mail, Link, Hash, MessageSquare,
-  Settings, Camera, Check, Sparkles, Tv, Crown, CalendarDays, KeyRound, QrCode,
-  Trash2,
+  ArrowLeft, ArrowRight, Loader2, Save, Info, Tv, Crown, Eye, KeyRound, QrCode,
+  CheckCircle2, Trash2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
-import { simulatePrice, brl, MIN_PRICE_PER_SLOT } from '../../lib/platformFee';
+import { brl, MIN_PRICE_PER_SLOT } from '../../lib/platformFee';
 import { hasAdsColumnAvailable, isMissingHasAdsColumn } from '../../lib/groupHasAds';
-import AdsToggle from '../../components/AdsToggle';
+import { visibilityColumnAvailable, isMissingVisibilityColumn } from '../../lib/groupVisibility';
 import {
-  PIX_TYPE_OPTIONS as PIX_TYPES, pixTypePlaceholder, maskPixKey, unmaskPixKey, remaskPixKey,
-} from '../../lib/pixKeyMask';
+  subscriptionStatusColumnAvailable, isMissingSubscriptionStatusColumn,
+  groupStatusForSubscription, SUBSCRIPTION_ACTIVE, SUBSCRIPTION_PENDING,
+} from '../../lib/groupSubscription';
+import { chatColumnAvailable, isMissingChatColumn } from '../../lib/groupChat';
+import {
+  buildGroupName, fetchPlansForService, maxSlotsFor,
+  pricePerSlot, suggestedGroupTotal, slotPriceOutOfRange, planSlotRangeText,
+} from '../../lib/platformPlans';
+import { unmaskPixKey } from '../../lib/pixKeyMask';
+import { DEFAULT_RULE_TEXT, rulesSummary } from '../../lib/groupRuleTypes';
+
+import WizardSteps from '../../components/group-creation/WizardSteps';
+import PlatformSearchStep from '../../components/group-creation/PlatformSearchStep';
+import PlanSelectionStep from '../../components/group-creation/PlanSelectionStep';
+import SlotsStep from '../../components/group-creation/SlotsStep';
+import SubscriptionStatusStep from '../../components/group-creation/SubscriptionStatusStep';
+import VisibilityStep from '../../components/group-creation/VisibilityStep';
+import RuleTypesField from '../../components/group-creation/RuleTypesField';
+import BillingStep from '../../components/group-creation/BillingStep';
+import CredentialsStep from '../../components/group-creation/CredentialsStep';
+import PaymentStep from '../../components/group-creation/PaymentStep';
+import SummaryStep from '../../components/group-creation/SummaryStep';
+import ManagedEmailOption from '../../components/group-creation/ManagedEmailOption';
+import { provisionarEmailGerenciado, isMissingEmailCodeColumn } from '../../lib/managedGroupEmail';
+
 import './CreateGroup.css';
 
-const PLAN_TYPES = [
-  'Conta Individual', 'Conta Padrão', 'Conta Premium', 'Conta VIP', 'Conta Go',
-  'Conta Light', 'Conta Enterprise', 'Conta Team', 'Conta PRO', 'Conta PRO+',
-  'Conta PLUS', 'Conta MAX', 'Conta Educação', 'Conta Duo', 'Conta Família',
-];
-
-const CRED_TYPES = [
-  { value: 'email_password', icon: Mail, label: 'E-mail + Senha' },
-  { value: 'link', icon: Link, label: 'Link de Acesso' },
-  { value: 'code', icon: Hash, label: 'Código' },
-  { value: 'invite', icon: MessageSquare, label: 'Convite' },
-  { value: 'custom', icon: Settings, label: 'Personalizado' },
-];
-
-const CYCLE_OPTIONS = [
-  { value: 'monthly', label: 'Mensal' },
-  { value: 'quarterly', label: 'Trimestral' },
-  { value: 'semiannual', label: 'Semestral' },
-  { value: 'annual', label: 'Anual' },
-];
-
+/**
+ * TRILHA DE 6 ETAPAS (usuário e admin usam a mesma ordem).
+ *
+ * 1. Plataforma  — busca + as mais usadas no topo + confirmação
+ * 2. Plano       — plano/tipo de conta, vagas e status da assinatura
+ * 3. Grupo       — visibilidade (público/privado) e regras do grupo
+ * 4. Credenciais — como os membros acessam a conta
+ * 5. Pagamentos  — ciclos, PIX, taxa de adesão e valor do grupo
+ * 6. Resumo      — confirmação + políticas + criação do grupo
+ */
 const STEPS = [
-  { key: 'servico', title: 'Plataforma', icon: Tv },
-  { key: 'identidade', title: 'Identidade', icon: Sparkles },
+  { key: 'plataforma', title: 'Plataforma', icon: Tv },
   { key: 'plano', title: 'Plano', icon: Crown },
-  { key: 'cobranca', title: 'Cobrança', icon: CalendarDays },
+  { key: 'grupo', title: 'Grupo', icon: Eye },
   { key: 'credenciais', title: 'Credenciais', icon: KeyRound },
-  { key: 'pagamento', title: 'Pagamento', icon: QrCode },
+  { key: 'pagamentos', title: 'Pagamentos', icon: QrCode },
+  { key: 'resumo', title: 'Resumo', icon: CheckCircle2 },
 ];
 
 const STEP_COPY = {
-  servico: {
+  plataforma: {
     title: 'Qual plataforma o grupo vai compartilhar?',
     desc: 'É o serviço cujas credenciais os membros vão usar.',
   },
-  identidade: {
-    title: 'Como o grupo vai se chamar?',
-    desc: 'Esse nome aparece no catálogo e para os membros.',
-  },
   plano: {
-    title: 'Que tipo de conta você compartilha?',
-    desc: 'Ajuda os membros a saber o que vão receber.',
+    title: 'Qual é o tipo de conta que você tem a assinatura?',
+    desc: 'Escolha o plano da plataforma — é ele que define o limite de vagas e o valor do grupo.',
   },
-  cobranca: {
-    title: 'Como os membros vão pagar?',
-    desc: 'Escolha os ciclos que os membros poderão contratar.',
+  grupo: {
+    title: 'Como o grupo vai ser?',
+    desc: 'Escolha quem pode entrar e escreva as regras do grupo (opcional).',
   },
   credenciais: {
     title: 'Como os membros acessam a conta?',
     desc: 'Os membros acessam a conta por aqui — você pode mudar depois.',
   },
-  pagamento: {
-    title: 'Como o dinheiro chega até você?',
-    desc: 'Última etapa: PIX, taxa de adesão e o valor da mensalidade.',
+  pagamentos: {
+    title: 'Como os membros vão pagar?',
+    desc: 'Ciclos de cobrança, chave PIX e o valor que cada membro paga.',
+  },
+  resumo: {
+    title: 'Confirme e crie o grupo',
+    desc: 'Confira os dados e aceite as políticas para publicar o grupo.',
   },
 };
 
@@ -76,12 +87,20 @@ const EMPTY_DRAFT = {
   groupId: null,
   step: 0,
   service_id: '',
-  name: '',
-  description: '',
+  plan_id: '',
   plan_type: '',
   plan_type_custom: '',
   custom_plan_active: false,
   has_ads: null,
+  visibility: 'public',
+  // Status da assinatura da conta do serviço: 'active' (ja assinou) ou
+  // 'pending' (vai assinar quando o grupo fechar).
+  subscription_status: SUBSCRIPTION_ACTIVE,
+  // Chat do grupo (troca de mensagens entre os membros).
+  chat_enabled: true,
+  // E-mail do grupo gerenciado pela DividePass com IA (busca automatica do
+  // codigo de verificacao). Vira a caixa de e-mail do grupo no fim do wizard.
+  managed_email: false,
   available_cycles: ['monthly'],
   custom_cycle_enabled: false,
   custom_cycle_months: 2,
@@ -89,9 +108,10 @@ const EMPTY_DRAFT = {
   days_cycle_enabled: false,
   days_cycle_days: 15,
   days_cycle_label: '',
-  has_slot_limit: false,
+  has_slot_limit: true,
   max_size: 4,
-  rules: '',
+  price_total: '',
+  rules: DEFAULT_RULE_TEXT,
   credential_type: 'email_password',
   login_email: '',
   login_password: '',
@@ -101,6 +121,7 @@ const EMPTY_DRAFT = {
   pix_type: 'cpf',
   entrance_fee: 15,
   price_per_slot: '',
+  policies_accepted: false,
 };
 
 /**
@@ -133,12 +154,45 @@ function readCredentialExtra(cred, type) {
 }
 
 // Deduz a etapa a partir do que ja foi gravado (retomar de outro dispositivo)
-function inferStep({ service_id, name, plan_type, plan_type_custom, hasCredential }) {
+// 0 plataforma | 1 plano | 2 grupo | 3 credenciais | 4 pagamentos | 5 resumo
+function inferStep({ service_id, plan_id, plan_type, plan_type_custom, hasCredential, price_total }) {
   if (!service_id) return 0;
-  if (!name) return 1;
-  if (!plan_type && !plan_type_custom) return 2;
-  if (!hasCredential) return 3;   // ainda falta fechar cobranca + credenciais
-  return 5;                        // credenciais salvas: falta so o pagamento
+  if (!plan_id && !plan_type && !plan_type_custom) return 1;
+  if (!hasCredential) return 3;
+  if (!(parseFloat(price_total) > 0)) return 4;
+  return 5;
+}
+
+/**
+ * Campos do grupo que dependem de migration: se o banco ainda nao conhece a
+ * coluna, o insert/update e refeito sem ela (o front degrada com elegancia
+ * em vez de quebrar o cadastro do grupo).
+ *
+ * @returns {{payload: object, missing: string[]}|null} payload limpo + as
+ *          colunas que o banco nao conhece (null = nada a remover).
+ */
+function stripMissingColumns(payload, error) {
+  const next = { ...payload };
+  const missing = [];
+
+  const optional = [
+    { field: 'has_ads', test: isMissingHasAdsColumn },
+    { field: 'visibility', test: isMissingVisibilityColumn },
+    { field: 'subscription_status', test: isMissingSubscriptionStatusColumn },
+    { field: 'chat_enabled', test: isMissingChatColumn },
+    { field: 'email_code_enabled', test: isMissingEmailCodeColumn },
+    { field: 'email_code_method', test: isMissingEmailCodeColumn },
+    { field: 'managed_email', test: isMissingEmailCodeColumn },
+  ];
+
+  optional.forEach(({ field, test }) => {
+    if (field in next && test(error)) {
+      delete next[field];
+      missing.push(field);
+    }
+  });
+
+  return missing.length ? { payload: next, missing } : null;
 }
 
 function CreateGroup() {
@@ -148,6 +202,9 @@ function CreateGroup() {
   const draftIdParam = searchParams.get('draft');
 
   const [services, setServices] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [usage, setUsage] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
@@ -156,13 +213,12 @@ function CreateGroup() {
   const [stepError, setStepError] = useState('');
   const [hasPixColumn, setHasPixColumn] = useState(true);
   const [hasAdsColumn, setHasAdsColumn] = useState(true);
-  const [defaultEntranceFee, setDefaultEntranceFee] = useState(15);
-  const [photoFile, setPhotoFile] = useState(null);
-  const [photoPreview, setPhotoPreview] = useState(null);
+  const [hasVisibilityColumn, setHasVisibilityColumn] = useState(false);
+  const [hasSubscriptionColumn, setHasSubscriptionColumn] = useState(false);
+  const [hasChatColumn, setHasChatColumn] = useState(false);
   const [draftOffer, setDraftOffer] = useState(null);
 
   const [draft, setDraft] = useState(EMPTY_DRAFT);
-  const fileInputRef = useRef(null);
   const savingRef = useRef(false);
   const autosaveRef = useRef(null);
   const finalizedRef = useRef(false);
@@ -177,18 +233,30 @@ function CreateGroup() {
     (async () => {
       try {
         setLoading(true);
-        const [servicesRes, settingsRes] = await Promise.all([
-          supabase.from('streaming_services').select('id, name, full_name, icon, icon_url, color, slug').eq('status', 'active').order('name'),
+        const [servicesRes, settingsRes, usageRes] = await Promise.all([
+          supabase.from('streaming_services')
+            .select('id, name, full_name, icon, icon_url, color, slug, pinned, featured, max_group_size')
+            .eq('status', 'active')
+            .order('name'),
           supabase.from('app_settings').select('key, value').in('key', ['default_entrance_fee']),
+          // Quantos grupos cada plataforma tem: as mais usadas ficam no topo
+          // da lista de plataformas (só os ids, é o que alimenta a ordem).
+          supabase.from('groups').select('service_id').limit(2000),
         ]);
         if (cancelled) return;
 
         if (servicesRes.error) throw servicesRes.error;
         setServices(servicesRes.data || []);
 
+        const counts = {};
+        (usageRes.data || []).forEach((g) => {
+          if (!g.service_id) return;
+          counts[g.service_id] = (counts[g.service_id] || 0) + 1;
+        });
+        setUsage(counts);
+
         const fee = settingsRes.data?.find(s => s.key === 'default_entrance_fee');
         const feeValue = fee ? (parseFloat(fee.value) || 15) : 15;
-        setDefaultEntranceFee(feeValue);
 
         // a coluna pix_key so existe depois da migration add-group-pix.sql.
         // Detecta pelas colunas devolvidas por select=* (sem gerar erro no console).
@@ -204,6 +272,13 @@ function CreateGroup() {
         // deploy: ate la, o seletor fica escondido e nada e gravado.
         setHasAdsColumn(await hasAdsColumnAvailable());
 
+        // a coluna visibility (migration add-platform-plans-and-group-visibility.sql)
+        setHasVisibilityColumn(await visibilityColumnAvailable());
+
+        // as colunas subscription_status e chat_enabled (mesma migration)
+        setHasSubscriptionColumn(await subscriptionStatusColumnAvailable());
+        setHasChatColumn(await chatColumnAvailable());
+
         // retomar rascunho
         if (draftIdParam) {
           const { data: g } = await supabase.from('groups').select('*').eq('id', draftIdParam).maybeSingle();
@@ -211,17 +286,19 @@ function CreateGroup() {
             const { data: cred } = await supabase.from('group_credentials').select('*').eq('group_id', g.id).maybeSingle();
             const cycles = g.available_cycles || ['monthly'];
             const credType = cred?.credential_type || 'email_password';
-            const realName = g.name === 'Rascunho de grupo' ? '' : (g.name || '');
             setDraft({
               ...EMPTY_DRAFT,
               groupId: g.id,
               service_id: g.service_id || '',
-              name: realName,
-              description: g.description || '',
+              plan_id: g.plan_id || '',
               plan_type: g.plan_type || '',
               plan_type_custom: g.plan_type_custom || '',
               custom_plan_active: !!(g.plan_type_custom && !g.plan_type),
               has_ads: g.has_ads === true ? true : (g.has_ads === false ? false : null),
+              visibility: g.visibility || 'public',
+              subscription_status: g.subscription_status || SUBSCRIPTION_ACTIVE,
+              chat_enabled: g.chat_enabled === false ? false : true,
+              managed_email: g.managed_email === true || g.email_code_enabled === true,
               available_cycles: cycles.filter(c => c !== 'custom' && c !== 'days'),
               custom_cycle_enabled: cycles.includes('custom'),
               custom_cycle_months: g.custom_cycle_months || 2,
@@ -229,9 +306,15 @@ function CreateGroup() {
               days_cycle_enabled: cycles.includes('days'),
               days_cycle_days: g.custom_cycle_days || 15,
               days_cycle_label: g.custom_cycle_label || '',
-              has_slot_limit: !!g.has_slot_limit,
+              has_slot_limit: true,
               max_size: g.max_size || 4,
-              rules: g.rules || '',
+              // Recria o total que reproduz o preco por vaga salvo.
+              price_total: g.price_per_slot > 0
+                ? String(Math.round(g.price_per_slot * (g.max_size || 4) * 100) / 100)
+                : '',
+              // Rascunho em andamento sem regrinha volta com a padrão — o
+              // grupo sempre nasce com pelo menos um aviso para o membro.
+              rules: g.rules || DEFAULT_RULE_TEXT,
               entrance_fee: feeValue,
               price_per_slot: g.price_per_slot > 0.01 ? String(g.price_per_slot) : '',
               pix_key: g.pix_key || '',
@@ -243,10 +326,13 @@ function CreateGroup() {
               credential_notes: credType === 'custom' ? '' : (cred?.credential_notes || ''),
               step: inferStep({
                 service_id: g.service_id,
-                name: realName,
+                plan_id: g.plan_id,
                 plan_type: g.plan_type,
                 plan_type_custom: g.plan_type_custom,
                 hasCredential: !!cred,
+                price_total: g.price_per_slot > 0
+                  ? String(Math.round(g.price_per_slot * (g.max_size || 4) * 100) / 100)
+                  : '',
               }),
             });
           }
@@ -273,15 +359,30 @@ function CreateGroup() {
     return () => { cancelled = true; };
   }, [draftIdParam, user?.id]);
 
+  // ------------------------------------------------------- planos da plataforma
+  useEffect(() => {
+    let cancelled = false;
+    if (!draft.service_id) return undefined;
+    fetchPlansForService(draft.service_id).then((list) => {
+      if (cancelled) return;
+      setPlans(list);
+      setPlansLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [draft.service_id]);
+
   const currentStep = STEPS[draft.step] || STEPS[0];
   const StepIcon = currentStep.icon;
   const isLast = draft.step === STEPS.length - 1;
 
-  // ---------------------------------------------------------------- simulação
-  const priceSimulation = useMemo(() => {
-    const sim = simulatePrice(draft.price_per_slot);
-    return { ...sim, entrance: parseFloat(draft.entrance_fee) || 0 };
-  }, [draft.price_per_slot, draft.entrance_fee]);
+  const platform = useMemo(
+    () => services.find(s => s.id === draft.service_id) || null,
+    [services, draft.service_id],
+  );
+  const selectedPlan = useMemo(
+    () => plans.find(p => p.id === draft.plan_id) || null,
+    [plans, draft.plan_id],
+  );
 
   // ---------------------------------------------------------------- persistência
   // IMPORTANTE: o payload de update NAO leva `status`.
@@ -298,9 +399,13 @@ function CreateGroup() {
 
     const payload = {
       service_id: draft.service_id,
-      name: draft.name || 'Rascunho de grupo',
-      description: draft.description || null,
-      price_per_slot: parseFloat(draft.price_per_slot) || 0.01,
+      // Nome automatico: [plataforma] + [plano] ou [plataforma] + [id do grupo].
+      name: buildGroupName({ platform, plan: selectedPlan, groupId: draft.groupId }),
+      description: null,
+      // Preço por pessoa: o total do grupo dividido pelas vagas abertas.
+      price_per_slot: pricePerSlot(draft.price_total, draft.max_size)
+        || parseFloat(draft.price_per_slot)
+        || 0.01,
       billing_cycle: cycles[0] || 'monthly',
       available_cycles: cycles,
       max_size: draft.has_slot_limit ? parseInt(draft.max_size, 10) || 4 : 4,
@@ -315,6 +420,9 @@ function CreateGroup() {
       custom_cycle_label: draft.custom_cycle_enabled ? draft.custom_cycle_label : (draft.days_cycle_enabled ? draft.days_cycle_label : null),
       custom_cycle_days: draft.days_cycle_enabled ? parseInt(draft.days_cycle_days, 10) : null,
     };
+
+    if (draft.plan_id) payload.plan_id = draft.plan_id;
+
     if (hasPixColumn && draft.pix_key) {
       // O que vai para o banco é a chave CRUA (só dígitos no CPF/CNPJ/
       // telefone) — na tela ela aparece mascarada. Ver lib/pixKeyMask.js.
@@ -327,41 +435,81 @@ function CreateGroup() {
     if (hasAdsColumn) {
       payload.has_ads = draft.has_ads === true ? true : (draft.has_ads === false ? false : null);
     }
+    // a coluna visibility entra junto (migration add-platform-plans-and-group-visibility.sql).
+    if (hasVisibilityColumn) {
+      payload.visibility = draft.visibility || 'public';
+    }
+    // status da assinatura da conta do servico ('active' | 'pending').
+    if (hasSubscriptionColumn) {
+      payload.subscription_status = draft.subscription_status || SUBSCRIPTION_ACTIVE;
+    }
+    // chat do grupo (troca de mensagens entre os membros).
+    if (hasChatColumn) {
+      payload.chat_enabled = draft.chat_enabled !== false;
+    }
+    // E-mail gerenciado com IA: liga a busca de codigo deste grupo — e o que
+    // faz o botao "Buscar Codigo" aparecer para o membro. A CAIXA em si e
+    // criada no servidor no fim do wizard (edge function), por isso aqui so
+    // vai a intencao.
+    payload.email_code_enabled = draft.managed_email === true;
+    payload.email_code_method = draft.managed_email === true ? 'imap' : null;
+    // A intencao do dono fica gravada mesmo se a criacao da caixa falhar
+    // (a tela "Gerenciar Grupo" usa isso para oferecer a criacao de novo).
+    payload.managed_email = draft.managed_email === true;
     return payload;
   };
 
+  // Campos do grupo que dependem de migration: se o banco ainda nao conhece a
+  // coluna, o insert/update e refeito sem ela (o front degrada com elegancia
+  // em vez de quebrar o cadastro do grupo).
   const saveDraft = useCallback(async () => {
     if (!user?.id) throw new Error('Usuário não autenticado');
     const payload = buildGroupPayload();
 
     if (!draft.groupId) {
+      const insertRow = {
+        ...payload,
+        status: 'draft',
+        owner_id: user.id,
+        verified: false,
+        is_official: false,
+        approval_status: null,
+      };
+
       let { data, error: insErr } = await supabase
         .from('groups')
-        .insert({ ...payload, status: 'draft', owner_id: user.id, verified: false, is_official: false, approval_status: null })
+        .insert(insertRow)
         .select('id')
         .single();
-      if (insErr && hasAdsColumn && isMissingHasAdsColumn(insErr)) {
-        // o banco ainda nao tem a coluna has_ads: refaz sem o campo
-        const semAds = { ...payload };
-        delete semAds.has_ads;
-        setHasAdsColumn(false);
-        const retry = await supabase
-          .from('groups')
-          .insert({ ...semAds, status: 'draft', owner_id: user.id, verified: false, is_official: false, approval_status: null })
-          .select('id')
-          .single();
-        data = retry.data;
-        insErr = retry.error;
+
+      if (insErr) {
+        // o banco ainda nao tem alguma das colunas novas: refaz sem o campo
+        const retry = stripMissingColumns(insertRow, insErr);
+        if (retry) {
+          retry.missing.forEach((field) => {
+            if (field === 'has_ads') setHasAdsColumn(false);
+            if (field === 'visibility') setHasVisibilityColumn(false);
+            if (field === 'subscription_status') setHasSubscriptionColumn(false);
+            if (field === 'chat_enabled') setHasChatColumn(false);
+          });
+          const again = await supabase.from('groups').insert(retry.payload).select('id').single();
+          data = again.data;
+          insErr = again.error;
+        }
       }
       if (insErr) throw insErr;
-      const { error: slugErr } = await supabase
-        .from('groups')
-        .update({ slug: data.id.slice(0, 6).toUpperCase() })
-        .eq('id', data.id);
-      if (slugErr) throw slugErr;
+
+      const updates = { slug: data.id.slice(0, 6).toUpperCase() };
+      // Refeza o nome agora que o id existe: sem plano, o nome usa o id curto.
+      const finalName = buildGroupName({ platform, plan: selectedPlan, groupId: data.id });
+      if (finalName && finalName !== payload.name) updates.name = finalName;
+
+      const { error: updErr } = await supabase.from('groups').update(updates).eq('id', data.id);
+      if (updErr) throw updErr;
+
       set({ groupId: data.id });
       // Agora existe um grupo do usuário: a sonda consegue provar se a coluna
-      // has_ads existe no banco e liberar o seletor da etapa 3.
+      // has_ads existe no banco e liberar o seletor da etapa de plano.
       if (!hasAdsColumn) {
         const ok = await hasAdsColumnAvailable();
         if (ok) setHasAdsColumn(true);
@@ -369,20 +517,26 @@ function CreateGroup() {
       return data.id;
     }
 
-    const { error: updErr } = await supabase.from('groups').update(payload).eq('id', draft.groupId);
-    if (updErr && hasAdsColumn && isMissingHasAdsColumn(updErr)) {
-      const semAds = { ...payload };
-      delete semAds.has_ads;
-      setHasAdsColumn(false);
-      const retry = await supabase.from('groups').update(semAds).eq('id', draft.groupId);
-      if (retry.error) throw retry.error;
-      return draft.groupId;
+    let { error: updErr } = await supabase.from('groups').update(payload).eq('id', draft.groupId);
+    if (updErr) {
+      const retry = stripMissingColumns(payload, updErr);
+      if (retry) {
+        retry.missing.forEach((field) => {
+          if (field === 'has_ads') setHasAdsColumn(false);
+          if (field === 'visibility') setHasVisibilityColumn(false);
+          if (field === 'subscription_status') setHasSubscriptionColumn(false);
+          if (field === 'chat_enabled') setHasChatColumn(false);
+        });
+        const again = await supabase.from('groups').update(retry.payload).eq('id', draft.groupId);
+        if (again.error) throw again.error;
+        return draft.groupId;
+      }
     }
     if (updErr) throw updErr;
     return draft.groupId;
-  }, [draft, user, hasPixColumn, hasAdsColumn, set]);
+  }, [draft, user, hasPixColumn, hasAdsColumn, hasVisibilityColumn, platform, selectedPlan]);
 
-  // grava (ou atualiza) a credencial de acesso — chamado ao sair da etapa 5
+  // grava (ou atualiza) a credencial de acesso — chamado ao sair da etapa de credenciais
   const saveCredential = useCallback(async (groupId, currentDraft) => {
     const payload = buildCredentialPayload(currentDraft, groupId);
     const { data: existing } = await supabase
@@ -421,32 +575,69 @@ function CreateGroup() {
   // ---------------------------------------------------------------- validação
   const validateStep = (stepIndex) => {
     switch (stepIndex) {
+      /* 1. PLATAFORMA */
       case 0:
         if (!draft.service_id) return 'Escolha a plataforma do grupo.';
         return '';
+
+      /* 2. PLANO — plano/tipo de conta + vagas + status da assinatura */
       case 1:
-        if (!draft.name.trim()) return 'Dê um nome ao grupo.';
-        if (draft.name.trim().length < 3) return 'O nome precisa ter ao menos 3 caracteres.';
+        if (plansLoading) return 'Carregando os planos da plataforma...';
+        if (plans.length > 0) {
+          if (!draft.plan_id) return 'Escolha o plano da plataforma que você vai compartilhar.';
+        } else {
+          if (!draft.custom_plan_active && !draft.plan_type) return 'Escolha o tipo de conta ou use "Personalizado".';
+          if (draft.custom_plan_active && !draft.plan_type_custom.trim()) return 'Escreva o tipo de conta personalizado.';
+        }
+        if (!draft.max_size || draft.max_size < 1) return 'Informe quantas vagas o grupo vai abrir.';
+        if (selectedPlan?.max_members && draft.max_size > selectedPlan.max_members) {
+          return `Este plano permite até ${selectedPlan.max_members} vaga(s).`;
+        }
+        // Status da assinatura: sempre tem um valor valido (o padrao e "ja
+        // assinei"), entao nao bloqueia a criacao.
+        if (!draft.subscription_status) return 'Escolha se você já assinou a conta ou vai assinar depois.';
         return '';
+
+      /* 3. GRUPO — visibilidade (as regras do grupo sao opcionais) */
       case 2:
-        if (!draft.custom_plan_active && !draft.plan_type) return 'Escolha o tipo de conta ou use "Personalizado".';
-        if (draft.custom_plan_active && !draft.plan_type_custom.trim()) return 'Escreva o tipo de conta personalizado.';
+        if (!draft.visibility) return 'Escolha se o grupo é público ou privado.';
         return '';
+
+      /* 4. CREDENCIAIS */
       case 3:
-        if (!draft.available_cycles.length && !draft.custom_cycle_enabled && !draft.days_cycle_enabled) return 'Escolha ao menos um ciclo de cobrança.';
-        if (draft.custom_cycle_enabled && !draft.custom_cycle_label.trim()) return 'Dê um nome ao ciclo personalizado.';
-        if (draft.days_cycle_enabled && !draft.days_cycle_label.trim()) return 'Dê um nome ao ciclo de dias.';
-        return '';
-      case 4:
         if (draft.credential_type === 'email_password' && !draft.login_email.trim()) return 'Informe o e-mail de acesso.';
         if (draft.credential_type !== 'email_password' && !draft.credential_extra.trim()) return 'Informe a credencial de acesso.';
         return '';
-      case 5:
-        if (!(parseFloat(draft.price_per_slot) > 0)) return 'Informe quanto você vai cobrar por transação.';
-        if (parseFloat(draft.price_per_slot) < MIN_PRICE_PER_SLOT) {
-          return `O valor mínimo por transação é R$ ${brl(MIN_PRICE_PER_SLOT)}.`;
+
+      /* 5. PAGAMENTOS — ciclos + valor do grupo */
+      case 4: {
+        if (!draft.available_cycles.length && !draft.custom_cycle_enabled && !draft.days_cycle_enabled) return 'Escolha ao menos um ciclo de cobrança.';
+        if (draft.custom_cycle_enabled && !draft.custom_cycle_label.trim()) return 'Dê um nome ao ciclo personalizado.';
+        if (draft.days_cycle_enabled && !draft.days_cycle_label.trim()) return 'Dê um nome ao ciclo de dias.';
+        const total = parseFloat(draft.price_total);
+        if (!(total > 0)) return 'Informe o valor total do grupo.';
+        const perSlot = pricePerSlot(total, draft.max_size);
+        if (perSlot > 0 && perSlot < MIN_PRICE_PER_SLOT) {
+          return `O valor por pessoa (R$ ${brl(perSlot)}) está abaixo do mínimo de R$ ${brl(MIN_PRICE_PER_SLOT)}.`;
+        }
+        // TETO DO PLANO: o min/max do plano vale por pessoa. Fora da faixa o
+        // grupo nao e criado — e o que impede o dono de cobrar um valor
+        // desproporcional ao plano que ele escolheu.
+        if (selectedPlan) {
+          const range = slotPriceOutOfRange(selectedPlan, perSlot);
+          if (range.outOfRange) {
+            const faixa = planSlotRangeText(selectedPlan, (v) => `R$ ${brl(v)}`);
+            return `O valor por pessoa (R$ ${brl(perSlot)}) está fora da faixa do plano "${selectedPlan.name}" (${faixa}). Ajuste o valor total.`;
+          }
         }
         return '';
+      }
+
+      /* 6. RESUMO — politicas */
+      case 5:
+        if (!draft.policies_accepted) return 'Aceite as políticas para criar o grupo.';
+        return '';
+
       default:
         return '';
     }
@@ -463,7 +654,7 @@ function CreateGroup() {
     try {
       const groupId = await saveDraft();
       // a etapa de credenciais tambem fica salva no banco
-      if (draft.step === 4) await saveCredential(groupId, draft);
+      if (STEPS[draft.step].key === 'credenciais') await saveCredential(groupId, draft);
       setSavedAt(new Date());
       set({ step: Math.min(draft.step + 1, STEPS.length - 1) });
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -511,13 +702,15 @@ function CreateGroup() {
       if (grpErr) throw grpErr;
       setDraftOffer(null);
       setDraft(EMPTY_DRAFT);
+      setPlans([]);
+      setPlansLoading(false);
     } catch (err) {
       setError(err.message);
     }
   };
 
   const handleFinish = async () => {
-    const msg = validateStep(5);
+    const msg = validateStep(STEPS.length - 1);
     setStepError(msg);
     if (msg) return;
     if (!user?.id) { setError('Usuário não autenticado'); return; }
@@ -534,65 +727,135 @@ function CreateGroup() {
       // credencial de acesso
       await saveCredential(groupId, draft);
 
-      // finaliza: pendente de aprovacao pela plataforma
+      // finaliza: pendente de aprovacao pela plataforma.
+      // Quem ainda vai assinar a conta ("Vou Assinar") deixa o grupo em
+      // FORMACAO (status 'forming') — ele aparece no catalogo como "Formando"
+      // e vira 'open' quando o dono confirmar a assinatura.
+      const finalStatus = groupStatusForSubscription(draft.subscription_status, 'open');
+
       const { error: finalErr } = await supabase
         .from('groups')
-        .update({ status: 'open', approval_status: 'pending' })
+        .update({ status: finalStatus, approval_status: 'pending' })
         .eq('id', groupId);
       if (finalErr) throw finalErr;
 
-      // confere de verdade: se o status nao virou 'open', o grupo ficaria
-      // invisivel no catalogo (que filtra status IN ('open','forming'))
+      // confere de verdade: se o status nao virar 'open'/'forming', o grupo
+      // ficaria invisivel no catalogo (que filtra status IN ('open','forming'))
       const { data: check } = await supabase.from('groups').select('status').eq('id', groupId).maybeSingle();
-      if (check?.status !== 'open') {
+      if (!check || !['open', 'forming'].includes(check.status)) {
         throw new Error('O grupo foi salvo, mas não foi publicado. Verifique as permissões do grupo.');
       }
 
-      // foto (nao bloqueia a criacao do grupo)
-      if (photoFile) {
-        try {
-          const ext = (photoFile.name.split('.').pop() || 'jpg').toLowerCase();
-          const photoPath = `${groupId}.${ext}`;
-          const { error: uploadError } = await supabase.storage
-            .from('group-covers').upload(photoPath, photoFile, { upsert: true });
-          if (uploadError) throw uploadError;
-          const { data: urlData } = supabase.storage.from('group-covers').getPublicUrl(photoPath);
-          await supabase.from('groups').update({ photo_url: urlData.publicUrl }).eq('id', groupId);
-        } catch (photoErr) {
-          console.error('Falha no upload da foto:', photoErr);
-          setSaveWarning('O grupo foi criado, mas a foto não pôde ser enviada.');
-        }
-      }
-
       try {
+        const groupName = buildGroupName({ platform, plan: selectedPlan, groupId });
         const { error: evErr } = await supabase.from('platform_events').insert({
           event_type: 'group_created',
           title: 'Grupo criado',
-          message: `${user?.name || 'Usuário'} criou o grupo "${draft.name}".`,
-          metadata: JSON.stringify({ group_id: groupId, group_name: draft.name, owner_id: user.id }),
+          message: `${user?.name || 'Usuário'} criou o grupo "${groupName}".`,
+          metadata: JSON.stringify({ group_id: groupId, group_name: groupName, owner_id: user.id }),
           created_by: user.id,
         });
         if (evErr) console.warn('Platform event nao registrado:', evErr.message);
       } catch (e) { console.warn('Platform event nao registrado:', e); }
 
+      // E-mail gerenciado com IA: agora que o grupo existe, a caixa de e-mail
+      // dele e criada no servidor. O dono cai direto na tela "Gerenciar Grupo",
+      // onde ve o endereco e o passo a passo para trocar o e-mail da conta da
+      // plataforma pelo e-mail do grupo.
+      if (draft.managed_email) {
+        const prov = await provisionarEmailGerenciado(groupId);
+        if (!prov.success) {
+          console.warn('E-mail gerenciado nao criado:', prov.error);
+          // Sem caixa nao ha busca de codigo: desliga para o membro nao ver
+          // um botao quebrado. A tela "Gerenciar Grupo" deixa criar de novo.
+          await supabase
+            .from('groups')
+            .update({ email_code_enabled: false, email_code_method: null })
+            .eq('id', groupId);
+        }
+        navigate(`/dashboard/my-groups/${groupId}/manage`);
+        return;
+      }
+
       navigate('/dashboard/my-groups');
     } catch (err) {
       setError(err.message);
+      finalizedRef.current = false;
     } finally {
       setSaving(false);
     }
   };
 
-  const toggleCycle = (cycle) => {
-    setDraft(prev => {
-      const current = prev.available_cycles || [];
-      const updated = current.includes(cycle) ? current.filter(c => c !== cycle) : [...current, cycle];
-      return { ...prev, available_cycles: updated.length ? updated : current };
+  // ------------------------------------------------------ handlers das etapas
+  const handlePlatformConfirm = (service) => {
+    setPlans([]);
+    setPlansLoading(true);
+    set({
+      service_id: service.id,
+      // trocar de plataforma zera o plano e o preco (o teto muda junto)
+      plan_id: '',
+      plan_type: '',
+      plan_type_custom: '',
+      custom_plan_active: false,
+      price_per_slot: '',
+      max_size: 4,
+      has_slot_limit: false,
+      step: 1,
     });
+    setStepError('');
   };
 
-  const serviceName = services.find(s => s.id === draft.service_id)?.full_name
-    || services.find(s => s.id === draft.service_id)?.name || '—';
+  const handlePlanChange = (patch) => {
+    // Ao escolher um plano, o preco e o limite de vagas seguem o plano.
+    const next = { ...patch };
+    if (patch.plan_id && patch.plan_id !== draft.plan_id) {
+      const plan = plans.find(p => p.id === patch.plan_id);
+      if (plan) {
+        const maxSlots = maxSlotsFor(plan, platform);
+        // Total do grupo: valor sugerido do plano (por pessoa) x vagas; sem
+        // sugestao, o preco oficial do plano + 8%.
+        // Plano sem max_members nao impõe vagas: o total usa as vagas que o
+        // dono abriu (ou o padrao), senão o preco por pessoa sai errado.
+        const slots = plan.max_members
+          ? maxSlots
+          : (parseInt(draft.max_size, 10) || 4);
+        next.price_total = String(suggestedGroupTotal(plan, slots));
+        if (plan.max_members) {
+          next.max_size = maxSlots;
+          next.has_slot_limit = true;
+        }
+      }
+    }
+    setDraft(prev => ({ ...prev, ...next }));
+  };
+
+  const platformName = platform?.full_name || platform?.name || '—';
+  const groupNamePreview = buildGroupName({ platform, plan: selectedPlan, groupId: draft.groupId });
+
+  const summaryItems = [
+    { label: 'Plataforma', value: platformName },
+    { label: 'Nome do grupo', value: groupNamePreview },
+    { label: 'Plano', value: selectedPlan?.name || (draft.custom_plan_active ? draft.plan_type_custom : (draft.plan_type || '—')) },
+    { label: 'Vagas', value: `${draft.max_size} membro(s)` },
+    {
+      label: 'Status da assinatura',
+      value: draft.subscription_status === SUBSCRIPTION_PENDING
+        ? 'Vou assinar (grupo fica em formação)'
+        : 'Já assinei (conta ativa)',
+    },
+    { label: 'Chat do grupo', value: draft.chat_enabled === false ? 'Desligado' : 'Ligado' },
+    {
+      label: 'E-mail gerenciado com IA',
+      value: draft.managed_email === true ? 'Ligado' : 'Desligado',
+    },
+    { label: 'Visibilidade', value: draft.visibility === 'private' ? 'Privado (só convite/link)' : 'Público' },
+    { label: 'Ciclos', value: [...draft.available_cycles, ...(draft.custom_cycle_enabled ? ['personalizado'] : []), ...(draft.days_cycle_enabled ? ['dias'] : [])].join(', ') || '—' },
+    { label: 'Regrinhas', value: rulesSummary(draft.rules) },
+    { label: 'PIX', value: draft.pix_key ? `${draft.pix_key} (${draft.pix_type})` : '—' },
+    { label: 'Taxa de adesão', value: `R$ ${brl(parseFloat(draft.entrance_fee) || 0)}` },
+    { label: 'Total do grupo', value: `R$ ${brl(parseFloat(draft.price_total) || 0)}` },
+    { label: 'Cada membro paga', value: `R$ ${brl(pricePerSlot(draft.price_total, draft.max_size))} / mês` },
+  ];
 
   if (loading) {
     return (
@@ -615,26 +878,11 @@ function CreateGroup() {
         <p>{STEPS.length} etapas rápidas. O que você preencher vai sendo salvo sozinho.</p>
       </div>
 
-      {/* trilha de etapas */}
-      <ol className="wizard-steps">
-        {STEPS.map((s, i) => {
-          const done = i < draft.step;
-          const active = i === draft.step;
-          return (
-            <li key={s.key} className={`wizard-step ${done ? 'done' : ''} ${active ? 'active' : ''}`}>
-              <button
-                type="button"
-                className="wizard-step-btn"
-                onClick={() => { if (i <= draft.step) { setStepError(''); setError(''); set({ step: i }); } }}
-                disabled={i > draft.step}
-              >
-                <span className="wizard-step-dot">{done ? <Check size={14} /> : i + 1}</span>
-                <span className="wizard-step-label">{s.title}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ol>
+      <WizardSteps
+        steps={STEPS}
+        current={draft.step}
+        onNavigate={(i) => { if (i <= draft.step) { setStepError(''); setError(''); set({ step: i }); } }}
+      />
 
       {error && <div className="error-banner">{error}</div>}
 
@@ -670,403 +918,155 @@ function CreateGroup() {
         <div className="wizard-card-body">
           {/* ---------------------------------------------------- 1. PLATAFORMA */}
           {draft.step === 0 && (
-            <div className="service-picker">
-              {services.map(s => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`service-pick ${draft.service_id === s.id ? 'active' : ''}`}
-                  onClick={() => set({ service_id: s.id })}
-                >
-                  {s.icon_url
-                    ? <img src={s.icon_url} alt="" />
-                    : <span className="service-pick-fallback" style={{ background: s.color || 'var(--primary)' }}>{s.name?.[0]}</span>}
-                  <span className="service-pick-name">{s.full_name || s.name}</span>
-                  {draft.service_id === s.id && <Check size={16} className="service-pick-check" />}
-                </button>
-              ))}
-            </div>
+            <PlatformSearchStep
+              services={services}
+              usage={usage}
+              selectedId={draft.service_id}
+              onConfirm={handlePlatformConfirm}
+            />
           )}
 
-          {/* ---------------------------------------------------- 2. IDENTIDADE */}
+          {/* --------------------- 2. PLANO (tipo de conta) + VAGAS + ASSINATURA */}
           {draft.step === 1 && (
             <>
-              <div className="form-group">
-                <label>Nome do grupo *</label>
-                <input
-                  value={draft.name}
-                  onChange={e => set({ name: e.target.value })}
-                  placeholder="Ex: Netflix - Grupo Premium"
-                  autoFocus
-                />
-              </div>
-              <div className="form-group">
-                <label>Descrição (opcional)</label>
-                <textarea
-                  rows={2}
-                  value={draft.description}
-                  onChange={e => set({ description: e.target.value })}
-                  placeholder="Em 1 linha: o que os membros vão encontrar nesse grupo."
-                />
-              </div>
-              <div className="form-group">
-                <label>Foto do grupo (opcional)</label>
-                <div className="group-photo-upload">
-                  {photoPreview ? (
-                    <div className="photo-preview">
-                      <img src={photoPreview} alt="Preview" />
-                      <button type="button" className="photo-remove" onClick={() => { setPhotoFile(null); setPhotoPreview(null); }}>x</button>
-                    </div>
-                  ) : (
-                    <label className="photo-placeholder">
-                      <Camera size={24} />
-                      <span>Adicionar foto</span>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        hidden
-                        onChange={e => {
-                          const file = e.target.files?.[0];
-                          if (file) { setPhotoFile(file); setPhotoPreview(URL.createObjectURL(file)); }
-                        }}
-                      />
-                    </label>
-                  )}
+              {plansLoading ? (
+                <div className="loading-state">
+                  <Loader2 size={28} className="spin" />
+                  <p>Carregando os planos da plataforma...</p>
                 </div>
-              </div>
+              ) : (
+                <PlanSelectionStep
+                  plans={plans}
+                  value={{
+                    plan_id: draft.plan_id,
+                    plan_type: draft.plan_type,
+                    plan_type_custom: draft.plan_type_custom,
+                    custom_plan_active: draft.custom_plan_active,
+                    has_ads: draft.has_ads,
+                  }}
+                  onChange={handlePlanChange}
+                  hasAdsColumn={hasAdsColumn}
+                />
+              )}
+
+              {!plansLoading && (
+                <>
+                  <SlotsStep
+                    value={{ slots: draft.max_size }}
+                    onChange={(patch) => setDraft(prev => {
+                      const slots = patch.slots;
+                      const next = { ...prev, max_size: slots, has_slot_limit: true };
+                      /* Se o total veio do plano (o dono nao mexeu no valor), ele
+                         acompanha o numero de vagas. Sem isso, abrir/fechar uma vaga
+                         empurraria o preco por pessoa para fora da faixa do plano e a
+                         criacao ficaria bloqueada sem o dono ter feito nada de
+                         errado. */
+                      if (selectedPlan) {
+                        const before = suggestedGroupTotal(selectedPlan, prev.max_size);
+                        if (!prev.price_total || Number(prev.price_total) === before) {
+                          next.price_total = String(suggestedGroupTotal(selectedPlan, slots));
+                        }
+                      }
+                      return next;
+                    })}
+                    plan={selectedPlan}
+                    service={platform}
+                  />
+
+                  <SubscriptionStatusStep
+                    value={draft.subscription_status}
+                    onChange={(v) => set({ subscription_status: v })}
+                  />
+                </>
+              )}
             </>
           )}
 
-          {/* ---------------------------------------------------- 3. PLANO */}
+          {/* ---------------------------------- 3. GRUPO: VISIBILIDADE + REGRAS */}
           {draft.step === 2 && (
             <>
-              <div className="plan-type-grid">
-                {PLAN_TYPES.map(pt => (
-                  <button
-                    key={pt}
-                    type="button"
-                    className={`plan-type-btn ${!draft.custom_plan_active && draft.plan_type === pt ? 'active' : ''}`}
-                    onClick={() => set({ plan_type: pt, custom_plan_active: false })}
-                  >
-                    {pt}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className={`plan-type-btn custom ${draft.custom_plan_active ? 'active' : ''}`}
-                  onClick={() => set({ custom_plan_active: true, plan_type: '' })}
-                >
-                  Personalizado
-                </button>
-              </div>
-              {draft.custom_plan_active && (
-                <div className="form-group" style={{ marginTop: '1rem' }}>
-                  <label>Tipo de conta personalizado *</label>
-                  <input
-                    value={draft.plan_type_custom}
-                    onChange={e => set({ plan_type_custom: e.target.value })}
-                    placeholder="Ex: Netflix Premium 4K"
-                    autoFocus
-                  />
-                </div>
-              )}
+              <VisibilityStep
+                value={draft.visibility}
+                onChange={(v) => set({ visibility: v })}
+              />
 
-              {hasAdsColumn && (
-                <div className="form-group ads-field">
-                  <label>A conta compartilhada tem anúncios?</label>
-                  <AdsToggle
-                    value={draft.has_ads}
-                    onChange={(v) => set({ has_ads: v })}
-                    hint="O membro vê esse selo no card do grupo. Se preferir não informar, escolha “Não mostrar” e o grupo fica sem selo."
-                  />
-                </div>
-              )}
+              {/* As REGRAS do grupo (opcional) ocupam o lugar que era da
+                  descrição do grupo — o campo é livre e aparece para o membro. */}
+              <RuleTypesField
+                value={draft.rules}
+                onChange={(patch) => setDraft(prev => ({ ...prev, ...patch }))}
+              />
             </>
           )}
 
-          {/* ---------------------------------------------------- 4. COBRANCA */}
+          {/* ------------------------------------------------ 4. CREDENCIAIS */}
           {draft.step === 3 && (
             <>
-              <div className="form-group">
-                <label>Ciclos que os membros podem escolher *</label>
-                <div className="cycles-grid">
-                  {CYCLE_OPTIONS.map(opt => (
-                    <label key={opt.value} className={`cycle-check ${draft.available_cycles.includes(opt.value) ? 'active' : ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={draft.available_cycles.includes(opt.value)}
-                        onChange={() => toggleCycle(opt.value)}
-                      />
-                      <span>{opt.label}</span>
-                    </label>
-                  ))}
-                  <label className={`cycle-check ${draft.days_cycle_enabled ? 'active' : ''}`}>
-                    <input type="checkbox" checked={draft.days_cycle_enabled} onChange={e => set({ days_cycle_enabled: e.target.checked })} />
-                    <span>Dias</span>
-                  </label>
-                  <label className={`cycle-check ${draft.custom_cycle_enabled ? 'active' : ''}`}>
-                    <input type="checkbox" checked={draft.custom_cycle_enabled} onChange={e => set({ custom_cycle_enabled: e.target.checked })} />
-                    <span>Personalizado</span>
-                  </label>
-                </div>
-              </div>
+              <CredentialsStep
+                value={{
+                  credential_type: draft.credential_type,
+                  login_email: draft.login_email,
+                  login_password: draft.login_password,
+                  credential_extra: draft.credential_extra,
+                  credential_notes: draft.credential_notes,
+                  chat_enabled: draft.chat_enabled,
+                }}
+                onChange={(patch) => setDraft(prev => ({ ...prev, ...patch }))}
+              />
 
-              {draft.days_cycle_enabled && (
-                <div className="custom-cycle-fields">
-                  <div className="form-group">
-                    <label>Quantidade de dias *</label>
-                    <input type="number" min="1" max="365" value={draft.days_cycle_days} onChange={e => set({ days_cycle_days: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label>Nome do ciclo *</label>
-                    <input value={draft.days_cycle_label} onChange={e => set({ days_cycle_label: e.target.value })} placeholder="Ex: 15 dias" />
-                  </div>
-                </div>
-              )}
-
-              {draft.custom_cycle_enabled && (
-                <div className="custom-cycle-fields">
-                  <div className="form-group">
-                    <label>Meses do ciclo *</label>
-                    <input type="number" min="1" max="36" value={draft.custom_cycle_months} onChange={e => set({ custom_cycle_months: e.target.value })} />
-                  </div>
-                  <div className="form-group">
-                    <label>Nome do ciclo *</label>
-                    <input value={draft.custom_cycle_label} onChange={e => set({ custom_cycle_label: e.target.value })} placeholder="Ex: Bimestral" />
-                  </div>
-                </div>
-              )}
-
-              <div className="toggle-section">
-                <label className="toggle-label">
-                  <input type="checkbox" checked={draft.has_slot_limit} onChange={e => set({ has_slot_limit: e.target.checked })} />
-                  <span className="toggle-switch" />
-                  <span className="toggle-text">
-                    <strong>Limitar vagas</strong>
-                    <small>Defina um limite de membros no grupo</small>
-                  </span>
-                </label>
-              </div>
-
-              {draft.has_slot_limit && (
-                <div className="form-group" style={{ marginTop: '1rem' }}>
-                  <label>Limite de vagas *</label>
-                  <input type="number" min="1" value={draft.max_size} onChange={e => set({ max_size: e.target.value })} />
-                </div>
-              )}
-
-              <div className="form-group" style={{ marginTop: '1rem' }}>
-                <label>Regras do grupo (opcional)</label>
-                <textarea
-                  rows={3}
-                  value={draft.rules}
-                  onChange={e => set({ rules: e.target.value })}
-                  placeholder="Ex: Não compartilhar a senha; usar apenas 1 tela."
-                />
-              </div>
+              {/* O e-mail gerenciado com IA e uma escolha do DONO do grupo:
+                  ele cria a caixa e troca o e-mail da conta da plataforma. */}
+              <ManagedEmailOption
+                value={{ managed_email: draft.managed_email }}
+                onChange={(patch) => setDraft(prev => ({ ...prev, ...patch }))}
+                serviceName={platformName}
+              />
             </>
           )}
 
-          {/* ---------------------------------------------------- 5. CREDENCIAIS */}
+          {/* ------------------------------------------------- 5. PAGAMENTOS */}
           {draft.step === 4 && (
             <>
-              <div className="cred-type-grid">
-                {CRED_TYPES.map(opt => {
-                  const Icon = opt.icon;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      className={`cred-type-btn ${draft.credential_type === opt.value ? 'active' : ''}`}
-                      onClick={() => set({ credential_type: opt.value, credential_extra: '' })}
-                    >
-                      <Icon size={16} />
-                      <span>{opt.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              <BillingStep
+                value={{
+                  available_cycles: draft.available_cycles,
+                  custom_cycle_enabled: draft.custom_cycle_enabled,
+                  custom_cycle_months: draft.custom_cycle_months,
+                  custom_cycle_label: draft.custom_cycle_label,
+                  days_cycle_enabled: draft.days_cycle_enabled,
+                  days_cycle_days: draft.days_cycle_days,
+                  days_cycle_label: draft.days_cycle_label,
+                }}
+                onChange={(patch) => setDraft(prev => ({ ...prev, ...patch }))}
+              />
 
-              {draft.credential_type === 'email_password' && (
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label>E-mail de acesso *</label>
-                    <input value={draft.login_email} onChange={e => set({ login_email: e.target.value })} placeholder="conta@plataforma.com" autoFocus />
-                  </div>
-                  <div className="form-group">
-                    <label>Senha de acesso</label>
-                    <input value={draft.login_password} onChange={e => set({ login_password: e.target.value })} placeholder="Senha aqui" />
-                  </div>
-                </div>
-              )}
-
-              {draft.credential_type === 'link' && (
-                <div className="form-group">
-                  <label>Link de acesso *</label>
-                  <input value={draft.credential_extra} onChange={e => set({ credential_extra: e.target.value })} placeholder="https://..." autoFocus />
-                </div>
-              )}
-
-              {draft.credential_type === 'code' && (
-                <div className="form-group">
-                  <label>Código de acesso *</label>
-                  <input value={draft.credential_extra} onChange={e => set({ credential_extra: e.target.value })} placeholder="Ex: ABCD-1234" autoFocus />
-                </div>
-              )}
-
-              {draft.credential_type === 'invite' && (
-                <div className="form-group">
-                  <label>Link de convite *</label>
-                  <input value={draft.credential_extra} onChange={e => set({ credential_extra: e.target.value })} placeholder="https://..." autoFocus />
-                </div>
-              )}
-
-              {draft.credential_type === 'custom' && (
-                <div className="form-group">
-                  <label>Instruções de acesso *</label>
-                  <textarea rows={3} value={draft.credential_extra} onChange={e => set({ credential_extra: e.target.value })} placeholder="Descreva ou cole a credencial de acesso..." autoFocus />
-                </div>
-              )}
-
-              {draft.credential_type !== 'custom' && (
-                <div className="form-group" style={{ marginTop: '1rem' }}>
-                  <label>Observações (opcional)</label>
-                  <textarea rows={2} value={draft.credential_notes} onChange={e => set({ credential_notes: e.target.value })} placeholder="Ex: Não compartilhar; usar apenas 1 tela." />
-                </div>
-              )}
+              <PaymentStep
+                value={{
+                  pix_key: draft.pix_key,
+                  pix_type: draft.pix_type,
+                  entrance_fee: draft.entrance_fee,
+                  price_total: draft.price_total,
+                  slots: draft.max_size,
+                }}
+                onChange={(patch) => setDraft(prev => ({ ...prev, ...patch }))}
+                plan={selectedPlan}
+                hasPixColumn={hasPixColumn}
+              />
             </>
           )}
 
-          {/* ---------------------------------------------------- 6. PAGAMENTO */}
+          {/* ---------------------------------------------------- 6. RESUMO */}
           {draft.step === 5 && (
-            <>
-              <div className="form-group">
-                <label>PIX para transferir o valor *</label>
-                <input
-                  value={draft.pix_key}
-                  onChange={e => set({ pix_key: maskPixKey(e.target.value, draft.pix_type) })}
-                  placeholder={pixTypePlaceholder(draft.pix_type)}
-                  inputMode={draft.pix_type === 'email' || draft.pix_type === 'random' ? 'text' : 'numeric'}
-                  autoFocus
-                />
-                <div className="pix-type-row">
-                  {PIX_TYPES.map(t => (
-                    <button
-                      key={t.value}
-                      type="button"
-                      className={`pix-type-btn ${draft.pix_type === t.value ? 'active' : ''}`}
-                      onClick={() => set({
-                        pix_key: remaskPixKey(draft.pix_key, draft.pix_type, t.value),
-                        pix_type: t.value,
-                      })}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-                {!hasPixColumn && (
-                  <div className="wizard-warn">
-                    <Info size={15} />
-                    <span>
-                      A coluna <code>pix_key</code> ainda não existe no banco, então a chave não será gravada.
-                      Aplique a migration <code>database/add-group-pix.sql</code> no SQL Editor do Supabase para gravar a chave PIX do grupo.
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label>Taxa de Adesão (R$)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={draft.entrance_fee}
-                  readOnly
-                  disabled
-                  title="Definido pela DividePass"
-                />
-                <div className="wizard-info">
-                  <Info size={15} />
-                  <span>
-                    A <strong>taxa de adesão é cobrada pela plataforma a cada novo usuário que entra no grupo</strong>,
-                    uma única vez por membro. Depois da entrada, o membro paga somente o valor mensal.
-                    Valor atual definido pela DividePass: <strong>R$ {brl(defaultEntranceFee)}</strong> —
-                    não pode ser alterado na criação do grupo.
-                  </span>
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>Valor cobrado por transação (R$) *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min={MIN_PRICE_PER_SLOT}
-                  value={draft.price_per_slot}
-                  onChange={e => set({ price_per_slot: e.target.value })}
-                  placeholder={brl(MIN_PRICE_PER_SLOT)}
-                />
-                <small className="field-hint">
-                  Valor que cada membro paga em cada ciclo contratado. Mínimo de R$ {brl(MIN_PRICE_PER_SLOT)}.
-                </small>
-              </div>
-
-              {priceSimulation.price > 0 && (
-                <div className="price-simulation">
-                  <div className="sim-header">
-                    <Info size={16} />
-                    <span>Simulação de recebimento</span>
-                  </div>
-                  <div className="sim-grid">
-                    <div className="sim-row sim-row-charged">
-                      <span>Valor cobrado por pessoa</span>
-                      <span>R$ {brl(priceSimulation.price)}</span>
-                    </div>
-                    <div className="sim-row sim-row-platform">
-                      <span>Valor da plataforma</span>
-                      <strong>R$ {brl(priceSimulation.platformFee)}</strong>
-                    </div>
-                    <div className="sim-row sim-row-total">
-                      <span>Você recebe</span>
-                      <strong>R$ {brl(priceSimulation.net)}</strong>
-                    </div>
-                  </div>
-                  <small className="sim-footnote">
-                    Simulação de um ciclo mensal. O valor da plataforma é o que a DividePass retém a cada pagamento.
-                  </small>
-                </div>
-              )}
-
-              {priceSimulation.belowMinimum && (
-                <div className="wizard-warn">
-                  <Info size={15} />
-                  <span>
-                    O valor mínimo aceito pela plataforma é R$ {brl(MIN_PRICE_PER_SLOT)} por transação.
-                  </span>
-                </div>
-              )}
-
-              <div className="wizard-summary">
-                <h3>Resumo do grupo</h3>
-                <ul>
-                  <li><span>Plataforma</span><strong>{serviceName}</strong></li>
-                  <li><span>Nome</span><strong>{draft.name || '—'}</strong></li>
-                  <li><span>Tipo de conta</span><strong>{draft.custom_plan_active ? draft.plan_type_custom : (draft.plan_type || '—')}</strong></li>
-                  <li><span>Ciclos</span><strong>{[...draft.available_cycles, ...(draft.custom_cycle_enabled ? ['personalizado'] : []), ...(draft.days_cycle_enabled ? ['dias'] : [])].join(', ') || '—'}</strong></li>
-                  <li><span>Vagas</span><strong>{draft.has_slot_limit ? draft.max_size : 'Sem limite'}</strong></li>
-                  <li><span>PIX</span><strong>{draft.pix_key ? `${draft.pix_key} (${draft.pix_type})` : '—'}</strong></li>
-                  <li><span>Taxa de adesão</span><strong>R$ {brl(priceSimulation.entrance)}</strong></li>
-                  <li><span>Por transação</span><strong>R$ {brl(priceSimulation.price)}</strong></li>
-                </ul>
-              </div>
-
-              <div className="approval-notice">
-                <Info size={16} />
-                <span>Seu grupo ficará pendente de aprovação pela equipe DividePass antes de ficar visível no catálogo.</span>
-              </div>
-            </>
+            <SummaryStep
+              items={summaryItems}
+              policiesAccepted={draft.policies_accepted}
+              onPoliciesChange={(v) => set({ policies_accepted: v })}
+              notice={
+                draft.subscription_status === SUBSCRIPTION_PENDING
+                  ? 'Seu grupo ficará EM FORMAÇÃO até você confirmar a assinatura da conta. Depois disso ele abre para os membros.'
+                  : 'Seu grupo ficará pendente de aprovação pela equipe DividePass antes de ficar visível no catálogo.'
+              }
+            />
           )}
         </div>
 
@@ -1090,7 +1090,7 @@ function CreateGroup() {
           <div className="wizard-foot-right">
             {savedAt && (
               <span className="wizard-saved">
-                <Check size={14} /> Salvo {savedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                <CheckCircle2 size={14} /> Salvo {savedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
               </span>
             )}
             {!isLast ? (

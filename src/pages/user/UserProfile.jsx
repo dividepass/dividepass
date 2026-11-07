@@ -1,11 +1,12 @@
 import { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Camera, Save, ArrowLeft, Trash2, AlertTriangle, Loader2, MessageCircle, Bell, BellOff, Copy, Check } from 'lucide-react';
+import { Camera, Save, ArrowLeft, Trash2, AlertTriangle, Loader2, MessageCircle, Bell, BellOff, Copy, Check, Palette, X } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { optimizeImage } from '../../lib/imageOptimizer';
 import { maskPhone, onlyDigits } from '../../lib/maskPhone';
 import { usePushNotifications } from '../../hooks/usePushNotifications';
+import AvatarPicker from '../../components/AvatarPicker';
 import './UserProfile.css';
 
 export default function UserProfile() {
@@ -26,6 +27,8 @@ export default function UserProfile() {
   const [pendingPayments, setPendingPayments] = useState(null);
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(null);
+  const [avatarPreset, setAvatarPreset] = useState(null);
+  const [showAvatars, setShowAvatars] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -38,8 +41,8 @@ export default function UserProfile() {
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = async (e) => {
-    const file = e.target.files?.[0];
+  // Aplica um arquivo escolhido (pelo input ou pelo seletor de avatar).
+  const applyAvatarFile = async (file) => {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
@@ -49,9 +52,16 @@ export default function UserProfile() {
 
     const optimized = await optimizeImage(file, 'avatar');
     setAvatarFile(optimized);
+    setAvatarPreset(null);
     const reader = new FileReader();
     reader.onload = (ev) => setAvatarPreview(ev.target.result);
     reader.readAsDataURL(optimized);
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    await applyAvatarFile(file);
   };
 
   const uploadAvatar = async () => {
@@ -262,7 +272,57 @@ export default function UserProfile() {
             style={{ display: 'none' }}
           />
           <span className="profile-avatar-hint">Clique para trocar a foto</span>
+          <button
+            type="button"
+            className="profile-avatar-presets-btn"
+            onClick={() => setShowAvatars(true)}
+          >
+            <Palette size={15} />
+            Ver avatares prontos
+          </button>
         </div>
+
+        {showAvatars && (
+          <div className="profile-avatars-modal" role="dialog" aria-modal="true" aria-label="Avatares prontos">
+            <div className="profile-avatars-backdrop" onClick={() => setShowAvatars(false)} />
+            <div className="profile-avatars-panel">
+              <div className="profile-avatars-header">
+                <h3>Escolher avatar</h3>
+                <button
+                  type="button"
+                  className="profile-avatars-close"
+                  onClick={() => setShowAvatars(false)}
+                  aria-label="Fechar"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <AvatarPicker
+                compact
+                selectedPreset={avatarPreset?.id || null}
+                onSelectPreset={(preset) => {
+                  setAvatarPreset(preset);
+                  setAvatarFile(null);
+                  setAvatarPreview(null);
+                  setAvatarUrl(preset.url);
+                }}
+                onSelectFile={applyAvatarFile}
+              />
+              <div className="profile-avatars-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setShowAvatars(false);
+                    setMessage({ type: 'success', text: 'Avatar escolhido. Clique em Salvar para confirmar.' });
+                  }}
+                >
+                  Usar este avatar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {message && (
           <div className={`profile-message ${message.type}`}>

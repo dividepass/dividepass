@@ -1,0 +1,357 @@
+/* ============================================================
+   ADMIN — Ofertas Patrocinadas
+   ============================================================ */
+
+.spon-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ── Resumo ─────────────────────────────────────────────── */
+.spon-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.85rem;
+}
+
+.spon-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--primary-light);
+}
+
+.spon-stat-card--green { color: var(--success); }
+.spon-stat-card--purple { color: var(--primary-light); }
+.spon-stat-card--blue { color: var(--info); }
+
+.spon-stat-val {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+
+.spon-stat-lbl {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* ── Botões ────────────────────────────────────────────── */
+.spon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.95rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-family: inherit;
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.spon-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.spon-btn--primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.spon-btn--primary:hover:not(:disabled) {
+  background: var(--primary-600);
+}
+
+.spon-btn--ghost {
+  background: var(--surface-soft);
+  border-color: var(--border);
+  color: var(--text-main);
+}
+
+.spon-btn--ghost:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary-light);
+}
+
+.spon-btn--danger {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #EF4444;
+}
+
+.spon-btn--danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.spon-actions-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* ── Aviso de resultado ────────────────────────────────── */
+.spon-result {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-xs);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.spon-result--success {
+  background: var(--economy-bg);
+  color: var(--economy);
+}
+
+.spon-result--error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #EF4444;
+}
+
+/* ── Formulário ────────────────────────────────────────── */
+.spon-form-inline {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.35rem;
+}
+
+.spon-form-header h3 {
+  font-size: 1.05rem;
+  color: var(--text-main);
+  margin: 0 0 1rem;
+}
+
+.spon-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.spon-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.spon-form .form-group label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.spon-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding-top: 0.35rem;
+}
+
+/* ── Lista ─────────────────────────────────────────────── */
+.spon-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 3rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.spon-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.spon-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.15rem;
+}
+
+.spon-card--paused,
+.spon-card--ended {
+  opacity: 0.72;
+}
+
+.spon-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.spon-card-titles {
+  flex: 1;
+  min-width: 220px;
+}
+
+.spon-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7C2D12;
+  background: var(--action-bg);
+  border: 1px solid rgba(234, 88, 12, 0.3);
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  margin-bottom: 0.45rem;
+}
+
+.spon-card-titles h3 {
+  font-size: 1rem;
+  color: var(--text-main);
+  margin: 0 0 0.25rem;
+}
+
+.spon-card-titles p {
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.spon-status {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.28rem 0.6rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.spon-status--active {
+  background: var(--economy-bg);
+  color: var(--economy);
+}
+
+.spon-status--paused {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+}
+
+.spon-status--ended {
+  background: rgba(107, 114, 128, 0.12);
+  color: var(--text-muted);
+}
+
+.spon-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0.9rem 0;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface-soft);
+  border-radius: var(--radius-xs);
+}
+
+.spon-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.spon-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.spon-sponsor {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.spon-sponsor strong {
+  color: var(--text-main);
+}
+
+.spon-sponsor em {
+  font-style: normal;
+  font-size: 0.75rem;
+}
+
+.spon-card-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.spon-expired {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--warning);
+  align-self: center;
+}
+
+/* ── Modal de confirmação ──────────────────────────────── */
+.spon-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.spon-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  max-width: 420px;
+  width: 100%;
+}
+
+.spon-modal h3 {
+  font-size: 1.05rem;
+  color: var(--text-main);
+  margin: 0 0 0.5rem;
+}
+
+.spon-modal p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0 0 1.1rem;
+}
+
+.spon-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+@media (max-width: 640px) {
+  .spon-form-row {
+    grid-template-columns: 1fr;
+  }
+}
