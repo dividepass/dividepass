@@ -523,13 +523,14 @@
   box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05);
 }
 
-/* Grupo CHEIO, ESGOTADO ou DESATIVADO: o card fica mais transparente, para o
-   olho ir direto para o que dá para comprar. O aviso ("Grupo lotado",
-   "Esgotado") continua legível — é o que o cliente precisa ler. */
+/* Grupo CHEIO, ESGOTADO ou DESATIVADO: o card fica um pouco mais
+   transparente, para o olho ir direto ao que dá para comprar. O aviso
+   ("CHEIO", no topo do card) continua legível — é o que o cliente
+   precisa ler. */
 .group-card-full,
 .group-card-esgotado,
 .group-card-desativado {
-  opacity: 0.6;
+  opacity: 0.75;
 }
 
 .group-card-full:hover,
@@ -584,17 +585,56 @@
 .gc-name-row {
   display: flex;
   align-items: center;
+  /* O nome fica à esquerda, o aviso (CHEIO) na outra extremidade. */
+  justify-content: space-between;
   gap: 0.35rem;
   margin-bottom: 0.35rem;
 }
 
 .gc-name-row h3 {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 1rem;
   color: var(--text);
   margin: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Grupo CHEIO — aviso na linha do nome, na outra extremidade do card.
+   Vermelho: o cliente precisa ver antes de clicar. */
+.gc-cheio {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.16);
+  color: #F87171;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.gc-cheio--esgotado {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.16);
+  color: #FBBF24;
+}
+
+[data-theme="light"] .gc-cheio {
+  color: #B91C1C;
+  background: #FEE2E2;
+  border-color: rgba(185, 28, 28, 0.28);
+}
+
+[data-theme="light"] .gc-cheio--esgotado {
+  color: #B45309;
+  background: #FEF3C7;
+  border-color: rgba(180, 83, 9, 0.28);
 }
 
 .gc-verified {
@@ -1136,10 +1176,88 @@
     gap: 0.75rem;
   }
 
-  /* === Group Card === */
+  /* === Group Card ===
+     COMPACTO: o card ocupava quase a tela inteira e a listagem ficava
+     longa demais. Agora a foto encolhe, o respiro diminui e o preço vem
+     menor — mas as tags "Com/Sem anúncios" ganham destaque, porque é a
+     informação que muda a decisão de compra. */
   .group-card {
     padding: 0.7rem;
     border-radius: 0.75rem;
+  }
+
+  .gc-top {
+    gap: 0.6rem;
+  }
+
+  .gc-photo {
+    width: 52px;
+    height: 52px;
+    border-radius: 0.6rem;
+    border-width: 1px;
+  }
+
+  .gc-photo-placeholder {
+    font-size: 1.05rem;
+  }
+
+  .gc-name-row {
+    margin-bottom: 0.2rem;
+  }
+
+  .gc-name-row h3 {
+    font-size: 0.92rem;
+  }
+
+  .gc-stats-row {
+    font-size: 0.7rem;
+  }
+
+  .gc-divider {
+    margin: 0.5rem 0;
+  }
+
+  .gc-price-label {
+    font-size: 0.66rem;
+  }
+
+  .gc-price-value {
+    font-size: 1.2rem;
+  }
+
+  .gc-price-value small {
+    font-size: 0.68rem;
+  }
+
+  .gc-price-old {
+    font-size: 0.66rem;
+  }
+
+  .gc-off {
+    font-size: 0.7rem;
+  }
+
+  .gc-bottom {
+    margin-top: 0.5rem;
+  }
+
+  .gc-member-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 0.58rem;
+  }
+
+  .gc-creator {
+    font-size: 0.66rem;
+  }
+
+  .gc-creator-avatar {
+    width: 20px;
+    height: 20px;
+  }
+
+  .gc-tags {
+    margin-top: 0.35rem;
   }
 
   .group-card-header {

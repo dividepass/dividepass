@@ -1,4 +1,4 @@
-import { BadgeCheck, Megaphone, MegaphoneOff, Crown, Plug } from 'lucide-react';
+import { BadgeCheck, Megaphone, MegaphoneOff, Crown, Plug, PackageX } from 'lucide-react';
 import './GroupTags.css';
 
 /**
@@ -12,9 +12,12 @@ import './GroupTags.css';
  *   pagando. `has_ads === null` (grupo antigo) não mostra selo nenhum.
  * - Tipo de conta ("Conta Família", "Conta Premium"...): o que o membro
  *   recebe de fato.
- * - "Via Parceiro": grupo importado da revenda (Pulse Coding). O acesso vem
+ * - "Via Parceiro": grupo importado de um parceiro de revenda. O acesso vem
  *   de um parceiro e é PRIVADO — o membro recebe a própria conta, não uma
- *   conta compartilhada. O selo avisa isso antes da compra.
+ *   conta compartilhada. O selo avisa isso antes da compra. (Para o cliente,
+ *   o fornecedor é a DividePass: o nome do parceiro de trás não aparece.)
+ * - "Esgotado": o fornecedor está sem estoque. O grupo continua visível
+ *   (a pessoa vê que o produto existe) mas não aceita mais gente.
  */
 export default function GroupTags({ group, size = 'md', showPlanType = true, showVerified = true, className = '' }) {
   if (!group) return null;
@@ -22,9 +25,24 @@ export default function GroupTags({ group, size = 'md', showPlanType = true, sho
   const tags = [];
 
   // Grupo "Via Parceiro": a tag vive em `groups.tags` (TEXT[]).
-  const ehViaParceiro = Array.isArray(group.tags) && group.tags.some(
-    (t) => String(t || '').trim().toLowerCase() === 'via parceiro'
+  const listaTags = Array.isArray(group.tags) ? group.tags : [];
+  const temTag = (nome) => listaTags.some(
+    (t) => String(t || '').trim().toLowerCase() === nome.toLowerCase()
   );
+
+  const ehViaParceiro = temTag('Via Parceiro');
+  const ehEsgotado = temTag('Esgotado');
+
+  if (ehEsgotado) {
+    tags.push({
+      key: 'esgotado',
+      label: 'Esgotado',
+      short: 'Esgotado',
+      icon: PackageX,
+      tone: 'esgotado',
+      title: 'Sem estoque no fornecedor. Logo que repor, o produto volta a ser vendido.',
+    });
+  }
 
   if (ehViaParceiro) {
     tags.push({
@@ -33,7 +51,7 @@ export default function GroupTags({ group, size = 'md', showPlanType = true, sho
       short: 'Via Parceiro',
       icon: Plug,
       tone: 'parceiro',
-      title: 'Acesso obtido com a revenda Pulse Coding. O acesso é seu e pessoal — não pode ser compartilhado.',
+      title: 'Acesso obtido com a DividePass. O acesso é seu e pessoal — não pode ser compartilhado.',
     });
   }
 

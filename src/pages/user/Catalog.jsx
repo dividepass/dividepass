@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Share2, Users, ArrowRight, PackageX, ChevronDown } from 'lucide-react';
+import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Share2, Users, ChevronDown } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
@@ -16,22 +16,11 @@ import TopicCards from '../../components/TopicCards';
 import { useEngagement } from '../../hooks/useEngagement';
 import { groupPriceSuffix } from '../../lib/subscriptionCycles';
 import { fetchRecentSubscribers } from '../../lib/dashboardInsights';
+import { CATEGORIAS as CATEGORIAS_CATALOG } from '../../lib/categorias';
 import logoImg from '../../assets/logo.png';
 import './Catalog.css';
 
-const CATEGORIES = [
-  { key: 'all', label: 'Todos', icon: '🔍' },
-  { key: 'streaming', label: 'Streaming', icon: '📺' },
-  { key: 'musica', label: 'Música', icon: '🎵' },
-  { key: 'ia', label: 'IA', icon: '🤖' },
-  { key: 'cursos', label: 'Cursos', icon: '🎓' },
-  { key: 'produtividade', label: 'Produtividade', icon: '💼' },
-  { key: 'ferramentas', label: 'Ferramentas', icon: '🛠' },
-  { key: 'leitura', label: 'Leitura', icon: '📚' },
-  { key: 'games', label: 'Games', icon: '🎮' },
-  { key: 'saude', label: 'Saúde', icon: '🏋️' },
-  { key: 'seguranca', label: 'Segurança', icon: '🔒' },
-];
+const CATEGORIES = CATEGORIAS_CATALOG;
 
 const CATEGORY_KEYWORDS = {
   streaming: ['filmes', 'series', 'video', 'streaming', 'tv', 'netflix', 'disney', 'max', 'prime', 'globoplay', 'paramount', 'apple tv', 'crunchyroll', 'mubi'],
@@ -446,7 +435,6 @@ function Catalog() {
           <div className="groups-grid">
           {filteredGroups.map(group => {
             const activeMembers = getActiveMembers(group);
-            const spots = getSpots(group, selectedService);
             const full = isFull(group, selectedService);
             // Sem estoque no fornecedor: o grupo aparece, mas não entra mais
             // gente (mesma coisa de um grupo cheio).
@@ -497,6 +485,20 @@ function Catalog() {
                       {group.approval_status === 'pending' && (
                         <span className="gc-awaiting" title="Aguardando aprovação da equipe DividePass">
                           <Clock size={13} /> Aguardando aprovação
+                        </span>
+                      )}
+                      {/* Grupo CHEIO: o aviso fica NA LINHA DO NOME, na outra
+                          extremidade do card. Antes ele vivia numa row
+                          inteira no rodapé (junto com "Ver detalhes"), que
+                          ocupava a tela sem dizer nada de novo. */}
+                      {full && !esgotado && (
+                        <span className="gc-cheio" title="Grupo lotado: não sobrou vaga">
+                          CHEIO
+                        </span>
+                      )}
+                      {esgotado && (
+                        <span className="gc-cheio gc-cheio--esgotado" title="Sem estoque no fornecedor">
+                          ESGOTADO
                         </span>
                       )}
                     </div>
@@ -584,27 +586,11 @@ function Catalog() {
                   </div>
                 </div>
 
-                {/* CTA — a listagem precisa GRITAR o próximo passo. */}
-                <div className="gc-cta-row">
-                  {esgotado ? (
-                    <span className="gc-cta gc-cta--full">
-                      <PackageX size={14} /> Esgotado
-                    </span>
-                  ) : full ? (
-                    <span className="gc-cta gc-cta--full">Grupo lotado</span>
-                  ) : (
-                    <span className="gc-cta">
-                      Entrar no grupo <ArrowRight size={14} />
-                    </span>
-                  )}
-                  <span className="gc-see-details">
-                    {esgotado
-                      ? 'Sem estoque'
-                      : spots !== Infinity && !full
-                        ? `${spots} vagas`
-                        : 'Ver detalhes'}
-                  </span>
-                </div>
+                {/* SEM ROW DE RODAPÉ.
+                    A row final ("Grupo lotado | Ver detalhes") repetia uma
+                    informação que agora está no topo do card (tag CHEIO) e
+                    empurrava a listagem para baixo. O card inteiro já é
+                    clicável: tocar nele abre o grupo. */}
               </div>
             );
           })}

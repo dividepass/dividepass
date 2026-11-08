@@ -118,6 +118,15 @@ export default function DashboardHero({
 
   return (
     <section className="dash-hero">
+      {/* LINK QUE COBRE O CARD INTEIRO.
+          Clicar no card leva para a plataforma — não só no botão. O botão
+          fica por cima (z-index) para continuar funcionando no desktop. */}
+      <Link
+        to={href}
+        className="dash-hero-overlay"
+        aria-label={`Ver grupos de ${service.name}`}
+      />
+
       <div className="dash-hero-inner">
         <div>
           <span className="dash-hero-eyebrow">

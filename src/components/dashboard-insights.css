@@ -509,6 +509,22 @@
   padding: 1.6rem 1.8rem;
 }
 
+/* LINK QUE COBRE O CARD INTEIRO.
+   Clicar em qualquer canto do hero leva para a plataforma. Fica atrás do
+   conteúdo (z-index 1) e dos botões (z-index 2), que continuam clicáveis. */
+.dash-hero-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  text-decoration: none;
+}
+
+.dash-hero-overlay:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -3px;
+}
+
 .dash-hero-eyebrow {
   display: inline-flex;
   align-items: center;
@@ -592,6 +608,9 @@
   flex-wrap: wrap;
   gap: 0.6rem;
   align-items: center;
+  /* Fica ACIMA do link que cobre o card: os botões continuam clicáveis. */
+  position: relative;
+  z-index: 2;
 }
 
 .dash-hero-btn {
@@ -784,8 +803,16 @@
     display: none;
   }
 
+  /* No celular o CARD inteiro é o botão: clicar em qualquer canto leva
+     para a plataforma. Então o botão "Ver grupos" seria redundante — e os
+     números embaixo (preço, off, grupos abertos, já dividindo) tiravam o
+     foco do que importa. Os dois saem. */
   .dash-hero-actions {
-    gap: 0.5rem;
+    display: none;
+  }
+
+  .dash-hero-stats {
+    display: none;
   }
 
   .dash-hero-btn {
@@ -794,24 +821,6 @@
   }
 
   .dash-hero-btn--ghost {
-    display: none;
-  }
-
-  .dash-hero-stats {
-    gap: 0.9rem;
-    margin-top: 0.8rem;
-    padding-top: 0.7rem;
-  }
-
-  .dash-hero-stat b {
-    font-size: 0.92rem;
-  }
-
-  .dash-hero-stat span {
-    font-size: 0.66rem;
-  }
-
-  .dash-hero-stat:last-child {
     display: none;
   }
 }
@@ -1072,6 +1081,10 @@
   border: 1px solid transparent;
   background: transparent;
   cursor: pointer;
+  /* No dashboard o tópico é um LINK — sem isto o navegador sublinha o
+     nome e pinta o texto de azul. */
+  text-decoration: none;
+  color: inherit;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
@@ -1094,6 +1107,14 @@
   border: 1px solid var(--border);
   font-size: 1.35rem;
   line-height: 1;
+  /* Ícone de verdade (lucide) em vez de emoji: precisa de cor própria. */
+  color: var(--secondary);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.topic-card:hover .topic-card-icon {
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .topic-card.active .topic-card-icon {

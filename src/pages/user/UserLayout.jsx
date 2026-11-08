@@ -281,8 +281,11 @@ function UserLayout() {
       <PwaInstallGate />
       <PushNotificationGate />
 
-      {/* Topo fixo no mobile */}
-      <header className="fixed inset-x-2 top-2 z-40 grid grid-cols-[42px_1fr_42px] items-center gap-2 rounded-2xl border border-border bg-card/90 px-1.5 py-1.5 shadow-lg backdrop-blur-xl md:hidden">
+      {/* Topo fixo no mobile/tablet.
+          O corte é em 850px: abaixo disso a navegação vira gaveta (o botão
+          ☰ do topo) e a barra lateral some — em 768–850px ainda era desktop
+          e a tela ficava apertada. */}
+      <header className="fixed inset-x-2 top-2 z-40 grid grid-cols-[42px_1fr_42px] items-center gap-2 rounded-2xl border border-border bg-card/90 px-1.5 py-1.5 shadow-lg backdrop-blur-xl min-[851px]:hidden">
         <Button
           variant="ghost"
           size="icon"
@@ -323,8 +326,8 @@ function UserLayout() {
         </Sheet>
       </header>
 
-      {/* Sidebar fixa no desktop */}
-      <aside className="sticky top-0 hidden h-screen w-[280px] shrink-0 flex-col border-r border-border bg-card md:flex">
+      {/* Sidebar fixa no desktop (a partir de 851px) */}
+      <aside className="sticky top-0 hidden h-screen w-[280px] shrink-0 flex-col border-r border-border bg-card min-[851px]:flex">
         <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6" aria-label="DividePass">
           <img src={logoImg} alt="" className="size-9 object-contain" />
           <span className="text-xl font-extrabold tracking-tight text-foreground">
@@ -334,7 +337,7 @@ function UserLayout() {
         <NavContent {...navProps} onNavigate={closeMenu} indicatorId="dp-nav-indicator-desktop" />
       </aside>
 
-      <main className="main-content min-w-0 flex-1 px-3 pb-10 pt-20 md:h-screen md:overflow-y-auto md:overflow-x-hidden md:px-10 md:pt-10">
+      <main className="main-content min-w-0 flex-1 px-3 pb-10 pt-20 min-[851px]:h-screen min-[851px]:overflow-y-auto min-[851px]:overflow-x-hidden min-[851px]:px-10 min-[851px]:pt-10">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={location.pathname}

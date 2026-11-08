@@ -2,25 +2,33 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { fetchTopSoldServices, fmtBRL } from '../lib/dashboardInsights';
+import { CATEGORIAS_SEM_TODOS } from '../lib/categorias';
+import useAutoScroll from '../hooks/useAutoScroll';
 import TopicCards from './TopicCards';
 import CatalogBannerSlider from './CatalogBannerSlider';
 import './dashboard-insights.css';
 
 /**
- * Vitrine da home — o mesmo desenho do app de comida (iFood), adaptedo para
+ * Vitrine da home — o mesmo desenho do app de comida (iFood), adaptado para
  * a DividePass:
  *
- *   1. TÓPICOS — ícones redondos que filtram o catálogo;
- *   2. BANNER — carrossel de ofertas e plataformas em alta (arrastável);
- *   3. MAIS POPULARES — ícones redondos com o nome embaixo;
+ *   1. MAIS POPULARES — ícones redondos com o nome embaixo (vem logo depois
+ *      do botão do WhatsApp: é o que a pessoa mais procura);
+ *   2. TÓPICOS — ícones redondos por categoria; tocar leva para os serviços
+ *      daquela categoria;
+ *   3. BANNER — carrossel de ofertas e plataformas em alta (arrastável);
  *   4. MELHORES OFERTAS — cards quadrados com o preço e o preço oficial.
  *
- * Tudo em fileira que rola pro lado. No desktop a vitrine fica escondida: lá
- * a home continua com o layout largo (hero grande, carrossel com ranking e
- * as seções completas).
+ * Tudo em fileira que rola pro lado — e que anda SOZINHA, um passo a cada
+ * 5 segundos, parando quando a pessoa encosta o mouse ou o dedo.
+ *
+ * No desktop a vitrine fica escondida: lá a home continua com o layout largo
+ * (hero grande, carrossel com ranking e as seções completas).
  */
-export default function StorefrontRows({ services = [], groups = [], topics = [] }) {
+export default function StorefrontRows({ services = [], groups = [], topics = CATEGORIAS_SEM_TODOS }) {
   const [topItems, setTopItems] = useState([]);
+  const circlesRef = useAutoScroll({ interval: 5000 });
+  const cardsRef = useAutoScroll({ interval: 5000 });
 
   useEffect(() => {
     let alive = true;
@@ -63,10 +71,6 @@ export default function StorefrontRows({ services = [], groups = [], topics = []
 
   return (
     <div className="storefront">
-      {topics.length > 0 && <TopicCards topics={topics} />}
-
-      <CatalogBannerSlider services={services} groups={groups} />
-
       {populares.length > 0 && (
         <section className="storefront-section">
           <div className="storefront-head">
@@ -76,7 +80,7 @@ export default function StorefrontRows({ services = [], groups = [], topics = []
             </Link>
           </div>
 
-          <div className="storefront-circles">
+          <div className="storefront-circles" ref={circlesRef}>
             {populares.map(({ service, membros }) => (
               <Link
                 key={service.id}
@@ -101,6 +105,15 @@ export default function StorefrontRows({ services = [], groups = [], topics = []
         </section>
       )}
 
+      {topics.length > 0 && (
+        <TopicCards
+          topics={topics}
+          hrefFor={(key) => `/dashboard/catalog?categoria=${key}`}
+        />
+      )}
+
+      <CatalogBannerSlider services={services} groups={groups} />
+
       {ofertas.length > 0 && (
         <section className="storefront-section">
           <div className="storefront-head">
@@ -110,7 +123,7 @@ export default function StorefrontRows({ services = [], groups = [], topics = []
             </Link>
           </div>
 
-          <div className="storefront-cards">
+          <div className="storefront-cards" ref={cardsRef}>
             {ofertas.map((item) => (
               <Link
                 key={item.id}

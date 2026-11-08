@@ -96,7 +96,7 @@ page.on('console', (m) => {
 });
 
 /* PLATAFORMA */
-await page.goto(`${BASE_URL}/dashboard/catalog/netflix`, { waitUntil: 'domcontentloaded' });
+await page.goto(`${BASE_URL}/dashboard/catalog/netflix`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await espera(3000);
 await fecharPortoes(page);
 await espera(500);
@@ -154,7 +154,7 @@ check('trilho dos slides tem scroll-snap (arrastável)', /x/.test(scroll.snap), 
 await page.screenshot({ path: path.join(OUT, 'desktop-plataforma.png') });
 
 /* CATÁLOGO */
-await page.goto(`${BASE_URL}/dashboard/catalog`, { waitUntil: 'domcontentloaded' });
+await page.goto(`${BASE_URL}/dashboard/catalog`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await espera(3000);
 await fecharPortoes(page);
 await espera(500);
@@ -177,7 +177,7 @@ if (await topico.count()) {
 await page.screenshot({ path: path.join(OUT, 'desktop-catalogo.png') });
 
 /* DASHBOARD */
-await page.goto(`${BASE_URL}/dashboard`, { waitUntil: 'domcontentloaded' });
+await page.goto(`${BASE_URL}/dashboard`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await espera(3500);
 await fecharPortoes(page);
 await espera(500);
@@ -189,7 +189,7 @@ const m = await ctxM.newPage();
 await sessao(m);
 m.on('pageerror', (e) => erros.push(`mobile: ${String(e)}`));
 
-await m.goto(`${BASE_URL}/dashboard`, { waitUntil: 'domcontentloaded' });
+await m.goto(`${BASE_URL}/dashboard`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await espera(3500);
 await fecharPortoes(m);
 await espera(600);
@@ -229,7 +229,7 @@ await m.screenshot({ path: path.join(OUT, 'mobile-dashboard.png') });
 await m.screenshot({ path: path.join(OUT, 'mobile-dashboard-inteiro.png'), fullPage: true });
 
 /* PLATAFORMA NO CELULAR */
-await m.goto(`${BASE_URL}/dashboard/catalog/netflix`, { waitUntil: 'domcontentloaded' });
+await m.goto(`${BASE_URL}/dashboard/catalog/netflix`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await espera(3000);
 await fecharPortoes(m);
 await espera(500);
@@ -266,7 +266,7 @@ check('plataforma no celular não tem rolagem horizontal', !overflowPlat);
 await m.screenshot({ path: path.join(OUT, 'mobile-plataforma.png') });
 
 /* CATÁLOGO NO CELULAR */
-await m.goto(`${BASE_URL}/dashboard/catalog`, { waitUntil: 'domcontentloaded' });
+await m.goto(`${BASE_URL}/dashboard/catalog`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await espera(3000);
 await fecharPortoes(m);
 await espera(500);

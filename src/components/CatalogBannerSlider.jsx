@@ -105,10 +105,29 @@ export default function CatalogBannerSlider({ services = [], groups = [] }) {
     track.scrollTo({ left: proximo * track.clientWidth, behavior: 'smooth' });
   };
 
+  /* O banner anda SOZINHO, um slide a cada 5 segundos — igual as fileiras da
+     vitrine. Quando a pessoa encosta o mouse (ou o dedo) em cima, ele
+     para: ninguém quer o banner mudando na hora de clicar. */
+  const pausado = useRef(false);
+  useEffect(() => {
+    if (slides.length < 2) return undefined;
+    const timer = setInterval(() => {
+      if (pausado.current) return;
+      ir(1);
+    }, 5000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slides.length, index]);
+
   if (!slides.length) return null;
 
   return (
-    <section className="cat-banner" aria-label="Destaques">
+    <section
+      className="cat-banner"
+      aria-label="Destaques"
+      onMouseEnter={() => { pausado.current = true; }}
+      onMouseLeave={() => { pausado.current = false; }}
+    >
       <div className="cat-banner-track" ref={trackRef} onScroll={aoRolar}>
         {slides.map((slide) => (
           <Link

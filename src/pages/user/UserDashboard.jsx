@@ -20,6 +20,7 @@ import TopSellingServices from '../../components/TopSellingServices';
 import RecentSubscribers from '../../components/RecentSubscribers';
 import StorefrontRows from '../../components/StorefrontRows';
 import { useEngagement } from '../../hooks/useEngagement';
+import { CATEGORIAS as CATEGORIAS_CATALOG } from '../../lib/categorias';
 import { useWhatsappVipUrl } from '../../hooks/useWhatsappVipUrl';
 import { calculateUserSavings, getSavingsSummary, getAdminAlerts, fmtPercentage } from '../../utils/savingsService';
 import './UserDashboard.css';
@@ -30,19 +31,7 @@ function fmtBRL(value) {
   return `R$ ${Number(value).toFixed(2).replace('.', ',')}`;
 }
 
-const CATEGORIES = [
-  { key: 'all', label: 'Todos', icon: '🔍' },
-  { key: 'streaming', label: 'Streaming', icon: '📺' },
-  { key: 'musica', label: 'Música', icon: '🎵' },
-  { key: 'ia', label: 'IA', icon: '🤖' },
-  { key: 'cursos', label: 'Cursos', icon: '🎓' },
-  { key: 'produtividade', label: 'Produtividade', icon: '💼' },
-  { key: 'ferramentas', label: 'Ferramentas', icon: '🛠' },
-  { key: 'leitura', label: 'Leitura', icon: '📚' },
-  { key: 'games', label: 'Games', icon: '🎮' },
-  { key: 'saude', label: 'Saúde', icon: '🏋️' },
-  { key: 'seguranca', label: 'Segurança', icon: '🔒' },
-];
+const CATEGORIES = CATEGORIAS_CATALOG;
 
 const CATEGORY_KEYWORDS = {
   streaming: ['filmes', 'series', 'video', 'streaming', 'tv', 'netflix', 'disney', 'max', 'prime', 'globoplay', 'paramount', 'apple tv', 'crunchyroll', 'mubi'],
@@ -878,16 +867,21 @@ function UserDashboard() {
               </button>
             )}
             <div className="dashboard-category-bar" ref={categoryBarRef}>
-              {CATEGORIES.map(cat => (
-                <button
-                  key={cat.key}
-                  className={`dashboard-category-pill ${selectedCategory === cat.key ? 'active' : ''}`}
-                  onClick={() => setSelectedCategory(cat.key)}
-                >
-                  <span className="category-pill-icon">{cat.icon}</span>
-                  <span className="category-pill-label">{cat.label}</span>
-                </button>
-              ))}
+              {CATEGORIES.map(cat => {
+                const Icon = cat.Icon;
+                return (
+                  <button
+                    key={cat.key}
+                    className={`dashboard-category-pill ${selectedCategory === cat.key ? 'active' : ''}`}
+                    onClick={() => setSelectedCategory(cat.key)}
+                  >
+                    <span className="category-pill-icon">
+                      {Icon ? <Icon size={15} strokeWidth={2.2} aria-hidden /> : cat.icon}
+                    </span>
+                    <span className="category-pill-label">{cat.label}</span>
+                  </button>
+                );
+              })}
             </div>
             {canScrollRight && (
               <button className="dashboard-category-arrow right" onClick={() => scrollCategories(1)}>

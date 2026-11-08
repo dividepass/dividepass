@@ -337,8 +337,11 @@
   color: var(--text-muted);
 }
 
-/* --- Mobile Responsiveness --- */
-@media (max-width: 768px) {
+/* --- Mobile / Tablet ---
+   O corte é em 850px: até aí a navegação vive na gaveta (botão ☰ do topo
+   fixo) e a barra lateral fica escondida. Em 768–850px ainda era desktop e
+   a tela ficava apertada demais. */
+@media (max-width: 850px) {
   .mobile-topbar {
     position: fixed;
     top: 0.5rem;
