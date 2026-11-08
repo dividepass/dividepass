@@ -1011,6 +1011,13 @@
 }
 
 @media (max-width: 768px) {
+  /* O topo fixo do celular (UserLayout) JÁ tem a seta de voltar. Deixar o
+     botão "Voltar" da página aqui embaixo dava DUAS setas na mesma tela —
+     o usuário reclamou disso. No desktop (sem topo fixo) ele continua. */
+  .catalog-page .back-btn {
+    display: none;
+  }
+
   /* === Catalog Grid (services list) === */
   .catalog-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
