@@ -14,7 +14,8 @@ import {
   Clock,
   Ban,
   MessageSquare,
-  Shield
+  Gauge,
+  Star
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import GroupRules from '../../components/GroupRules';
@@ -106,6 +107,63 @@ function Groups() {
       setRejectedGroups(prev => prev.filter(g => g.id !== id));
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  /**
+   * Escolhe qual grupo aparece em DESTAQUE no slide da plataforma
+   * (/dashboard/catalog/<plataforma>).
+   *
+   * Só um grupo por plataforma fica em destaque: ao escolher um, os outros
+   * da mesma plataforma são desligados primeiro.
+   *
+   * A coluna `featured_in_slide` entra por migration
+   * (database/EXECUTAR-2026-11-08-grupo-destaque-slide.sql). Sem ela, o
+   * PostgREST devolve PGRST204 e a tela avisa o que fazer — sem quebrar.
+   */
+  const handleToggleFeatured = async (group) => {
+    setProcessingId(group.id);
+    const querDestacar = !group.featured_in_slide;
+
+    try {
+      if (querDestacar && group.service_id) {
+        // Desliga o destaque dos outros grupos da mesma plataforma.
+        await supabase
+          .from('groups')
+          .update({ featured_in_slide: false })
+          .eq('service_id', group.service_id);
+      }
+
+      const { error: updateError } = await supabase
+        .from('groups')
+        .update({ featured_in_slide: querDestacar })
+        .eq('id', group.id);
+
+      if (updateError) {
+        const texto = `${updateError.message || ''} ${updateError.code || ''}`;
+        if (/PGRST204|42703|featured_in_slide/i.test(texto)) {
+          throw new Error(
+            'A coluna featured_in_slide ainda não existe no banco. Rode ' +
+              'database/EXECUTAR-2026-11-08-grupo-destaque-slide.sql no SQL Editor.'
+          );
+        }
+        throw updateError;
+      }
+
+      setGroups(prev =>
+        prev.map(g => {
+          if (g.id === group.id) return { ...g, featured_in_slide: querDestacar };
+          if (querDestacar && g.service_id === group.service_id) {
+            return { ...g, featured_in_slide: false };
+          }
+          return g;
+        })
+      );
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -363,6 +421,23 @@ function Groups() {
                   <div className="gc-divider" />
 
                   <div className="group-card-actions">
+                    {/* Destaque no slide da plataforma: o grupo escolhido
+                        aparece primeiro na página /dashboard/catalog/<plataforma>. */}
+                    <button
+                      className={`group-btn feature ${group.featured_in_slide ? 'active' : ''}`}
+                      onClick={() => handleToggleFeatured(group)}
+                      disabled={processingId === group.id}
+                      title="Mostrar este grupo em destaque no slide da plataforma"
+                    >
+                      <Star size={14} />
+                      {group.featured_in_slide ? 'Em destaque' : 'Destacar'}
+                    </button>
+                    {/* "Controlar" abre a MESMA tela que o dono do grupo usa em
+                        /manage — no admin, o grupo de qualquer dono. */}
+                    <Link to={`/admin/groups/${group.id}/manage`} className="group-btn manage">
+                      <Gauge size={14} />
+                      Controlar
+                    </Link>
                     <Link to={`/admin/groups/${group.id}/edit`} className="group-btn edit">
                       <Pencil size={14} />
                       Editar

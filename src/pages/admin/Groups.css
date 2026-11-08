@@ -462,8 +462,34 @@
 }
 
 .group-card-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.5rem;
+}
+
+/* Destaque no slide da plataforma — o botão que escolhe qual grupo aparece
+   primeiro na página pública da plataforma. */
+.group-btn.feature {
+  grid-column: 1 / -1;
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #F59E0B;
+}
+
+.group-btn.feature:hover {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: #F59E0B;
+  color: #F59E0B;
+}
+
+.group-btn.feature.active {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: #F59E0B;
+  color: #F59E0B;
+}
+
+.group-btn.feature:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .group-btn {
@@ -489,10 +515,36 @@
   color: var(--secondary);
 }
 
+/* "Controlar" — a mesma tela de /manage que o dono do grupo usa. Fica com a
+   cor da marca para o admin achar rápido. */
+.group-btn.manage {
+  color: var(--primary);
+  border-color: rgba(99, 102, 241, 0.35);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.group-btn.manage:hover {
+  background: rgba(99, 102, 241, 0.16);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .group-btn.delete:hover {
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.2);
   color: #EF4444;
+}
+
+/* Em tela estreita os três botões encolhem demais: viram duas colunas e o
+   "Controlar" ocupa a linha inteira. */
+@media (max-width: 520px) {
+  .group-card-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .group-card-actions .group-btn.manage {
+    grid-column: 1 / -1;
+  }
 }
 
 .empty-groups {

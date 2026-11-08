@@ -1,17 +1,18 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Share2, Users, ArrowRight, PackageX } from 'lucide-react';
+import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Share2, Users, ArrowRight, PackageX, ChevronDown } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { visibilityColumnAvailable } from '../../lib/groupVisibility';
-import { grupoEsgotado } from '../../lib/groupEsgotado';
+import { grupoEsgotado, grupoDesativado } from '../../lib/groupEstado';
 import GroupTags from '../../components/GroupTags';
 import MemberAvatar from '../../components/MemberAvatar';
-import SponsoredOffers from '../../components/SponsoredOffers';
 import WatchlistButton from '../../components/WatchlistButton';
 import PlatformHeroSlides from '../../components/PlatformHeroSlides';
 import RecentSubscribers from '../../components/RecentSubscribers';
+import CatalogBannerSlider from '../../components/CatalogBannerSlider';
+import TopicCards from '../../components/TopicCards';
 import { useEngagement } from '../../hooks/useEngagement';
 import { groupPriceSuffix } from '../../lib/subscriptionCycles';
 import { fetchRecentSubscribers } from '../../lib/dashboardInsights';
@@ -64,7 +65,7 @@ function Catalog() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const { streamingServices, getAvailableServices, isSubscribedToService } = useAppDataContext();
+  const { streamingServices, getAvailableServices, isSubscribedToService, groups } = useAppDataContext();
   const { isWatching, toggleWatch, refreshWatchlist } = useEngagement();
 
   const [search, setSearch] = useState('');
@@ -221,6 +222,19 @@ function Catalog() {
     if (fromContext.length > 0) return fromContext;
     return extraGroups;
   }, [serviceData?.groups, extraGroups]);
+  /**
+   * Grupo em destaque da plataforma.
+   *
+   * A ESCOLHA é do admin (estrela no painel de grupos) e fica gravada em
+   * `groups.featured_in_slide`. Como os grupos são lidos com `select('*')`,
+   * a coluna chega sozinha quando a migration é aplicada — antes disso o
+   * campo simplesmente não existe e nenhum slide de destaque aparece.
+   */
+  const featuredGroup = useMemo(
+    () => allServiceGroups.find((g) => g.featured_in_slide === true) || null,
+    [allServiceGroups]
+  );
+
   const alreadySubscribed = selectedService ? isSubscribedToService(serviceId) : false;
 
   /**
@@ -318,6 +332,7 @@ function Catalog() {
           recent={recentSubscribers}
           fromPrice={platformPricing.fromPrice}
           officialPrice={platformPricing.officialPrice}
+          featuredGroup={featuredGroup}
         />
 
         <div className="catalog-detail-header">
@@ -329,28 +344,7 @@ function Catalog() {
                 className="catalog-platform-logo"
               />
             )}
-            <div>
-              <h1>{selectedService.fullName || selectedService.name}</h1>
-              <p>Escolha um grupo para fazer parte do rateio.</p>
-              <div className="catalog-platform-meta">
-                {platformPricing.savingsPct > 0 && (
-                  <span className="catalog-platform-chip catalog-platform-chip--off">
-                    ATÉ {platformPricing.savingsPct}% OFF
-                  </span>
-                )}
-                <span className="catalog-platform-chip">
-                  <Users size={13} />
-                  {platformPricing.gruposAbertos}{' '}
-                  {platformPricing.gruposAbertos === 1 ? 'grupo aberto' : 'grupos abertos'}
-                </span>
-                {recentSubscribers.length > 0 && (
-                  <span className="catalog-platform-chip">
-                    {recentSubscribers.length}{' '}
-                    {recentSubscribers.length === 1 ? 'pessoa entrou' : 'pessoas entraram'} aqui
-                  </span>
-                )}
-              </div>
-            </div>
+            <h1>{selectedService.fullName || selectedService.name}</h1>
           </div>
           <div className="catalog-detail-actions">
             <button className="btn-interest-header btn-share-header" onClick={handleSharePlatform}>
@@ -404,19 +398,24 @@ function Catalog() {
             <button
               className={`filter-btn ${verifiedOnly ? 'active' : ''}`}
               onClick={() => setVerifiedOnly(!verifiedOnly)}
+              aria-pressed={verifiedOnly}
             >
               <BadgeCheck size={14} />
               Verificados
             </button>
-            <select
-              className="sort-select"
-              value={sortBy}
-              onChange={e => setSortBy(e.target.value)}
-            >
-              {SORT_OPTIONS.map(opt => (
-                <option key={opt.key} value={opt.key}>{opt.label}</option>
-              ))}
-            </select>
+            <span className="sort-select-wrap">
+              <select
+                className="sort-select"
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                aria-label="Ordenar grupos"
+              >
+                {SORT_OPTIONS.map(opt => (
+                  <option key={opt.key} value={opt.key}>{opt.label}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="sort-select-chevron" />
+            </span>
           </div>
         </div>
 
@@ -452,6 +451,7 @@ function Catalog() {
             // Sem estoque no fornecedor: o grupo aparece, mas não entra mais
             // gente (mesma coisa de um grupo cheio).
             const esgotado = grupoEsgotado(group);
+            const desativado = grupoDesativado(group);
             const hasSlotLimit = group.has_slot_limit !== false;
             const maxSize = hasSlotLimit ? (group.max_size || selectedService.max_group_size) : null;
             // Rodapé do card: até 4 retratos. Quem tem foto de perfil vem
@@ -472,7 +472,7 @@ function Catalog() {
             return (
               <div
                 key={group.id}
-                className={`group-card ${full ? 'group-card-full' : ''} ${group.verified ? 'is-verified' : ''}`}
+                className={`group-card ${full ? 'group-card-full' : ''} ${esgotado ? 'group-card-esgotado' : ''} ${desativado ? 'group-card-desativado' : ''} ${group.verified ? 'is-verified' : ''}`}
                 style={{ cursor: 'pointer' }}
                 onClick={() => navigate(`/dashboard/groups/${group.slug || group.id}`)}
               >
@@ -671,12 +671,15 @@ function Catalog() {
         <p>Assine novos serviços dividindo o valor com outras pessoas.</p>
       </div>
 
-      {/* Ofertas patrocinadas — topo do catálogo. Espaço comprado por
-          parceiros para divulgar os serviços deles. */}
-      <SponsoredOffers
-        placement="catalog"
-        title="Oferta em destaque"
-        subtitle="Espaços patrocinados por parceiros para destacar serviços no topo do catálogo."
+      {/* Vitrine do topo — banners (ofertas dos parceiros e plataformas em
+          alta). No celular é um carrossel de arraste. */}
+      <CatalogBannerSlider services={streamingServices} groups={groups} />
+
+      {/* Tópicos — cards pequenos que rolam pro lado e filtram a grade. */}
+      <TopicCards
+        topics={CATEGORIES}
+        selected={selectedCategory}
+        onSelect={handleCategoryChange}
       />
 
       <div className="catalog-toolbar">
@@ -694,19 +697,6 @@ function Catalog() {
             </button>
           )}
         </div>
-      </div>
-
-      <div className="category-filter-bar">
-        {CATEGORIES.map(cat => (
-          <button
-            key={cat.key}
-            className={`category-pill ${selectedCategory === cat.key ? 'active' : ''}`}
-            onClick={() => handleCategoryChange(cat.key)}
-          >
-            <span className="category-pill-icon">{cat.icon}</span>
-            <span className="category-pill-label">{cat.label}</span>
-          </button>
-        ))}
       </div>
 
       {filteredServices.length === 0 ? (

@@ -18,6 +18,7 @@ import WhatsAppIcon from '../../components/WhatsAppIcon';
 import DashboardHero from '../../components/DashboardHero';
 import TopSellingServices from '../../components/TopSellingServices';
 import RecentSubscribers from '../../components/RecentSubscribers';
+import StorefrontRows from '../../components/StorefrontRows';
 import { useEngagement } from '../../hooks/useEngagement';
 import { useWhatsappVipUrl } from '../../hooks/useWhatsappVipUrl';
 import { calculateUserSavings, getSavingsSummary, getAdminAlerts, fmtPercentage } from '../../utils/savingsService';
@@ -560,6 +561,15 @@ function UserDashboard() {
           <span>Entre no Grupo VIP 💜</span>
         </a>
       </div>
+
+      {/* Vitrine no estilo app de comida (só no celular): tópicos em ícones
+          redondos, banner arrastável, mais populares e melhores ofertas em
+          cards quadrados. No desktop a home larga continua como está. */}
+      <StorefrontRows
+        services={streamingServices}
+        groups={groups}
+        topics={CATEGORIES.filter((c) => c.key !== 'all')}
+      />
 
       {/* Chamada para criar grupo — aparece para quem disse no onboarding que
           quer criar um grupo e ainda não tem nenhum grupo seu. O card some

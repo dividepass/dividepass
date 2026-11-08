@@ -528,6 +528,15 @@
   }
 }
 
+/* No celular o card de feedback é ruído de marketing no meio da vitrine —
+   ele some para o conteúdo útil (grupos, ofertas, assinaturas) aparecer
+   mais rápido. */
+@media (max-width: 700px) {
+  .feedback-cta-card {
+    display: none;
+  }
+}
+
 .whatsapp-vip-chip {
   display: inline-flex;
   align-items: center;

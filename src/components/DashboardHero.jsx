@@ -125,14 +125,16 @@ export default function DashboardHero({
             {vemDoOnboarding ? 'Escolhido para você' : 'Mais procurado agora'}
           </span>
 
-          <h1 className="dash-hero-title">
-            Olá, {firstName}! 👋 <em>{service.name}</em> por menos.
-          </h1>
+          <h1 className="dash-hero-title">Olá, {firstName}! 👋</h1>
+
+          <h2 className="dash-hero-pick">
+            <em>{service.name}</em> por menos
+          </h2>
 
           <p className="dash-hero-text">
             {vemDoOnboarding
-              ? 'Você marcou esta plataforma no cadastro. Ela está com grupos prontos para entrar — e a vaga sai bem mais barata que sozinha.'
-              : 'Esta é a plataforma com mais grupos abertos agora. Entre em um grupo e divida o valor da assinatura.'}
+              ? `Você marcou esta plataforma. ${destaque.grupos} ${destaque.grupos === 1 ? 'grupo aberto' : 'grupos abertos'} agora.`
+              : `A plataforma com mais grupos abertos. ${destaque.grupos} ${destaque.grupos === 1 ? 'grupo' : 'grupos'} para entrar.`}
           </p>
 
           {chips.length > 0 && (
@@ -151,10 +153,10 @@ export default function DashboardHero({
 
           <div className="dash-hero-actions">
             <Link to={href} className="dash-hero-btn">
-              Ver grupos de {service.name} <ArrowRight size={15} />
+              Ver grupos <ArrowRight size={15} />
             </Link>
             <Link to="/dashboard/catalog" className="dash-hero-btn dash-hero-btn--ghost">
-              Ver todo o catálogo
+              Ver catálogo
             </Link>
           </div>
 

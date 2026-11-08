@@ -208,6 +208,86 @@
   border-color: var(--primary);
 }
 
+/* Par de filtros (Verificados + ordenação).
+   Antes não existia regra base para esta fileira: os dois filhos ficavam
+   empilhados (block) e pareciam grudados no canto da tela. Agora é uma
+   fileira com respiro, mesmo formato de pílula e o select com a setinha
+   dentro do próprio botão. */
+.catalog-filters-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.catalog-filters-row .filter-btn,
+.catalog-filters-row .sort-select-wrap {
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.catalog-filters-row .filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.catalog-filters-row .filter-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.catalog-filters-row .filter-btn.active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.sort-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.sort-select-wrap .sort-select {
+  height: 100%;
+  padding: 0 2rem 0 0.9rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.sort-select-wrap .sort-select option {
+  background: var(--surface);
+  color: var(--text-main);
+}
+
+.sort-select-wrap:hover {
+  border-color: var(--border-strong);
+}
+
+.sort-select-chevron {
+  position: absolute;
+  right: 0.7rem;
+  pointer-events: none;
+  color: var(--text-muted);
+}
+
 /* Catalog Toolbar (service list page) */
 .catalog-toolbar {
   margin-bottom: 1rem;
@@ -443,11 +523,18 @@
   box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05);
 }
 
-.group-card-full {
-  opacity: 0.7;
+/* Grupo CHEIO, ESGOTADO ou DESATIVADO: o card fica mais transparente, para o
+   olho ir direto para o que dá para comprar. O aviso ("Grupo lotado",
+   "Esgotado") continua legível — é o que o cliente precisa ler. */
+.group-card-full,
+.group-card-esgotado,
+.group-card-desativado {
+  opacity: 0.6;
 }
 
-.group-card-full:hover {
+.group-card-full:hover,
+.group-card-esgotado:hover,
+.group-card-desativado:hover {
   transform: none;
   box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
 }
@@ -994,17 +1081,29 @@
   .catalog-filters-row {
     display: flex;
     gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   .catalog-filters-row .filter-btn,
-  .catalog-filters-row .sort-select {
-    flex: 1;
+  .catalog-filters-row .sort-select-wrap {
+    flex: 0 0 auto;
   }
 
   .search-input-wrap {
     min-width: unset;
     padding: 0.45rem 0.7rem;
     border-radius: 0.6rem;
+  }
+
+  /* No celular o catálogo abre direto na vitrine: o subtítulo de marketing
+     empurrava a grade para baixo sem dizer nada útil. */
+  .catalog-page > .page-header p {
+    display: none;
+  }
+
+  .catalog-page > .page-header h1 {
+    font-size: 1.35rem;
   }
 
   .search-input-wrap input {
@@ -1250,11 +1349,19 @@
   }
 }
 
-/* Cabeçalho da plataforma: logo + chips */
-.catalog-platform-title {
+/* Cabeçalho da plataforma: logo + nome (sem subtítulo e sem chips).
+   Especificidade 0,2,0 de propósito: o `Support.css` põe
+   `.page-header { flex-direction: column }` no mobile e, por ordem de
+   import no bundle, vencia o `row` daqui. */
+.catalog-detail-header .catalog-platform-title {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
+}
+
+.catalog-platform-title h1 {
+  margin: 0;
 }
 
 .catalog-platform-logo {
