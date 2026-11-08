@@ -116,6 +116,11 @@ check(
   headerTexto.replace(/\n/g, ' | ').slice(0, 120)
 );
 
+/* No desktop NÃO existe o topo fixo com seta, então o botão "Voltar" da
+   página é a única forma de voltar — ele tem que continuar aparecendo. */
+const voltarDesktop = await page.locator('.catalog-page .back-btn').first().isVisible().catch(() => false);
+check('no desktop o botão "Voltar" continua visível', voltarDesktop);
+
 /* FILTROS: precisam ficar lado a lado, não grudados */
 const filtro = await page.locator('.catalog-filters-row').first().boundingBox();
 const verificados = await page.locator('.catalog-filters-row .filter-btn').first().boundingBox();
@@ -245,6 +250,13 @@ check('slide do celular tem scroll-snap', /x/.test(trackM.snap || ''), trackM.sn
 
 const textoOculto = await m.locator('.plat-slide-sub').first().isVisible().catch(() => false);
 check('descrição do slide some no celular', !textoOculto);
+
+/* DUAS setas de voltar: o topo fixo do celular já tem a seta, então o botão
+   "Voltar" da página não pode aparecer — o usuário reclamou disso. */
+const setaTopo = await m.locator('header button[aria-label="Voltar"]').first().isVisible().catch(() => false);
+const botaoVoltar = await m.locator('.catalog-page .back-btn').first().isVisible().catch(() => false);
+check('o celular tem a seta de voltar no topo fixo', setaTopo);
+check('o celular NÃO duplica a seta de voltar', !botaoVoltar, botaoVoltar ? 'botão "Voltar" visível' : 'ok');
 
 const overflowPlat = await m.evaluate(
   () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2
