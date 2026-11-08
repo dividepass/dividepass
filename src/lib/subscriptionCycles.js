@@ -74,6 +74,50 @@ export function monthlyEquivalent(sub) {
   return months > 0 ? amount / months : amount;
 }
 
+/**
+ * Rótulo do PERÍODO de um grupo: 'mês', 'trimestre', '7 dias'...
+ *
+ * No ciclo `days` o `groups.price_per_slot` NÃO é um preço mensal: é o TOTAL
+ * do período (o pacote "Extensão de 7 dias" custa R$ 119,88 pelos 7 dias).
+ * Por isso o texto precisa dizer o período — senão o cliente lê
+ * "R$ 119,88 /mês por perfil" num produto que vale por 7 dias.
+ */
+export function groupPeriodLabel(group) {
+  const cycle = group?.billing_cycle || 'monthly';
+
+  if (cycle === 'days') {
+    const days = Number(group?.custom_cycle_days || 0);
+    return group?.custom_cycle_label
+      || (days > 0 ? `${days} ${days === 1 ? 'dia' : 'dias'}` : 'período');
+  }
+
+  if (cycle === 'custom') {
+    const months = Number(group?.custom_cycle_months || 0);
+    return group?.custom_cycle_label
+      || (months > 0 ? `${months} ${months === 1 ? 'mês' : 'meses'}` : 'período');
+  }
+
+  return {
+    monthly: 'mês',
+    quarterly: 'trimestre',
+    semiannual: 'semestre',
+    annual: 'ano',
+  }[cycle] || cycle;
+}
+
+/**
+ * Sufixo do preço exibido na vitrine.
+ *
+ * Só o ciclo em dias foge do preço mensal; os demais (mensal, trimestral,
+ * semestral, anual, personalizado) têm `price_per_slot` como preço MENSAL da
+ * vaga e multiplicam o ciclo na hora da cobrança.
+ */
+export function groupPriceSuffix(group) {
+  const cycle = group?.billing_cycle || 'monthly';
+  if (cycle === 'days') return `/${groupPeriodLabel(group)}`;
+  return '/mês por perfil';
+}
+
 /** "Semestral (6 meses)" — o ciclo inteiro numa linha só. */
 export function cycleFullLabel(sub) {
   const base = cycleLabel(sub?.billing_cycle);
