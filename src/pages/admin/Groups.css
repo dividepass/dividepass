@@ -461,6 +461,20 @@
   border-radius: 0.5rem;
 }
 
+/* Aviso do grupo em destaque que já está lotado. */
+.gc-featured-warn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  color: #B45309;
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: 0.5rem;
+}
+
 .group-card-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

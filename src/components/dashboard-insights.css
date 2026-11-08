@@ -1508,6 +1508,12 @@
 
 .plat-slide-cta:hover { filter: brightness(1.08); }
 
+/* Grupo em destaque que NÃO aceita mais gente (lotado ou sem estoque):
+   o botão deixa de parecer uma compra e vira um aviso honesto. */
+.plat-slide-cta--aviso {
+  background: var(--text-secondary, #6b7280);
+}
+
 .plat-slide-price {
   text-align: right;
   flex: 0 0 auto;

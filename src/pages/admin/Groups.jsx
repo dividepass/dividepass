@@ -427,7 +427,11 @@ function Groups() {
                       className={`group-btn feature ${group.featured_in_slide ? 'active' : ''}`}
                       onClick={() => handleToggleFeatured(group)}
                       disabled={processingId === group.id}
-                      title="Mostrar este grupo em destaque no slide da plataforma"
+                      title={
+                        full
+                          ? 'Grupo lotado: o slide vai avisar que não há vaga'
+                          : 'Mostrar este grupo em destaque no slide da plataforma'
+                      }
                     >
                       <Star size={14} />
                       {group.featured_in_slide ? 'Em destaque' : 'Destacar'}
@@ -447,6 +451,15 @@ function Groups() {
                       Excluir
                     </button>
                   </div>
+
+                  {/* Aviso honesto: destacar um grupo lotado entrega o slide
+                      principal da plataforma para um beco sem saída. */}
+                  {group.featured_in_slide && full && (
+                    <div className="gc-featured-warn">
+                      <AlertCircle size={13} />
+                      Este grupo está lotado — o slide vai mostrar &quot;grupo lotado&quot;.
+                    </div>
+                  )}
                 </div>
               );
             })}

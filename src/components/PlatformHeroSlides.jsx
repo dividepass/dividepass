@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, ChevronLeft, ChevronRight, Users, Zap, ArrowRight, Star } from 'lucide-react';
 import { fmtBRL } from '../lib/dashboardInsights';
+import { grupoEsgotado } from '../lib/groupEstado';
 import './dashboard-insights.css';
 
 /**
@@ -47,19 +48,46 @@ export default function PlatformHeroSlides({
         official > 0 && precoGrupo > 0
           ? Math.round(((official - precoGrupo) / official) * 100)
           : 0;
-      const membros = (featuredGroup.members || []).filter((m) => m.status === 'active').length;
-      const max = featuredGroup.max_size || featuredGroup.service?.max_group_size || 0;
+
+      /* Mesma contagem do card do catálogo (ativos + pendentes): é o que
+         define a vaga. Se a contagem divergisse, o slide poderia anunciar
+         "Quero entrar" num grupo que já está lotado. */
+      const membros = (featuredGroup.members || []).filter(
+        (m) => m.status === 'active' || m.status === 'pending'
+      ).length;
+      const semLimite = featuredGroup.has_slot_limit === false;
+      const max = Number(featuredGroup.max_size) || Number(featuredGroup.service?.max_group_size) || 0;
+      const esgotado = grupoEsgotado(featuredGroup);
+      const lotado = !semLimite && !esgotado && max > 0 && membros >= max;
+
+      /* Um grupo que não aceita mais gente não pode ser vitrine de "entre
+         agora" — o slide diz a verdade e manda para a página do grupo,
+         onde a pessoa entra na lista de espera. */
+      const sub = esgotado
+        ? 'Sem estoque no fornecedor no momento'
+        : semLimite
+          ? `${membros} ${membros === 1 ? 'membro' : 'membros'}`
+          : lotado
+            ? `${membros} de ${max} membros · grupo lotado`
+            : `${membros} de ${max} membros`;
+
+      const cta = esgotado
+        ? 'Ver o grupo'
+        : lotado
+          ? 'Entrar na lista de espera'
+          : 'Quero entrar neste grupo';
 
       lista.push({
         key: 'destaque',
         kicker: 'Grupo em destaque',
         kickerNeutral: true,
         title: featuredGroup.name,
-        sub: `${membros} de ${max} membros`,
+        sub,
         features: [],
         people: [],
-        cta: 'Quero entrar neste grupo',
+        cta,
         ctaHref: `/dashboard/groups/${featuredGroup.slug || featuredGroup.id}`,
+        ctaAviso: esgotado || lotado,
         art: null,
         price: precoGrupo,
         priceLabel: 'A partir de',
@@ -226,7 +254,10 @@ export default function PlatformHeroSlides({
                 </div>
               )}
 
-              <Link to={slide.ctaHref} className="plat-slide-cta">
+              <Link
+                to={slide.ctaHref}
+                className={`plat-slide-cta ${slide.ctaAviso ? 'plat-slide-cta--aviso' : ''}`}
+              >
                 {slide.cta} <ArrowRight size={15} />
               </Link>
             </div>
