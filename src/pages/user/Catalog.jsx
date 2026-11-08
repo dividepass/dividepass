@@ -1,25 +1,22 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Share2 } from 'lucide-react';
+import { ChevronLeft, Check, BadgeCheck, Clock, Search, X, Bell, Pin, Star, Share2, Users, ArrowRight, PackageX } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { visibilityColumnAvailable } from '../../lib/groupVisibility';
+import { grupoEsgotado } from '../../lib/groupEsgotado';
 import GroupTags from '../../components/GroupTags';
 import MemberAvatar from '../../components/MemberAvatar';
 import SponsoredOffers from '../../components/SponsoredOffers';
 import WatchlistButton from '../../components/WatchlistButton';
+import PlatformHeroSlides from '../../components/PlatformHeroSlides';
+import RecentSubscribers from '../../components/RecentSubscribers';
 import { useEngagement } from '../../hooks/useEngagement';
+import { groupPriceSuffix } from '../../lib/subscriptionCycles';
+import { fetchRecentSubscribers } from '../../lib/dashboardInsights';
 import logoImg from '../../assets/logo.png';
 import './Catalog.css';
-
-const CYCLE_LABELS = {
-  monthly: 'mês',
-  quarterly: 'trimestre',
-  semiannual: 'semestre',
-  annual: 'ano',
-  days: 'dias',
-};
 
 const CATEGORIES = [
   { key: 'all', label: 'Todos', icon: '🔍' },
@@ -79,6 +76,9 @@ function Catalog() {
   const [interestSent, setInterestSent] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [extraGroups, setExtraGroups] = useState([]);
+  // Últimas assinaturas desta plataforma — alimenta o slide de prova social e a
+  // lista da lateral. Busca UMA vez e entrega para os dois lugares.
+  const [recentSubscribers, setRecentSubscribers] = useState([]);
 
   const siteUrl = (import.meta.env.VITE_SITE_URL || 'https://dividepass.com').replace(/\/$/, '');
 
@@ -129,6 +129,29 @@ function Catalog() {
   const getActiveMembers = (group) =>
     group.members?.filter(m => m.status === 'active' || m.status === 'pending').length || 0;
 
+  /**
+   * Últimas assinaturas da plataforma (prova social).
+   * A lista é a mesma que aparece no slide de destaque e na lateral direita.
+   */
+  useEffect(() => {
+    if (!selectedService?.id) {
+      setRecentSubscribers([]);
+      return undefined;
+    }
+    let alive = true;
+    fetchRecentSubscribers({ serviceId: selectedService.id, limit: 8 })
+      .then((result) => {
+        if (!alive) return;
+        setRecentSubscribers(result.items || []);
+      })
+      .catch(() => {
+        if (alive) setRecentSubscribers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [selectedService?.id]);
+
   const getSpots = useCallback((group, service) => {
     if (group.has_slot_limit === false) return Infinity;
     const maxSize = group.max_size || service?.max_group_size;
@@ -138,19 +161,6 @@ function Catalog() {
   const isFull = (group, service) => {
     if (group.has_slot_limit === false) return false;
     return getSpots(group, service) === 0;
-  };
-
-  const formatCycleLabel = (group) => {
-    const availableCycles = group.available_cycles || [group.billing_cycle || 'monthly'];
-    const getLabel = (c, grp) => {
-      if (c === 'days') return grp.custom_cycle_label || `${grp.custom_cycle_days || '?'} dias`;
-      if (c === 'custom') return grp.custom_cycle_label || `${grp.custom_cycle_months || '?'} meses`;
-      return CYCLE_LABELS[c] || c;
-    };
-    if (availableCycles.length === 1) {
-      return { label: `/${getLabel(availableCycles[0], group)}`, multi: false };
-    }
-    return { label: availableCycles.map(c => getLabel(c, group)).join(' / '), multi: true };
   };
 
   const handleInterest = async () => {
@@ -212,6 +222,27 @@ function Catalog() {
     return extraGroups;
   }, [serviceData?.groups, extraGroups]);
   const alreadySubscribed = selectedService ? isSubscribedToService(serviceId) : false;
+
+  /**
+   * Preço da plataforma na listagem: o menor valor entre os grupos ABERTOS e
+   * o preço oficial (para mostrar o desconto). É o mesmo número que o slide
+   * de destaque usa.
+   */
+  const platformPricing = useMemo(() => {
+    const precos = allServiceGroups
+      .filter((g) => g.status === 'open' || g.status === 'forming')
+      .map((g) => Number(g.price_per_slot))
+      .filter((p) => Number.isFinite(p) && p > 0);
+
+    const fromPrice = precos.length ? Math.min(...precos) : 0;
+    const officialPrice = Number(selectedService?.official_price) || 0;
+    const savingsPct =
+      officialPrice > 0 && fromPrice > 0
+        ? Math.round(((officialPrice - fromPrice) / officialPrice) * 100)
+        : 0;
+
+    return { fromPrice, officialPrice, savingsPct, gruposAbertos: precos.length };
+  }, [allServiceGroups, selectedService?.official_price]);
 
   const filteredGroups = useMemo(() => {
     let result = allServiceGroups;
@@ -278,10 +309,48 @@ function Catalog() {
           Voltar
         </button>
 
+        {/* SLIDES (TARJAS) — a oferta, a prova social e os grupos prontos.
+            Vem ANTES da grade: quem abre a página precisa entender em 2
+            segundos quanto custa e se vale a pena. */}
+        <PlatformHeroSlides
+          service={selectedService}
+          groups={allServiceGroups}
+          recent={recentSubscribers}
+          fromPrice={platformPricing.fromPrice}
+          officialPrice={platformPricing.officialPrice}
+        />
+
         <div className="catalog-detail-header">
-          <div className="page-header">
-            <h1>{selectedService.fullName || selectedService.name}</h1>
-            <p>Escolha um grupo para fazer parte do rateio.</p>
+          <div className="page-header catalog-platform-title">
+            {selectedService.icon_url && (
+              <img
+                src={selectedService.icon_url}
+                alt=""
+                className="catalog-platform-logo"
+              />
+            )}
+            <div>
+              <h1>{selectedService.fullName || selectedService.name}</h1>
+              <p>Escolha um grupo para fazer parte do rateio.</p>
+              <div className="catalog-platform-meta">
+                {platformPricing.savingsPct > 0 && (
+                  <span className="catalog-platform-chip catalog-platform-chip--off">
+                    ATÉ {platformPricing.savingsPct}% OFF
+                  </span>
+                )}
+                <span className="catalog-platform-chip">
+                  <Users size={13} />
+                  {platformPricing.gruposAbertos}{' '}
+                  {platformPricing.gruposAbertos === 1 ? 'grupo aberto' : 'grupos abertos'}
+                </span>
+                {recentSubscribers.length > 0 && (
+                  <span className="catalog-platform-chip">
+                    {recentSubscribers.length}{' '}
+                    {recentSubscribers.length === 1 ? 'pessoa entrou' : 'pessoas entraram'} aqui
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
           <div className="catalog-detail-actions">
             <button className="btn-interest-header btn-share-header" onClick={handleSharePlatform}>
@@ -372,14 +441,19 @@ function Catalog() {
           </div>
         )}
 
-        <div className="groups-grid">
+        {/* COLUNAS: a grade de grupos (o que a pessoa veio fazer) + a lateral
+            com a prova social. No celular a lateral cai para baixo. */}
+        <div className="plat-layout">
+          <div className="groups-grid">
           {filteredGroups.map(group => {
             const activeMembers = getActiveMembers(group);
             const spots = getSpots(group, selectedService);
             const full = isFull(group, selectedService);
+            // Sem estoque no fornecedor: o grupo aparece, mas não entra mais
+            // gente (mesma coisa de um grupo cheio).
+            const esgotado = grupoEsgotado(group);
             const hasSlotLimit = group.has_slot_limit !== false;
             const maxSize = hasSlotLimit ? (group.max_size || selectedService.max_group_size) : null;
-            const cycleInfo = formatCycleLabel(group);
             // Rodapé do card: até 4 retratos. Quem tem foto de perfil vem
             // primeiro (fica mais bonito); quem não tem cai na inicial/letra.
             const activeMembersList = (group.members || []).filter(m => m.status === 'active');
@@ -387,6 +461,13 @@ function Catalog() {
               .sort((a, b) => Number(Boolean(b.user?.avatar_url)) - Number(Boolean(a.user?.avatar_url)))
               .slice(0, 4);
             const hiddenMembers = Math.max(0, activeMembersList.length - memberAvatars.length);
+            // Desconto do grupo contra o preço oficial da plataforma.
+            const precoGrupo = Number(group.price_per_slot) || 0;
+            const oficialGrupo = Number(selectedService?.official_price) || 0;
+            const descontoGrupo =
+              oficialGrupo > 0 && precoGrupo > 0
+                ? Math.round(((oficialGrupo - precoGrupo) / oficialGrupo) * 100)
+                : 0;
 
             return (
               <div
@@ -433,12 +514,23 @@ function Catalog() {
 
                 {/* Price Section */}
                 <div className="gc-price">
-                  <span className="gc-price-label">A partir de</span>
-                  <span className="gc-price-value">
-                    R$ {Number(group.price_per_slot).toFixed(2).replace('.', ',')}
-                    <small>/mês por perfil</small>
-                  </span>
+                  <div className="gc-price-main">
+                    <span className="gc-price-label">A partir de</span>
+                    <span className="gc-price-value">
+                      R$ {Number(group.price_per_slot).toFixed(2).replace('.', ',')}
+                      <small>{groupPriceSuffix(group)}</small>
+                    </span>
+                  </div>
+                  {descontoGrupo > 0 && (
+                    <span className="gc-off">-{descontoGrupo}%</span>
+                  )}
                 </div>
+
+                {descontoGrupo > 0 && oficialGrupo > 0 && (
+                  <span className="gc-price-old">
+                    <s>R$ {oficialGrupo.toFixed(2).replace('.', ',')}</s> no site oficial
+                  </span>
+                )}
 
                 <div className="gc-divider" />
 
@@ -491,9 +583,52 @@ function Catalog() {
                     )}
                   </div>
                 </div>
+
+                {/* CTA — a listagem precisa GRITAR o próximo passo. */}
+                <div className="gc-cta-row">
+                  {esgotado ? (
+                    <span className="gc-cta gc-cta--full">
+                      <PackageX size={14} /> Esgotado
+                    </span>
+                  ) : full ? (
+                    <span className="gc-cta gc-cta--full">Grupo lotado</span>
+                  ) : (
+                    <span className="gc-cta">
+                      Entrar no grupo <ArrowRight size={14} />
+                    </span>
+                  )}
+                  <span className="gc-see-details">
+                    {esgotado
+                      ? 'Sem estoque'
+                      : spots !== Infinity && !full
+                        ? `${spots} vagas`
+                        : 'Ver detalhes'}
+                  </span>
+                </div>
               </div>
             );
           })}
+          </div>
+
+          {/* LATERAL: prova social (quem já entrou nesta plataforma) */}
+          <aside className="plat-side">
+            <RecentSubscribers
+              items={recentSubscribers}
+              serviceName={selectedService.name}
+              limit={8}
+            />
+
+            {recentSubscribers.length > 0 && (
+              <div className="plat-side-note">
+                <Users size={14} />
+                <span>
+                  <strong>{recentSubscribers.length}</strong>{' '}
+                  {recentSubscribers.length === 1 ? 'pessoa entrou' : 'pessoas entraram'} nesta
+                  plataforma recentemente. Entre antes que o grupo lote.
+                </span>
+              </div>
+            )}
+          </aside>
         </div>
 
         {interestModal && (

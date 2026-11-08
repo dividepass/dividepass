@@ -533,6 +533,10 @@
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+  /* Item de grid: sem `min-width: 0` ele não encolhe abaixo do conteúdo
+     mínimo e um nome longo (ex.: "Extensão DividePass — 7 dias") estica a
+     grade inteira, criando rolagem horizontal no celular. */
+  min-width: 0;
 }
 
 .opp-card-title {

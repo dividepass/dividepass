@@ -12,6 +12,9 @@
 .push-gate-modal {
   position: relative;
   width: min(560px, 100%);
+  /* Mesmo motivo do modal do PWA: sem max-width o modal fica com 560px fixos
+     e estoura a tela do celular. */
+  max-width: calc(100vw - 2rem);
   border-radius: 1.25rem;
   padding: 1.5rem;
   border: 1px solid rgba(79, 70, 229, 0.18);

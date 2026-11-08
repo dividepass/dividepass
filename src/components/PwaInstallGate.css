@@ -11,6 +11,10 @@
 
 .pwa-gate-modal {
   width: min(560px, 100%);
+  /* Sem isto, o `min(560px, 100%)` fica com a porcentagem indefinida (o pai
+     tem largura automática) e o modal fica com 560px — estourando a tela do
+     celular e criando rolagem horizontal no dashboard inteiro. */
+  max-width: calc(100vw - 2rem);
   border-radius: 1.25rem;
   padding: 1.5rem;
   border: 1px solid rgba(79, 70, 229, 0.18);

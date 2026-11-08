@@ -505,6 +505,29 @@
   margin-bottom: 0;
 }
 
+/* Linha do convite do Grupo VIP — fica logo abaixo do hero.
+   Não usa mais `.page-header` porque o hero já é o cabeçalho da tela. */
+.dashboard-vip-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: -1.25rem 0 1.5rem;
+}
+
+@media (max-width: 640px) {
+  .dashboard-vip-row {
+    justify-content: stretch;
+    margin-top: -0.75rem;
+  }
+
+  .dashboard-vip-row .whatsapp-vip-chip {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 .whatsapp-vip-chip {
   display: inline-flex;
   align-items: center;

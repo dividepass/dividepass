@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ChevronLeft, ChevronRight, X, Pin, Star, Download, Smartphone, CheckCircle2, MessageSquare, TrendingUp, ChevronDown, AlertCircle, Info, Camera, Lightbulb } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, X, Pin, Star, Download, Smartphone, CheckCircle2, MessageSquare, TrendingUp, ChevronDown, AlertCircle, Info, Camera, Lightbulb, ShoppingBag, ArrowRight } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
@@ -13,7 +13,12 @@ import OpportunitiesSection from '../../components/OpportunitiesSection';
 import InterestPollCard from '../../components/InterestPollCard';
 import FeedbackModal from '../../components/FeedbackModal';
 import WhatsAppGroupCard from '../../components/WhatsAppGroupCard';
+import CreateGroupCta from '../../components/CreateGroupCta';
 import WhatsAppIcon from '../../components/WhatsAppIcon';
+import DashboardHero from '../../components/DashboardHero';
+import TopSellingServices from '../../components/TopSellingServices';
+import RecentSubscribers from '../../components/RecentSubscribers';
+import { useEngagement } from '../../hooks/useEngagement';
 import { useWhatsappVipUrl } from '../../hooks/useWhatsappVipUrl';
 import { calculateUserSavings, getSavingsSummary, getAdminAlerts, fmtPercentage } from '../../utils/savingsService';
 import './UserDashboard.css';
@@ -157,6 +162,9 @@ function UserDashboard() {
   const { currentUser, getActiveServices, getAvailableServices, isSubscribedToService, announcements, dismissAnnouncement, groups, streamingServices, servicePlans } = useAppDataContext();
   const { isStandalone, promptInstall } = usePwaInstall();
   const whatsappVipUrl = useWhatsappVipUrl();
+  // Interesses do onboarding (o "o que a pessoa mais tem interesse"). O hero
+  // da Visão Geral usa isso para já abrir na plataforma certa.
+  const { interests } = useEngagement();
   const categoryBarRef = useRef(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -528,13 +536,19 @@ function UserDashboard() {
         </div>
       )}
 
-      {/* Topo: saudação à esquerda e convite do Grupo VIP à direita.
-          A frase "Escolha um serviço no catálogo para começar." saiu de
-          propósito: no celular ela empurrava tudo para baixo e não dizia
-          nada que o card do WhatsApp não diga melhor. */}
-      <div className="page-header dashboard-header">
-        <h1>Olá, {primeiroNome}! 👋</h1>
+      {/* TOPO: hero direcionado pelo onboarding.
+          A saudação saiu daqui porque o hero já fala com a pessoa pelo nome e
+          mostra a plataforma que ela marcou no cadastro — com o preço que ela
+          paga de verdade na DividePass. O convite do Grupo VIP ficou logo
+          abaixo, ainda no primeiro campo de visão. */}
+      <DashboardHero
+        firstName={primeiroNome}
+        services={streamingServices}
+        groups={groups}
+        interests={interests}
+      />
 
+      <div className="dashboard-vip-row">
         <a
           className="whatsapp-vip-chip"
           href={whatsappVipUrl}
@@ -546,6 +560,11 @@ function UserDashboard() {
           <span>Entre no Grupo VIP 💜</span>
         </a>
       </div>
+
+      {/* Chamada para criar grupo — aparece para quem disse no onboarding que
+          quer criar um grupo e ainda não tem nenhum grupo seu. O card some
+          sozinho assim que o primeiro grupo é criado. */}
+      <CreateGroupCta />
 
       {/* Minhas Assinaturas — primeiro, com scroll horizontal automático */}
       {hasActiveServices && (
@@ -564,6 +583,11 @@ function UserDashboard() {
           </Link>
         </section>
       )}
+
+      {/* Top mais vendidos — o carrossel de prova de que a plataforma está
+          viva. Fica logo abaixo das assinaturas: quem já assina vê o que os
+          outros estão comprando. */}
+      <TopSellingServices services={streamingServices} groups={groups} />
 
       {/* Recomendados para você — faixa compacta no topo.
           Cada item é só logo + nome, em scroll horizontal, e as ofertas
@@ -585,6 +609,25 @@ function UserDashboard() {
           </div>
         </div>
         <ServicesCarousel services={streamingServices} groups={groups} basePath="/dashboard/catalog/" />
+      </section>
+
+      {/* Últimas assinaturas — prova social da plataforma inteira. */}
+      <section className="ins-section">
+        <div className="ins-head">
+          <div className="ins-head-main">
+            <span className="ins-head-icon ins-head-icon--green">
+              <ShoppingBag size={20} />
+            </span>
+            <div>
+              <h2>Últimas assinaturas</h2>
+              <p>Quem acabou de entrar na DividePass</p>
+            </div>
+          </div>
+          <Link to="/dashboard/catalog" className="ins-head-link">
+            Ver catálogo <ArrowRight size={14} />
+          </Link>
+        </div>
+        <RecentSubscribers compact limit={10} />
       </section>
 
       {/* Ofertas e oportunidades — vagas novas, ofertas de parceiros e

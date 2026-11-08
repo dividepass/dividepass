@@ -1191,3 +1191,180 @@
     font-size: 0.85rem;
   }
 }
+
+/* ============================================================
+   PÁGINA DA PLATAFORMA — layout novo (2026-11-08)
+   Grade de grupos + lateral de prova social, chips de desconto
+   no cabeçalho e CTA dentro do card.
+   ============================================================ */
+
+/* Grade + lateral */
+.plat-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.plat-layout .groups-grid {
+  margin-bottom: 0;
+}
+
+.plat-side {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.plat-side .ins-section {
+  margin-bottom: 0;
+}
+
+.plat-side-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+  color: var(--text-main);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.plat-side-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--primary);
+}
+
+@media (max-width: 1100px) {
+  .plat-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .plat-side {
+    position: static;
+  }
+}
+
+/* Cabeçalho da plataforma: logo + chips */
+.catalog-platform-title {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.catalog-platform-logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  object-fit: contain;
+  background: var(--surface-soft);
+  padding: 6px;
+  flex: 0 0 auto;
+}
+
+.catalog-platform-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.catalog-platform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.catalog-platform-chip--off {
+  border-color: transparent;
+  background: var(--economy-bg);
+  color: var(--economy);
+  font-weight: 800;
+}
+
+/* Preço do grupo: linha principal + desconto */
+.gc-price {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.gc-price-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.gc-off {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.5rem;
+  border-radius: 8px;
+  background: var(--economy-bg);
+  color: var(--economy);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.gc-price-old {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.gc-price-old s {
+  opacity: 0.85;
+}
+
+/* CTA dentro do card */
+.gc-cta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.gc-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.55rem 0.95rem;
+  border-radius: var(--radius-sm);
+  background: var(--action);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  transition: filter 0.15s ease;
+}
+
+.group-card:hover .gc-cta {
+  filter: brightness(1.08);
+}
+
+.gc-cta--full {
+  background: var(--surface-soft);
+  color: var(--text-muted);
+}
+
+.gc-see-details {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
