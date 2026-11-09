@@ -125,11 +125,25 @@ for (const [label, href] of esperado) {
   const achou = atalhos.find((a) => a.label === label && a.href === href);
   check(`atalho "${label}" aponta para ${href}`, !!achou, achou ? achou.href : 'não encontrado');
 }
-const atalhoTopo = await page.evaluate(() => {
-  const el = document.querySelector('.quick-shortcuts');
-  return el ? el.getBoundingClientRect().top + window.scrollY : null;
+const ordemAtalhos = await page.evaluate(() => {
+  const y = (sel) => {
+    const el = document.querySelector(sel);
+    return el ? el.getBoundingClientRect().top + window.scrollY : null;
+  };
+  return {
+    whatsapp: y('.whatsapp-vip-chip'),
+    atalhos: y('.quick-shortcuts'),
+    populares: y('.storefront-section'),
+  };
 });
-check('os atalhos estão no topo da página', atalhoTopo !== null && atalhoTopo < 260, `${atalhoTopo}px`);
+check(
+  'os atalhos ficam logo abaixo do botão do WhatsApp',
+  ordemAtalhos.whatsapp !== null &&
+    ordemAtalhos.atalhos !== null &&
+    ordemAtalhos.whatsapp < ordemAtalhos.atalhos &&
+    ordemAtalhos.atalhos < ordemAtalhos.populares,
+  JSON.stringify(ordemAtalhos)
+);
 
 /* HERO É SLIDE: o card troca de plataforma sozinho */
 const bonequinhos = await page.locator('.dash-hero-dot').count();

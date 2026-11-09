@@ -527,12 +527,6 @@ function UserDashboard() {
         </div>
       )}
 
-      {/* ATALHOS — na cara do gol: as quatro telas que a pessoa mais usa
-          (catálogo, credenciais, assinaturas e perfil), antes de qualquer
-          conteúdo. Mesmo desenho dos tópicos, para não parecer um bloco
-          diferente. */}
-      <QuickShortcuts />
-
       {/* TOPO: hero direcionado pelo onboarding.
           A saudação saiu daqui porque o hero já fala com a pessoa pelo nome e
           mostra a plataforma que ela marcou no cadastro — com o preço que ela
@@ -557,6 +551,11 @@ function UserDashboard() {
           <span>Entre no Grupo VIP 💜</span>
         </a>
       </div>
+
+      {/* ATALHOS — as quatro telas que a pessoa mais usa (catálogo,
+          credenciais, assinaturas e perfil), logo abaixo do Grupo VIP.
+          Mesmo desenho dos tópicos, para não parecer um bloco diferente. */}
+      <QuickShortcuts />
 
       {/* Vitrine no estilo app de comida (só no celular): tópicos em ícones
           redondos, banner arrastável, mais populares e melhores ofertas em
