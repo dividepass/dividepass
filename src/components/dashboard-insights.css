@@ -487,6 +487,108 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
+   ATALHOS — as quatro telas mais usadas, na cara do gol.
+   Mesmo desenho dos tópicos (ícone redondo + nome), só que com a
+   cor de cada atalho.
+   ───────────────────────────────────────────────────────────── */
+.quick-shortcuts {
+  margin-bottom: 1rem;
+}
+
+.quick-shortcuts-track {
+  display: flex;
+  gap: 0.85rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 0.2rem;
+}
+
+.quick-shortcuts-track::-webkit-scrollbar { display: none; }
+
+.quick-card {
+  flex: 0 0 auto;
+  width: 78px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.6rem 0.25rem 0.5rem;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.15s ease;
+}
+
+.quick-card:hover {
+  background: var(--surface-soft);
+}
+
+.quick-card-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  line-height: 1;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.quick-card:hover .quick-card-icon {
+  transform: translateY(-2px);
+  border-color: currentColor;
+}
+
+.quick-card-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.2;
+}
+
+.quick-card:hover .quick-card-label {
+  color: var(--text);
+}
+
+/* No desktop a barra lateral já tem todos esses atalhos — a fileira aqui
+   seria repetição. Ela existe só onde não há menu lateral (celular e
+   tablet, até 850px). */
+@media (min-width: 851px) {
+  .quick-shortcuts {
+    display: none;
+  }
+}
+
+/* Bonequinhos do hero: quantos slides existem e onde está cada um. */
+.dash-hero-dots {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+  padding-bottom: 0.85rem;
+}
+
+.dash-hero-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--border-strong);
+  opacity: 0.55;
+  cursor: pointer;
+  transition: width 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+}
+
+.dash-hero-dot.active {
+  width: 18px;
+  opacity: 1;
+  background: var(--action);
+}
+
+/* ─────────────────────────────────────────────────────────────
    HERO PERSONALIZADO DO DASHBOARD
    ───────────────────────────────────────────────────────────── */
 .dash-hero {
@@ -713,6 +815,19 @@
   white-space: nowrap;
 }
 
+/* A linha do selo do slide: no desktop é só um selo; no celular ganha
+   espaço para o selo de desconto (que não cabe dentro do logo). */
+.dash-hero-eyebrow-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.dash-hero-off--inline {
+  display: none;
+}
+
 @media (max-width: 860px) {
   .dash-hero-inner {
     grid-template-columns: 1fr;
@@ -796,6 +911,20 @@
     left: 50%;
     font-size: 0.58rem;
     padding: 0.15rem 0.45rem;
+  }
+
+  /* No celular o selo de desconto fica do lado do "Escolhido para você" —
+     dentro do logo redondo ele era cortado. */
+  .dash-hero-art .dash-hero-off {
+    display: none;
+  }
+
+  .dash-hero-off--inline {
+    display: inline-flex;
+    position: static;
+    transform: none;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.66rem;
   }
 
   /* Menos ruído: só o botão principal e no máximo 2 chips. */

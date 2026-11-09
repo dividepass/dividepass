@@ -337,6 +337,52 @@
   color: var(--text-muted);
 }
 
+/* --- Aviso de versão nova ---
+   O service worker avisa que activate uma build nova; a aba ainda esta
+   rodando o bundle antigo. Sem esse aviso, a pessoa via a tela antiga e
+   achava que a mudanca nunca tinha sido publicada. */
+.dp-nova-versao {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: calc(100% - 1.5rem);
+  max-width: 460px;
+  padding: 0.7rem 0.75rem 0.7rem 1rem;
+  border-radius: 0.9rem;
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+  font-size: 0.86rem;
+  color: var(--text);
+}
+
+.dp-nova-versao-btn {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-radius: 0.55rem;
+  background: var(--action);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dp-nova-versao-x {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 /* --- Mobile / Tablet ---
    O corte é em 850px: até aí a navegação vive na gaveta (botão ☰ do topo
    fixo) e a barra lateral fica escondida. Em 768–850px ainda era desktop e

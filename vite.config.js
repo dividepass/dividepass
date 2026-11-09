@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 
 /**
@@ -45,9 +45,45 @@ function resolveAppVersion() {
   }
 }
 
+/**
+ * Carimba a versao do build no service worker.
+ *
+ * O `public/sw.js` chega no `dist/` com o placeholder `__DP_BUILD__`. O
+ * nome do cache PRECISA mudar a cada build: com o nome fixo, o cache
+ * sobrevivia a todos os deploys, o index.html guardado continuava
+ * apontando para o bundle velho e o cliente ficava preso na primeira
+ * versao que abriu (com a tela antiga, mesmo com o site novo no ar).
+ */
+function stampServiceWorker() {
+  return {
+    name: 'stamp-service-worker',
+    apply: 'build',
+    closeBundle() {
+      const destino = new URL('./dist/sw.js', import.meta.url)
+      if (!existsSync(destino)) return
+      const antes = readFileSync(destino, 'utf8')
+      if (!antes.includes('__DP_BUILD__')) return
+
+      let carimbo = 'dev'
+      const versaoFile = new URL('./src/version.json', import.meta.url)
+      if (existsSync(versaoFile)) {
+        try {
+          const parsed = JSON.parse(readFileSync(versaoFile, 'utf8'))
+          carimbo = `${parsed?.version || '0'}-${parsed?.commit || 'local'}`
+        } catch {
+          /* sem version.json valido */
+        }
+      }
+
+      writeFileSync(destino, antes.replaceAll('__DP_BUILD__', carimbo), 'utf8')
+      console.log(`[vite] cache do service worker -> dividepass-pwa-${carimbo}`)
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), stampServiceWorker()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

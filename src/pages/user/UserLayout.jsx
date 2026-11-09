@@ -213,6 +213,7 @@ function UserLayout() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [financeOpen, setFinanceOpen] = useState(false);
+  const [novaVersao, setNovaVersao] = useState(false);
   const { currentUser, getActiveServices } = useAppDataContext();
   const { signOut, profile } = useAuth();
   const { theme, toggleTheme } = useAppTheme();
@@ -223,6 +224,19 @@ function UserLayout() {
   // overlay podia ser dispensado com um clique e o usuário nunca voltava.
   // O redirect fica depois de todos os hooks (ver o return mais abaixo).
   const onboardingPending = !!profile && !profile.onboarding_completed_at;
+
+  /* O service worker avisa quando activate uma versao nova do app. A aba
+     continua rodando o bundle antigo em memoria — so um recarregamento
+     traz o codigo novo. Sem este aviso, a pessoa achava que o site estava
+     "quebrado" ou desatualizado e reclamava da mudanca que nunca chegou. */
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return undefined;
+    const onMessage = (event) => {
+      if (event.data?.type === 'DP_NOVA_VERSAO') setNovaVersao(true);
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, []);
 
   const activeCount = getActiveServices().length;
   const displayName = profile?.nickname || currentUser?.name || 'Usuario';
@@ -350,6 +364,28 @@ function UserLayout() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      {/* Aviso de versão nova — some depois de atualizar. */}
+      {novaVersao && (
+        <div className="dp-nova-versao" role="status" aria-live="polite">
+          <span>Tem versão nova do DividePass</span>
+          <button
+            type="button"
+            className="dp-nova-versao-btn"
+            onClick={() => window.location.reload()}
+          >
+            Atualizar agora
+          </button>
+          <button
+            type="button"
+            className="dp-nova-versao-x"
+            aria-label="Fechar aviso"
+            onClick={() => setNovaVersao(false)}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,11 @@
-const CACHE_NAME = 'dividepass-pwa-v1';
+/* O nome do cache leva a versao do build (carimbada no `postbuild`,
+   scripts/stamp-sw.mjs).
+   Antes era fixo ('dividepass-pwa-v1'): o cache sobrevivia a TODOS os
+   deploys, o index.html velho continuava apontando para o bundle velho e
+   o cliente ficava preso na primeira versao que abriu. Como o nome muda a
+   cada build, o activate apaga o cache antigo e o cliente recebe a
+   versao nova. */
+const CACHE_NAME = 'dividepass-pwa-__DP_BUILD__';
 const CORE_ASSETS = ['/', '/dashboard', '/index.html', '/manifest.webmanifest', '/logo.png'];
 
 self.addEventListener('install', (event) => {
@@ -12,6 +19,13 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => Promise.all(
       keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
     )).then(() => self.clients.claim())
+      // Avisa as abas abertas que ja existe uma versao nova: a pagina
+      // ainda esta rodando o bundle antigo em memoria, entao so um
+      // recarregamento traz o codigo novo.
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then((clients) => {
+        clients.forEach((client) => client.postMessage({ type: 'DP_NOVA_VERSAO' }));
+      })
   );
 });
 

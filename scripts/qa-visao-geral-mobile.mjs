@@ -103,6 +103,46 @@ await espera(5000);
 await fecharPortoes(page);
 await espera(1500);
 
+/* ATALHOS: as quatro telas que a pessoa mais usa, na cara do gol */
+const atalhos = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('.quick-card')).map((el) => ({
+    label: el.textContent.trim(),
+    href: el.getAttribute('href') || '',
+  }))
+);
+check(
+  'os 4 atalhos estão na tela',
+  atalhos.length === 4,
+  atalhos.map((a) => a.label).join(', ')
+);
+const esperado = [
+  ['Catálogo', '/dashboard/catalog'],
+  ['Credenciais', '/dashboard/credentials'],
+  ['Assinaturas', '/dashboard/billing'],
+  ['Perfil', '/dashboard/profile'],
+];
+for (const [label, href] of esperado) {
+  const achou = atalhos.find((a) => a.label === label && a.href === href);
+  check(`atalho "${label}" aponta para ${href}`, !!achou, achou ? achou.href : 'não encontrado');
+}
+const atalhoTopo = await page.evaluate(() => {
+  const el = document.querySelector('.quick-shortcuts');
+  return el ? el.getBoundingClientRect().top + window.scrollY : null;
+});
+check('os atalhos estão no topo da página', atalhoTopo !== null && atalhoTopo < 260, `${atalhoTopo}px`);
+
+/* HERO É SLIDE: o card troca de plataforma sozinho */
+const bonequinhos = await page.locator('.dash-hero-dot').count();
+check('o hero tem mais de um slide (bonequinhos)', bonequinhos > 1, `${bonequinhos} slides`);
+const titulo1 = await page.locator('.dash-hero-pick em').first().innerText().catch(() => '');
+await espera(6500);
+const titulo2 = await page.locator('.dash-hero-pick em').first().innerText().catch(() => '');
+check(
+  'o hero troca de plataforma sozinho (a cada 5s)',
+  bonequinhos > 1 && titulo1 !== titulo2,
+  `${titulo1} -> ${titulo2}`
+);
+
 /* ORDEM: WhatsApp -> Mais populares -> tópicos -> banner */
 const ordem = await page.evaluate(() => {
   const y = (sel) => {
@@ -147,11 +187,24 @@ check(
   topicos[0] ? `${topicos[0].tag} ${topicos[0].href}` : 'nenhum'
 );
 
-/* AUTO-SCROLL: a fileira anda sozinha */
-const antes = await page.locator('.storefront-circles').evaluate((el) => el.scrollLeft);
-await espera(6500);
-const depois = await page.locator('.storefront-circles').evaluate((el) => el.scrollLeft);
-check('a fileira de populares rola sozinha', depois !== antes, `${antes} -> ${depois}`);
+/* AUTO-SCROLL: a fileira anda sozinha.
+   Não dá para comparar só dois instantes: a fileira faz um loop, então
+   pode estar em 0 no início e em 0 no fim (deu a volta). O certo é
+   amostrar alguns segundos e ver se o valor MUDA ao longo do tempo.
+   O mouse sai do caminho antes: com o ponteiro em cima da fileira ela
+   pausa de propósito (ninguém quer a lista mexendo na hora de clicar). */
+await page.mouse.move(2, 2);
+const amostras = [];
+for (let i = 0; i < 14; i++) {
+  amostras.push(await page.locator('.storefront-circles').evaluate((el) => Math.round(el.scrollLeft)));
+  await espera(600);
+}
+const distintos = new Set(amostras.filter((v) => v !== amostras[0]));
+check(
+  'a fileira de populares rola sozinha',
+  distintos.size >= 1,
+  amostras.join(' → ')
+);
 
 /* HERO: card clicável, sem botão e sem números no celular */
 const botaoVerGrupos = await page.locator('.dash-hero-actions .dash-hero-btn').first().isVisible().catch(() => false);

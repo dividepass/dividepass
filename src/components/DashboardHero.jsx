@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles, ArrowRight, Target, Users, Tag } from 'lucide-react';
 import { categoryLabel } from '../lib/onboardingQuestions';
@@ -14,6 +14,10 @@ import './dashboard-insights.css';
  * no topo, com o melhor preço disponível na DividePass. Quando não há
  * resposta de onboarding (conta antiga, onboarding pulado), o hero cai no
  * serviço com mais grupos — nunca fica vazio.
+ *
+ * É um SLIDE: como a pessoa marcou várias plataformas, o card vai passando
+ * por elas uma a uma (a cada 5 segundos), em vez de mostrar só a primeira
+ * e esconder o resto. Quando chega no fim, volta para o começo.
  */
 export default function DashboardHero({
   firstName = '',
@@ -90,6 +94,16 @@ export default function DashboardHero({
 
     const destaque = candidatos.find((c) => c.temGrupo) || candidatos[0] || fallback || null;
 
+    /* SLIDES: as plataformas do onboarding que TÊM grupo (com preço) são
+       as que o slide mostra — cada uma com o seu número. Se a pessoa não
+       marcou nada (ou o onboarding está incompleto), o slide usa as
+       plataformas mais usadas do catálogo, para nunca ficar vazio. */
+    const slides = candidatos
+      .filter((c) => c.temGrupo && c.preco > 0)
+      .slice(0, 5);
+    if (!slides.length && fallback) slides.push(fallback);
+    if (!slides.length && destaque) slides.push(destaque);
+
     // Categorias que a pessoa marcou (viram as "chips" do herói).
     const chips = [];
     const vistas = new Set();
@@ -102,22 +116,48 @@ export default function DashboardHero({
       chips.push({ label, on: service.id === destaque?.service?.id });
     });
 
-    return { destaque, chips, gruposPorServico };
+    return { destaque, chips, gruposPorServico, slides };
   }, [services, groups, interests]);
 
-  const { destaque, chips } = dados;
+  const { chips, slides } = dados;
+  const [index, setIndex] = useState(0);
+  const pausado = useRef(false);
 
-  if (!destaque) return null;
+  /* Troca de slide a cada 5 segundos (com a pessoa parando para ler). */
+  useEffect(() => {
+    if (!slides || slides.length < 2) return undefined;
+    const timer = setInterval(() => {
+      if (pausado.current) return;
+      setIndex((i) => (i + 1) % slides.length);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [slides]);
 
-  const { service } = destaque;
+  const atual = slides?.[index] || slides?.[0] || null;
+
+  if (!atual) return null;
+
+  const { service } = atual;
   const oficial = Number(service.official_price) || 0;
-  const preco = destaque.preco || 0;
+  const preco = atual.preco || 0;
   const desconto = oficial > 0 && preco > 0 ? Math.round(((oficial - preco) / oficial) * 100) : 0;
   const href = `/dashboard/catalog/${service.slug || service.id}`;
-  const vemDoOnboarding = !!destaque.kind;
+  const vemDoOnboarding = !!atual.kind;
+
+  /* O selo do slide diz o motivo de ele estar ali. */
+  const eyebrow =
+    atual.kind === 'current'
+      ? 'Você já usa'
+      : vemDoOnboarding
+        ? 'Escolhido para você'
+        : 'Mais procurado agora';
 
   return (
-    <section className="dash-hero">
+    <section
+      className="dash-hero"
+      onMouseEnter={() => { pausado.current = true; }}
+      onMouseLeave={() => { pausado.current = false; }}
+    >
       {/* LINK QUE COBRE O CARD INTEIRO.
           Clicar no card leva para a plataforma — não só no botão. O botão
           fica por cima (z-index) para continuar funcionando no desktop. */}
@@ -129,10 +169,19 @@ export default function DashboardHero({
 
       <div className="dash-hero-inner">
         <div>
-          <span className="dash-hero-eyebrow">
-            <Sparkles size={13} />
-            {vemDoOnboarding ? 'Escolhido para você' : 'Mais procurado agora'}
-          </span>
+          <div className="dash-hero-eyebrow-row">
+            <span className="dash-hero-eyebrow">
+              <Sparkles size={13} />
+              {eyebrow}
+            </span>
+            {/* No desktop o selo de desconto fica no logo (lá embaixo). No
+                celular ele ia para fora do círculo e era CORTADO pelo
+                overflow do logo — então ele vem para cá, do lado do selo
+                do slide. */}
+            {desconto > 0 && (
+              <span className="dash-hero-off dash-hero-off--inline">-{desconto}% OFF</span>
+            )}
+          </div>
 
           <h1 className="dash-hero-title">Olá, {firstName}! 👋</h1>
 
@@ -142,8 +191,8 @@ export default function DashboardHero({
 
           <p className="dash-hero-text">
             {vemDoOnboarding
-              ? `Você marcou esta plataforma. ${destaque.grupos} ${destaque.grupos === 1 ? 'grupo aberto' : 'grupos abertos'} agora.`
-              : `A plataforma com mais grupos abertos. ${destaque.grupos} ${destaque.grupos === 1 ? 'grupo' : 'grupos'} para entrar.`}
+              ? `Você marcou esta plataforma. ${atual.grupos} ${atual.grupos === 1 ? 'grupo aberto' : 'grupos abertos'} agora.`
+              : `A plataforma com mais grupos abertos. ${atual.grupos} ${atual.grupos === 1 ? 'grupo' : 'grupos'} para entrar.`}
           </p>
 
           {chips.length > 0 && (
@@ -183,14 +232,14 @@ export default function DashboardHero({
               </div>
             )}
             <div className="dash-hero-stat">
-              <b>{destaque.grupos}</b>
-              <span>{destaque.grupos === 1 ? 'grupo aberto' : 'grupos abertos'}</span>
+              <b>{atual.grupos}</b>
+              <span>{atual.grupos === 1 ? 'grupo aberto' : 'grupos abertos'}</span>
             </div>
-            {destaque.membros > 0 && (
+            {atual.membros > 0 && (
               <div className="dash-hero-stat">
                 <b>
                   <Users size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />
-                  {destaque.membros}
+                  {atual.membros}
                 </b>
                 <span>já dividindo</span>
               </div>
@@ -212,6 +261,23 @@ export default function DashboardHero({
           {desconto > 0 && <span className="dash-hero-off">-{desconto}% OFF</span>}
         </div>
       </div>
+
+      {/* Quantos slides existem — o bonequinho mostra onde cada um está.
+          No celular é o único sinal de que o card troca sozinho. */}
+      {slides.length > 1 && (
+        <div className="dash-hero-dots" role="tablist" aria-label="Plataformas em destaque">
+          {slides.map((slide, i) => (
+            <button
+              key={slide.service.id}
+              type="button"
+              className={`dash-hero-dot ${i === index ? 'active' : ''}`}
+              aria-label={slide.service.name}
+              aria-selected={i === index}
+              onClick={() => setIndex(i)}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

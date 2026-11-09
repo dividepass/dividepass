@@ -19,6 +19,7 @@ import DashboardHero from '../../components/DashboardHero';
 import TopSellingServices from '../../components/TopSellingServices';
 import RecentSubscribers from '../../components/RecentSubscribers';
 import StorefrontRows from '../../components/StorefrontRows';
+import QuickShortcuts from '../../components/QuickShortcuts';
 import { useEngagement } from '../../hooks/useEngagement';
 import { CATEGORIAS as CATEGORIAS_CATALOG } from '../../lib/categorias';
 import { useWhatsappVipUrl } from '../../hooks/useWhatsappVipUrl';
@@ -525,6 +526,12 @@ function UserDashboard() {
           ))}
         </div>
       )}
+
+      {/* ATALHOS — na cara do gol: as quatro telas que a pessoa mais usa
+          (catálogo, credenciais, assinaturas e perfil), antes de qualquer
+          conteúdo. Mesmo desenho dos tópicos, para não parecer um bloco
+          diferente. */}
+      <QuickShortcuts />
 
       {/* TOPO: hero direcionado pelo onboarding.
           A saudação saiu daqui porque o hero já fala com a pessoa pelo nome e
