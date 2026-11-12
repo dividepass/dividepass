@@ -2,6 +2,39 @@
   animation: slideUpFade 0.3s ease-out forwards;
 }
 
+/* =============================================================
+   BOTÕES DA FICHA — cor do tema, nos DOIS temas
+   -------------------------------------------------------------
+   O Vite junta TODOS os CSS do app em UM arquivo só. A regra
+   `.btn-outline` do `Home.css` (`color: var(--home-text)` = branco,
+   borda branca) entra no bundle e VENCE a global do `index.css`
+   — sem escopo, ela vale em toda tela que use `.btn-outline`.
+
+   Efeito: no TEMA CLARO o botão "Entrar como este usuário" (o
+   acesso do suporte à conta do cliente) ficava branco sobre
+   cartão branco — contraste 1,05:1, ou seja, SUMIA da tela.
+
+   Escopando em `.user-detail-page`, o botão da ficha usa a cor do
+   tema (fundo = --surface, texto = --text-main) e o hover vai
+   para a cor da marca.
+   ============================================================= */
+.user-detail-page .btn-outline {
+  background: var(--surface);
+  color: var(--text-main);
+  border: 1px solid var(--border-strong);
+}
+
+.user-detail-page .btn-outline:hover:not(:disabled) {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.user-detail-page .btn-outline:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 @keyframes slideUpFade {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
