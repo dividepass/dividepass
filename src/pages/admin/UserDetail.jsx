@@ -4,9 +4,11 @@ import {
   ArrowLeft, Loader2, Save, Lock, Mail, Phone, User, Shield,
   CreditCard, FileText, Clock, Calendar, AlertTriangle, CheckCircle,
   RefreshCw, Plus, XCircle, Timer, Zap, Edit2, ClipboardList, Activity,
-  ExternalLink, MapPin, Share2, UserPlus, Users, Layers, MessageCircle
+  ExternalLink, MapPin, Share2, UserPlus, Users, Layers, MessageCircle,
+  LogIn
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../hooks/useAuth';
 import { maskPhone, onlyDigits, phoneToNational, phoneToWhatsApp } from '../../lib/maskPhone';
 import { ONBOARDING_STEPS, labelForValue } from '../../lib/onboardingQuestions';
 import { buildServiceLookup, groupPlatformsByCategory } from '../../lib/onboardingPlatforms';
@@ -46,6 +48,9 @@ function UserDetail() {
   const { userId } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  /* `user` aqui é o CLIENTE da ficha. O admin logado vem do contexto —
+     precisa de outro nome para não confundir as duas coisas. */
+  const { user: adminUser, startImpersonation } = useAuth();
 
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -53,6 +58,7 @@ function UserDetail() {
   const [error, setError] = useState('');
   const [form, setForm] = useState({});
   const [newPassword, setNewPassword] = useState('');
+  const [impersonating, setImpersonating] = useState(false);
 
   /* A aba vive na URL (`?tab=events`), não em estado escondido — quem abre
      o link chega direto na aba pedida. */
@@ -402,6 +408,47 @@ function UserDetail() {
     }
   };
 
+  /**
+   * IMPERSONAÇÃO: entra na conta do cliente sem saber a senha dele.
+   *
+   * O que acontece por baixo dos panos:
+   *  - a edge `admin-impersonate` (que roda com SERVICE_ROLE_KEY) gera um
+   *    token magiclink de uso único para o e-mail do cliente. Nenhum e-mail
+   *    é enviado e a senha do cliente não é lida nem alterada;
+   *  - a sessão do admin é guardada em sessionStorage ANTES da troca;
+   *  - o navegador troca a sessão para a do cliente (verifyOtp).
+   *
+   * Para voltar ao painel: o banner que aparece no rodapé da tela devolve
+   * a sessão do admin.
+   */
+  const handleImpersonate = async () => {
+    if (impersonating || !user) return;
+
+    const confirmado = window.confirm(
+      `Você vai entrar na conta de ${user.name || user.email}.\n\n` +
+      'A senha dele NÃO é lida nem alterada.\n' +
+      'Para voltar ao painel, use o botão "Voltar ao painel admin" que aparece na tela.'
+    );
+    if (!confirmado) return;
+
+    setImpersonating(true);
+    try {
+      await startImpersonation({
+        userId: user.id,
+        targetName: user.name,
+        targetEmail: user.email,
+      });
+
+      /* Navegação dura: o app sobe limpo com a sessão do cliente — nada do
+         painel admin (cache de dados, abas) fica na tela. */
+      window.location.assign('/dashboard');
+    } catch (err) {
+      console.error('[UserDetail] falha na impersonação:', err);
+      alert('Não foi possível entrar na conta do usuário: ' + err.message);
+      setImpersonating(false);
+    }
+  };
+
   const statusBadge = (status) => {
     const labels = {
       active: 'Ativa', inactive: 'Inativa', cancelled: 'Cancelada',
@@ -445,6 +492,44 @@ function UserDetail() {
           <div>
             <h1>{user.name}</h1>
             <p className="page-subtitle">{user.email}</p>
+          </div>
+
+          {/* Entrar na conta do cliente (suporte). O botão fica travado
+              quando o alvo é um admin — impersonar outro admin seria
+              escalada de privilégio (a edge também bloqueia). */}
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={handleImpersonate}
+              disabled={
+                impersonating ||
+                user.role === 'admin' ||
+                adminUser?.id === user.id
+              }
+              title={
+                user.role === 'admin'
+                  ? 'Não é possível entrar na conta de outro administrador'
+                  : adminUser?.id === user.id
+                    ? 'Você já está nesta conta'
+                    : 'Entrar na conta do cliente sem a senha dele'
+              }
+            >
+              {impersonating ? (
+                <>
+                  <Loader2 size={16} className="spin" />
+                  Entrando...
+                </>
+              ) : (
+                <>
+                  <LogIn size={16} />
+                  Entrar como este usuário
+                </>
+              )}
+            </button>
+            <span className="text-xs text-muted-foreground">
+              A senha do cliente não é alterada.
+            </span>
           </div>
         </div>
       </div>

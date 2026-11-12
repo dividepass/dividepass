@@ -95,6 +95,8 @@ function NavContent({
   currentUser,
   activeCount,
   isAdmin,
+  impersonating,
+  onGoToAdmin,
   theme,
   toggleTheme,
   onProfile,
@@ -148,7 +150,20 @@ function NavContent({
         <NavLink to="/dashboard/share" label="Convidar Amigos" icon={Gift} active={isActive('/dashboard/share')} onNavigate={onNavigate} indicatorId={indicatorId} />
         <NavLink to="/dashboard/testimonial" label="Depoimento" icon={Star} active={isActive('/dashboard/testimonial')} onNavigate={onNavigate} indicatorId={indicatorId} />
 
-        {isAdmin ? (
+        {/* Impersonando, o admin NÃO é mais admin (a sessão é a do
+            cliente) — por isso o link "Painel Admin" sumiria e o admin
+            ficaria preso na conta do cliente. Aqui ele vira o botão de
+            VOLTAR, que devolve a sessão do admin antes de navegar. */}
+        {impersonating ? (
+          <button
+            type="button"
+            onClick={onGoToAdmin}
+            className="mt-2 flex w-full items-center gap-3 rounded-xl border border-economy/25 bg-economy/10 px-3 py-2.5 text-sm font-semibold text-economy transition-colors hover:bg-economy/15"
+          >
+            <Shield size={18} aria-hidden="true" />
+            Voltar ao painel admin
+          </button>
+        ) : isAdmin ? (
           <Link
             onClick={onNavigate}
             to="/admin"
@@ -215,7 +230,7 @@ function UserLayout() {
   const [financeOpen, setFinanceOpen] = useState(false);
   const [novaVersao, setNovaVersao] = useState(false);
   const { currentUser, getActiveServices } = useAppDataContext();
-  const { signOut, profile } = useAuth();
+  const { signOut, profile, impersonating, returnToAdmin } = useAuth();
   const { theme, toggleTheme } = useAppTheme();
   const isAdmin = profile?.role === 'admin';
 
@@ -265,6 +280,20 @@ function UserLayout() {
     navigate('/login');
   };
 
+  /* Voltar ao painel admin a partir de dentro da conta do cliente.
+     Não é só navegação: a sessão do navegador é a do cliente, então o
+     painel admin rejeitaria o acesso (/admin exige `role = admin`). Por
+     isso a sessão guardada do admin é recolocada ANTES de navegar —
+     isso é o que `returnToAdmin` faz (inclusive o caso em que a aba foi
+     fechada e a sessão já não existe: aí ele sai da conta do cliente). */
+  const handleGoToAdmin = async () => {
+    if (!impersonating) {
+      navigate('/admin');
+      return;
+    }
+    await returnToAdmin();
+  };
+
   const goBack = () => {
     if (window.history.length > 1) navigate(-1);
     else navigate('/dashboard');
@@ -284,6 +313,8 @@ function UserLayout() {
     currentUser,
     activeCount,
     isAdmin,
+    impersonating,
+    onGoToAdmin: handleGoToAdmin,
     theme,
     toggleTheme,
     onProfile: () => navigate('/dashboard/profile'),

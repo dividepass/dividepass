@@ -96,6 +96,19 @@ entrypoint = "./functions/admin-update-user/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/admin-update-user/*.html" ]
 
+# Impersonação: o admin entra na conta de um cliente SEM a senha (a senha
+# do cliente não é lida, gerada nem alterada). A função gera um token de
+# uso único (magiclink) e o navegador troca a própria sessão por ele.
+#
+# verify_jwt = false porque o guard de admin é feito DENTRO da função (ela
+# valida o token do chamador e confere o papel nos dois lugares onde o
+# projeto guarda "admin"). Sem esse guard, qualquer autenticado viraria admin.
+[functions.admin-impersonate]
+enabled = true
+verify_jwt = false
+import_map = "./functions/admin-impersonate/deno.json"
+entrypoint = "./functions/admin-impersonate/index.ts"
+
 [functions.fetch-email-code]
 enabled = true
 verify_jwt = true
