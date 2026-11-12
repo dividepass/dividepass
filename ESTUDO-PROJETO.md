@@ -4647,6 +4647,34 @@ Edge nova: `supabase/functions/admin-impersonate` (publicada com
 ficaram **intactos**; `verifyOtp` trocou a sessão para a conta do cliente; o
 banner apareceu; "Voltar ao painel admin" devolveu a sessão do admin.
 
+**12/11/2026 — o botão "sumiu" da ficha do usuário.** Duas causas somadas:
+
+1. **O front nunca tinha sido publicado.** A feature inteira (edge + front)
+   estava num código parado: a edge `admin-impersonate` já estava no ar em
+   produção, mas `UserDetail.jsx`, `AuthProvider.jsx`, `UserLayout.jsx` e
+   `src/lib/impersonacao.js` nunca entraram em um commit — então a ficha do
+   usuário **não tinha botão nenhum**. Commit `2f98d63`.
+2. **O botão sumia no TEMA CLARO.** O Vite junta TODOS os CSS do app em UM
+   arquivo; a regra `.btn-outline` do `Home.css` (`color: var(--home-text)` =
+   branco) entra no bundle e vence a global do `index.css`. O botão ficava
+   **branco sobre cartão branco — contraste 1,05:1** (medido). Corrigido
+   escopando em `.user-detail-page .btn-outline` no `UserDetail.css`:
+   claro 17,85:1 e escuro 14,63:1 (commit `d2b9aef`).
+
+Regra do caso: **no admin, todo botão precisa de cor escopada** — uma
+`.btn-outline` genérica de outra página vaza e o botão fica invisível.
+
+**QA:** `scripts/qa-impersonacao-admin.mjs` (16 checks, roda em produção) —
+botão presente, contraste nos dois temas, sessão trocada para a conta do
+cliente, banner + "Voltar ao painel admin", sessão do admin restaurada e
+**hash da senha do cliente idêntico** antes/depois.
+`scripts/medir-botao-impersonacao.mjs` mede só o contraste do botão.
+
+> Cuidado no teste: o `addInitScript` do Playwright roda em **toda**
+> navegação — injetar a sessão do admin sempre sobrescreve a sessão do
+> cliente depois da impersonação e o teste mede a sessão errada. Injetar só
+> na primeira carga (`if (!localStorage.getItem(key))`).
+
 ---
 
 ## 10/11/2026 — "O CLIENTE PAGOU E NÃO ENTROU": o webhook da Woovi nunca chegou
