@@ -135,6 +135,77 @@ await fecharPortoes(page);
 const botao = page.locator('button', { hasText: 'Entrar como este usuário' }).first();
 check('a ficha do usuário tem o botão "Entrar como este usuário"', (await botao.count()) > 0);
 check('o botão não está travado', (await botao.count()) > 0 && (await botao.isEnabled()));
+
+/* O botão precisa APARECER: no tema claro uma regra `.btn-outline` de outra
+   página (o Vite junta todo o CSS num arquivo) deixava o texto branco sobre
+   cartão branco — contraste 1,05:1, ou seja, sumia da tela. */
+const medirContraste = () =>
+  page.evaluate(() => {
+    const el = [...document.querySelectorAll('button')].find((b) =>
+      /Entrar como este usuário/i.test(b.textContent || '')
+    );
+    if (!el) return null;
+    const parse = (cor) => {
+      const m = cor && cor.match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const [r, g, b, a = '1'] = m[1].split(',').map((x) => parseFloat(x));
+      return { r, g, b, a };
+    };
+    const canal = (c) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    const lum = ({ r, g, b }) => 0.2126 * canal(r) + 0.7152 * canal(g) + 0.0722 * canal(b);
+    const fundoReal = (node) => {
+      const pilha = [];
+      let atual = node;
+      while (atual) {
+        const c = parse(getComputedStyle(atual).backgroundColor);
+        if (c && c.a > 0) pilha.push(c);
+        if (c && c.a >= 1) break;
+        atual = atual.parentElement;
+      }
+      let base = { r: 255, g: 255, b: 255 };
+      for (let i = pilha.length - 1; i >= 0; i--) {
+        const c = pilha[i];
+        base = {
+          r: c.r * c.a + base.r * (1 - c.a),
+          g: c.g * c.a + base.g * (1 - c.a),
+          b: c.b * c.a + base.b * (1 - c.a),
+        };
+      }
+      return base;
+    };
+    const cs = getComputedStyle(el);
+    const fundo = fundoReal(el);
+    const tl = lum(parse(cs.color));
+    const bl = lum(fundo);
+    const [a, b] = tl > bl ? [tl, bl] : [bl, tl];
+    return { razao: (a + 0.05) / (b + 0.05), texto: cs.color, fundo: `rgb(${Math.round(fundo.r)}, ${Math.round(fundo.g)}, ${Math.round(fundo.b)})` };
+  });
+
+for (const tema of ['light', 'dark']) {
+  await page.evaluate((t) => {
+    document.documentElement.setAttribute('data-theme', t);
+    try {
+      localStorage.setItem('dp-theme', t);
+    } catch {
+      /* storage bloqueado */
+    }
+  }, tema);
+  await espera(700);
+  const m = await medirContraste();
+  check(
+    `[${tema}] o botão "Entrar como este usuário" aparece (contraste >= 4.5)`,
+    !!m && m.razao >= 4.5,
+    m ? `${m.razao.toFixed(2)}:1 (texto ${m.texto} sobre ${m.fundo})` : 'botão não encontrado'
+  );
+}
+await page.evaluate(() => {
+  document.documentElement.setAttribute('data-theme', 'dark');
+});
+await espera(400);
+
 await page.screenshot({ path: path.join(OUT, '1-ficha-usuario.png'), fullPage: true });
 
 /* ── 2) ENTRA NA CONTA DO CLIENTE ───────────────────────────────────────── */
