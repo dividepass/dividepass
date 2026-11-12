@@ -4843,6 +4843,22 @@ tem que abrir a página do checkout. O que mudou:
   verdade (cria uma assinatura fictícia e apaga no fim; a cobrança é
   interceptada, então nada é cobrado de verdade).
 
+### O nome do gateway NÃO aparece para o usuário
+
+O gateway (IOPay, Woovi, Mercado Pago...) é detalhe interno da plataforma.
+Na tela de pagamento a pessoa vê só **"Cartão"** ou **"PIX"** — sem sufixo
+("Cartão · IOPay") e sem "via Woovi" no resumo da cobrança.
+
+- `src/pages/user/Checkout.jsx`: saiu o `GATEWAY_NAMES` (e as constantes
+  `rotuloGatewayCartao` / `rotuloGatewayPix`) da área visível; o texto do
+  botão ficou "Pagar agora — R$ X" e o resumo ficou "Renovação de R$ X
+  (ciclo de Mensal).".
+- Continua valendo: o aviso de **Pagamento Automático** (o Pix Automático do
+  banco), o campo de CPF e o motivo técnico do gateway no admin. Só o
+  **rótulo comercial** saiu.
+- `scripts/qa-renovacao-checkout.mjs` passou a checar que nenhum nome de
+  gateway aparece na tela de renovação nem no botão do PIX.
+
 ### A renovação por PIX é pela Woovi — e por isso pede o CPF
 
 A renovação **segue o gateway do método escolhido**: o PIX da assinatura é o

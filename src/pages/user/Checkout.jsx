@@ -81,14 +81,9 @@ function getCardBrand(card) {
   return card.card_brand || card.brand || card.card_brand || 'Cartão';
 }
 
-const GATEWAY_NAMES = {
-  mercadopago: 'Mercado Pago',
-  stripe: 'Stripe',
-  asaas: 'Asaas',
-  iopay: 'IOPay',
-  pagarme: 'Pagar.me',
-  woovi: 'Woovi',
-};
+// O nome do gateway NÃO aparece para o usuário. Quem paga vê só "Cartão" ou
+// "PIX" — o provedor (IOPay, Woovi, Mercado Pago...) é detalhe interno e pode
+// trocar sem breaking do que está na tela.
 
 const GATEWAYS_REDIRECT = ['mercadopago', 'stripe'];
 const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe', 'woovi'];
@@ -513,16 +508,9 @@ function CheckoutPagina({ variante }) {
   const gatewayDoPix = cfgGateway.gatewayDoMetodo('pix');
   const gatewayDoCard = cfgGateway.gatewayDoMetodo('card');
 
-  // Rótulo do gateway que aparece no botão de método ("Cartão · IOPay").
-  //
-  // Vale o gateway do MÉTODO — o mesmo que vai cobrar. Na renovação também
-  // (o PIX da assinatura é o da Woovi).
-  const rotuloGatewayCartao = !activeGateway
-    ? ''
-    : (cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoCard] || gatewayDoCard}` : '');
-  const rotuloGatewayPix = !activeGateway
-    ? ''
-    : (cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoPix] || gatewayDoPix}` : '');
+  // O nome do gateway NÃO aparece para o usuário (nem no botão de método,
+  // nem no resumo). Quem paga vê só "Cartão" ou "PIX" — o gateway é detalhe
+  // interno da plataforma e pode mudar sem Avisar.
 
   // O que o seletor de método pode oferecer.
   //
@@ -2365,7 +2353,7 @@ function CheckoutPagina({ variante }) {
                 <div className="payment-provider">
                   <div className="provider-badge"><CreditCard size={28} /></div>
                   <h3>Pagar Taxa de Adesão</h3>
-                  <p>Pagamento único via {GATEWAY_NAMES[activeGateway] || activeGateway}. Após confirmação, avance para a assinatura.</p>
+                  <p>Pagamento único. Após confirmação, avance para a assinatura.</p>
                 </div>
 
                 {gatewayResult?.needs_polling && gatewayWaiting ? (
@@ -2389,7 +2377,7 @@ function CheckoutPagina({ variante }) {
                 ) : GATEWAYS_REDIRECT.includes(activeGateway) ? (
                   <div className="payment-buttons">
                     <button className="btn btn-primary btn-full btn-lg" onClick={() => handleEntrancePayment()} disabled={processing}>
-                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar com {GATEWAY_NAMES[activeGateway]} — {formatCurrency(finalEntranceAmount)}</>)}
+                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar agora — {formatCurrency(finalEntranceAmount)}</>)}
                     </button>
                     {paymentAttempted && (
                       <button className="btn btn-verify btn-full" onClick={handleCheckPayment} disabled={checking}>
@@ -2408,7 +2396,6 @@ function CheckoutPagina({ variante }) {
                             onClick={() => setPaymentMethod('card')}
                           >
                             <CreditCard size={16} /> Cartão
-                            {rotuloGatewayCartao}
                           </button>
                         )}
                         <button
@@ -2417,7 +2404,6 @@ function CheckoutPagina({ variante }) {
                           onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                         >
                           <QrCode size={16} /> PIX
-                          {rotuloGatewayPix}
                         </button>
                       </div>
                     )}
@@ -2709,10 +2695,10 @@ function CheckoutPagina({ variante }) {
                   <h3>{pagamentoUnico ? 'Pagar adesão + assinatura' : renovacaoAtiva ? 'Renovar assinatura' : 'Pagar Assinatura'}</h3>
                   <p>
                     {pagamentoUnico
-                      ? `Uma única cobrança de ${formatCurrency(valorCobrado)} (adesão + 1ª mensalidade) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
+                      ? `Uma única cobrança de ${formatCurrency(valorCobrado)} (adesão + 1ª mensalidade).`
                       : renovacaoAtiva
-                        ? `Renovação de ${formatCurrency(valorCobrado)} (ciclo de ${getCycleLabel(validSelectedCycle, group)}) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
-                        : `Pagamento recorrente mensal via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`}
+                        ? `Renovação de ${formatCurrency(valorCobrado)} (ciclo de ${getCycleLabel(validSelectedCycle, group)}).`
+                        : `Pagamento recorrente mensal.`}
                   </p>
                 </div>
 
@@ -2737,7 +2723,7 @@ function CheckoutPagina({ variante }) {
                 ) : GATEWAYS_REDIRECT.includes(activeGateway) ? (
                   <div className="payment-buttons">
                     <button className="btn btn-primary btn-full btn-lg" onClick={() => iniciarPagamento()} disabled={processing}>
-                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar com {GATEWAY_NAMES[activeGateway]} — {formatCurrency(valorCobrado)}</>)}
+                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar agora — {formatCurrency(valorCobrado)}</>)}
                     </button>
                     {couponResult?.valid && couponResult.original_amount === subscriptionAmount && (
                       <div className="checkout-payment-info">
@@ -2766,7 +2752,6 @@ function CheckoutPagina({ variante }) {
                             onClick={() => setPaymentMethod('card')}
                           >
                             <CreditCard size={16} /> Cartão
-                            {rotuloGatewayCartao}
                           </button>
                         )}
                         {pixDisponivel && (
@@ -2776,7 +2761,6 @@ function CheckoutPagina({ variante }) {
                             onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                           >
                             <QrCode size={16} /> PIX
-                            {rotuloGatewayPix}
                           </button>
                         )}
                       </div>
@@ -3061,10 +3045,10 @@ function CheckoutPagina({ variante }) {
                   <h3>{pagamentoUnico ? 'Pagar adesão + assinatura' : renovacaoAtiva ? 'Renovar assinatura' : 'Pagar Assinatura'}</h3>
                   <p>
                     {pagamentoUnico
-                      ? `Uma única cobrança de ${formatCurrency(valorCobrado)} (adesão + 1ª mensalidade) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
+                      ? `Uma única cobrança de ${formatCurrency(valorCobrado)} (adesão + 1ª mensalidade).`
                       : renovacaoAtiva
-                        ? `Renovação de ${formatCurrency(valorCobrado)} (ciclo de ${getCycleLabel(validSelectedCycle, group)}) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
-                        : `Pagamento recorrente mensal via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`}
+                        ? `Renovação de ${formatCurrency(valorCobrado)} (ciclo de ${getCycleLabel(validSelectedCycle, group)}).`
+                        : `Pagamento recorrente mensal.`}
                   </p>
                 </div>
 
@@ -3087,7 +3071,7 @@ function CheckoutPagina({ variante }) {
                 {GATEWAYS_REDIRECT.includes(activeGateway) ? (
                   <div className="payment-buttons">
                     <button className="btn btn-primary btn-full btn-lg" onClick={() => iniciarPagamento()} disabled={processing}>
-                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar com {GATEWAY_NAMES[activeGateway]} — {formatCurrency(valorCobrado)}</>)}
+                      {processing ? (<><Loader2 size={18} className="spin" /> Redirecionando...</>) : (<>Pagar agora — {formatCurrency(valorCobrado)}</>)}
                     </button>
                     {couponResult?.valid && couponResult.original_amount === subscriptionAmount && (
                       <div className="checkout-payment-info">
@@ -3116,7 +3100,6 @@ function CheckoutPagina({ variante }) {
                             onClick={() => setPaymentMethod('card')}
                           >
                             <CreditCard size={16} /> Cartão
-                            {rotuloGatewayCartao}
                           </button>
                         )}
                         {pixDisponivel && (
@@ -3126,7 +3109,6 @@ function CheckoutPagina({ variante }) {
                             onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                           >
                             <QrCode size={16} /> PIX
-                            {rotuloGatewayPix}
                           </button>
                         )}
                       </div>

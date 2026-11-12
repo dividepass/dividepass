@@ -288,13 +288,15 @@ if (await botaoPagar.count()) {
   const temSeletorCiclo = (await page.locator('.checkout-simple .cycle-selector').count()) > 0;
   check('seletor de ciclo não aparece na renovação', !temSeletorCiclo);
 
-  /* ── 2b) A RENOVAÇÃO POR PIX VAI PELA WOOVI E PEDE O CPF ─────────────── */
+  /* ── 2b) A RENOVAÇÃO POR PIX PEDE O CPF E NÃO MOSTRA O GATEWAY ────────── */
   const botaoPix = page.locator('.iopay-method-btn', { hasText: 'PIX' }).first();
 
   // A renovação ABRE no PIX: a renovação de uma assinatura é o Pix
-  // Automático (Woovi) — é ele que renova sozinho os próximos ciclos.
+  // Automático — é ele que renova sozinho os próximos ciclos.
   const painel = await page.locator('.checkout-payment').first().innerText().catch(() => '');
-  check('a renovação abre no PIX (via Woovi)', /via\s+Woovi/i.test(painel), painel.replace(/\n/g, ' | ').slice(0, 160));
+  // O nome do gateway é detalhe interno: NÃO pode aparecer na tela.
+  const nomesGateway = /woovi|iopay|io\s?pay|mercado\s?pago|stripe|asaas|pagar\.?\s?me/i;
+  check('a tela de renovação não mostra o nome do gateway', !nomesGateway.test(painel), painel.replace(/\n/g, ' | ').slice(0, 160));
   check('o botão do PIX é o selecionado', (await botaoPix.getAttribute('class')).includes('active'), await botaoPix.getAttribute('class'));
 
   if (await botaoPix.count()) {
@@ -302,7 +304,8 @@ if (await botaoPagar.count()) {
     await espera(1500);
 
     const rotuloPix = await botaoPix.innerText().catch(() => '');
-    check('o PIX da renovação vai pela Woovi', /woovi/i.test(rotuloPix), rotuloPix.replace(/\n/g, ' '));
+    check('o botão do PIX não mostra o nome do gateway', !nomesGateway.test(rotuloPix), rotuloPix.replace(/\n/g, ' '));
+    check('o botão do PIX continua dizendo PIX', /PIX/i.test(rotuloPix), rotuloPix.replace(/\n/g, ' '));
 
     // O Pix Automático exige o CPF do pagador: quem não tem um no perfil
     // precisa preencher ANTES de pagar.
