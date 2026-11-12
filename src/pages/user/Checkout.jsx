@@ -319,7 +319,13 @@ function CheckoutPagina({ variante }) {
   // Confirmação de que a taxa de adesão foi paga, checada direto em payments.
   // Complementa group_members.payment_status quando o webhook atrasa.
   const [entrancePaidState, setEntrancePaid] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('card');
+  // O método de pagamento escolhido.
+  //
+  // Na RENOVAÇÃO o padrão é o PIX: a renovação de uma assinatura é o Pix
+  // Automático (Woovi) — é ele que renova sozinho os próximos ciclos. Se a
+  // tela abrisse no cartão, a pessoa acabaria pagando por cartão (e a
+  // recorrência da Woovi seria cancelada) sem querer.
+  const [paymentMethod, setPaymentMethod] = useState(renovacaoAtiva ? 'pix' : 'card');
   const [gatewayResult, setGatewayResult] = useState(null);
   const [gatewayWaiting, setGatewayWaiting] = useState(false);
   const [pollingTimedOut, setPollingTimedOut] = useState(false);
@@ -557,6 +563,13 @@ function CheckoutPagina({ variante }) {
       setPaymentMethod('card');
     }
   }, [cfgGateway.carregado, activeGateway, paymentMethod]);
+
+  // Entrou no modo RENOVAÇÃO sem remontar a tela (a URL mudou): o método
+  // padrão passa a ser o PIX (a recorrência). Só roda quando o modo muda —
+  // depois disso a escolha da pessoa fica.
+  useEffect(() => {
+    if (renovacaoAtiva) setPaymentMethod('pix');
+  }, [renovacaoAtiva]);
 
   // ── O CPF DO PERFIL ─────────────────────────────────────────────────────
   // Só o Pix Automático (Woovi) precisa do CPF do pagador. Quando a cobrança

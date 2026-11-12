@@ -290,6 +290,13 @@ if (await botaoPagar.count()) {
 
   /* ── 2b) A RENOVAÇÃO POR PIX VAI PELA WOOVI E PEDE O CPF ─────────────── */
   const botaoPix = page.locator('.iopay-method-btn', { hasText: 'PIX' }).first();
+
+  // A renovação ABRE no PIX: a renovação de uma assinatura é o Pix
+  // Automático (Woovi) — é ele que renova sozinho os próximos ciclos.
+  const painel = await page.locator('.checkout-payment').first().innerText().catch(() => '');
+  check('a renovação abre no PIX (via Woovi)', /via\s+Woovi/i.test(painel), painel.replace(/\n/g, ' | ').slice(0, 160));
+  check('o botão do PIX é o selecionado', (await botaoPix.getAttribute('class')).includes('active'), await botaoPix.getAttribute('class'));
+
   if (await botaoPix.count()) {
     await botaoPix.click();
     await espera(1500);
