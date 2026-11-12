@@ -7,6 +7,9 @@ import { useGatewayPorMetodo } from '../../hooks/useGatewayPorMetodo';
 import { supabase } from '../../lib/supabase';
 import { reportGoogleAdsConversion } from '../../lib/googleAds';
 import { mascararCpf, cpfValido, soDigitos } from '../../lib/cpf';
+import { grupoEsgotado } from '../../lib/groupEstado';
+import { ACCESS_CANCELLED, subscriptionAccessState, subscriptionRenewalDate } from '../../lib/subscriptionAccess';
+import { formatDateBR } from '../../lib/dateFormat';
 import IOPayCardForm from '../../components/IOPayCardForm';
 import GroupRules from '../../components/GroupRules';
 import jsQR from 'jsqr';
@@ -50,6 +53,18 @@ function getCycleLabel(cycle, group) {
   if (cycle === 'days') return group?.custom_cycle_label || `${group?.custom_cycle_days || '?'} dias`;
   if (cycle === 'custom') return group?.custom_cycle_label || `${group?.custom_cycle_months || '?'} meses`;
   return CYCLE_OPTIONS[cycle]?.label || cycle;
+}
+
+/**
+ * Rótulo da linha de preço.
+ *
+ * No ciclo em dias o valor gravado é o TOTAL do período (o pacote "Extensão
+ * de 7 dias" custa R$ 119,88 pelos 7 dias). Chamar isso de "Preço mensal"
+ * mostraria ao cliente um valor por mês que não existe.
+ */
+function rotuloPreco(cycle, group) {
+  if (cycle === 'days') return `Período (${getCycleLabel(cycle, group)})`;
+  return 'Preço mensal';
 }
 
 function formatCurrency(value) {
@@ -260,6 +275,24 @@ function CheckoutPagina({ variante }) {
 
   const paymentStatus = searchParams.get('payment');
 
+  // ── MODO RENOVAÇÃO ──────────────────────────────────────────────────────
+  //
+  // O dashboard manda a pessoa para cá quando a cobrança está vencida:
+  // `/dashboard/checkout/<grupo>?renovacao=1`. Nesse modo o checkout RENOVA
+  // a assinatura que já existe — não cria uma nova — e por isso:
+  //
+  //  - não existe taxa de adesão (a pessoa já pagou quando entrou);
+  //  - o gateway é o da ASSINATURA (trocar agora deixaria duas cobranças
+  //    vivas: a antiga no gateway antigo e a nova no gateway novo);
+  //  - o ciclo começa no da assinatura (pode ser trocado na tela).
+  //
+  // O pedido de renovação é `renewal: true` no corpo — é o que o backend
+  // usa para não rebaixar a assinatura para "pending" e para só advance a
+  // data da próxima cobrança depois que o dinheiro entra.
+  const renovacaoAtiva = searchParams.get('renovacao') === '1';
+  const [subRenovacao, setSubRenovacao] = useState(null);
+  const [carregandoRenovacao, setCarregandoRenovacao] = useState(renovacaoAtiva);
+
   const [processing, setProcessing] = useState(false);
   const [checking, setChecking] = useState(false);
   const [paymentAttempted, setPaymentAttempted] = useState(false);
@@ -279,6 +312,10 @@ function CheckoutPagina({ variante }) {
   const [cpfStatus, setCpfStatus] = useState(null);
   const [remoteGroup, setRemoteGroup] = useState(undefined);
   const [memberStatus, setMemberStatus] = useState(null);
+  // A consulta do vínculo com o grupo terminou? Sem isso não dá para saber
+  // se a pessoa JÁ está no grupo (e a taxa de adesão não deve ser cobrada
+  // de quem já entrou) — a tela espera em vez de chutar.
+  const [membershipCarregada, setMembershipCarregada] = useState(false);
   // Confirmação de que a taxa de adesão foi paga, checada direto em payments.
   // Complementa group_members.payment_status quando o webhook atrasa.
   const [entrancePaidState, setEntrancePaid] = useState(false);
@@ -333,7 +370,12 @@ function CheckoutPagina({ variante }) {
     const available = d?.group?.available_cycles?.length
       ? d.group.available_cycles
       : (d?.group?.billing_cycle ? [d.group.billing_cycle] : ['monthly']);
-    const preferred = d?.group?.billing_cycle || available[0];
+    // Na renovação o ciclo é o da assinatura que já existe (pode ser trocado
+    // na tela depois).
+    const cicloDaAssinatura = renovacaoAtiva ? subRenovacao?.billing_cycle : null;
+    const preferred = (cicloDaAssinatura && available.includes(cicloDaAssinatura))
+      ? cicloDaAssinatura
+      : (d?.group?.billing_cycle || available[0]);
     if (selectedCycleState && available.includes(selectedCycleState)) return selectedCycleState;
     return preferred || 'monthly';
   })();
@@ -405,6 +447,38 @@ function CheckoutPagina({ variante }) {
     return () => { cancelled = true; };
   }, [groupSlug, localDetails]);
 
+  // ── A ASSINATURA QUE ESTÁ PARA SER RENOVADA ─────────────────────────────
+  //
+  // Sem esta busca o checkout de renovação não saberia qual ciclo usar, qual
+  // gateway cobrar nem se a assinatura ainda existe (cancelada não se renova
+  // — o caminho dela é comprar de novo).
+  useEffect(() => {
+    if (!renovacaoAtiva || !user || !details?.group?.id) return;
+    let cancelled = false;
+    setCarregandoRenovacao(true);
+
+    supabase
+      .from('user_subscriptions')
+      .select('*')
+      .eq('group_id', details.group.id)
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error('[Checkout] Erro ao buscar a assinatura para renovar:', error);
+          return;
+        }
+        setSubRenovacao(data || null);
+      })
+      .catch((e) => console.error('[Checkout] Erro ao buscar a assinatura para renovar:', e))
+      .finally(() => { if (!cancelled) setCarregandoRenovacao(false); });
+
+    return () => { cancelled = true; };
+  }, [renovacaoAtiva, user?.id, details?.group?.id]);
+
   // ── GATEWAY: PADRÃO + DIVISÃO POR MÉTODO ────────────────────────────────
   //
   // O gateway pode ser UM só (o de sempre, `active_gateway`) ou DOIS, um para
@@ -420,12 +494,29 @@ function CheckoutPagina({ variante }) {
   //
   // No checkout V1 isso é SEMPRE o gateway padrão (o de sempre). No V2, é o
   // gateway configurado para o método — se a divisão estiver ligada.
+  //
+  // A RENOVAÇÃO segue a MESMA regra: a renovação é uma cobrança nova e o
+  // meio é o que a pessoa escolheu agora. O PIX da assinatura é o Pix
+  // Automático (Woovi) — por isso a renovação por PIX vai para a Woovi (e
+  // é lá que o CPF do pagador é pedido). É a mesma regra do backend
+  // (`resolverGatewayParaPagamento`).
   const activeGateway = cfgGateway.gatewayDoMetodo(paymentMethod);
 
   // Os gateways de CADA método — usados para decidir o que OFERECER.
   // (com a divisão desligada, os dois são o gateway de sempre)
   const gatewayDoPix = cfgGateway.gatewayDoMetodo('pix');
   const gatewayDoCard = cfgGateway.gatewayDoMetodo('card');
+
+  // Rótulo do gateway que aparece no botão de método ("Cartão · IOPay").
+  //
+  // Vale o gateway do MÉTODO — o mesmo que vai cobrar. Na renovação também
+  // (o PIX da assinatura é o da Woovi).
+  const rotuloGatewayCartao = !activeGateway
+    ? ''
+    : (cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoCard] || gatewayDoCard}` : '');
+  const rotuloGatewayPix = !activeGateway
+    ? ''
+    : (cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoPix] || gatewayDoPix}` : '');
 
   // O que o seletor de método pode oferecer.
   //
@@ -509,6 +600,11 @@ function CheckoutPagina({ variante }) {
   // Auto-apply testimonial reward if available
   useEffect(() => {
     if (!user || !details?.group) return;
+    // Na RENOVAÇÃO o cupom de avaliação NÃO é auto-aplicado: o valor
+    // cobrado é o que já está gravado na assinatura, e um cupom novo aqui
+    // mudaria esse valor (e o total mostrado deixaria de bater com o
+    // cobrado). Quem quiser desconto na renovação usa o campo de cupom.
+    if (renovacaoAtiva) return;
     let cancelled = false;
 
     const applyTestimonialReward = async () => {
@@ -604,7 +700,9 @@ function CheckoutPagina({ variante }) {
       if (!cancelled) setMemberStatus(data);
     };
 
-    fetchMember();
+    fetchMember()
+      .catch(() => { /* sem vínculo: o grupo cobra a taxa da 1ª entrada */ })
+      .finally(() => { if (!cancelled) setMembershipCarregada(true); });
     return () => { cancelled = true; };
   }, [user, details?.group?.id]);
 
@@ -1019,8 +1117,11 @@ function CheckoutPagina({ variante }) {
       if (!accessToken) throw new Error('Você precisa estar logado.');
 
       const { group: grp, service: svc } = details;
-      const cycleMonths = monthsForCycle(selectedCycle, grp);
-      const cycleDays = daysForCycle(selectedCycle, grp);
+      // Na renovação o ciclo é o da assinatura (travado na tela) — por isso
+      // o `validSelectedCycle`, e não o `selectedCycle` da escolha livre.
+      const cicloCobrado = renovacaoAtiva ? validSelectedCycle : selectedCycle;
+      const cycleMonths = monthsForCycle(cicloCobrado, grp);
+      const cycleDays = daysForCycle(cicloCobrado, grp);
       // Com a DIVISÃO por método, o método SEMPRE precisa ir no body: é ele que diz
       // ao backend qual gateway usar. Sem divisão, vale a regra de hoje.
       const gwPaymentMethod =
@@ -1031,15 +1132,22 @@ function CheckoutPagina({ variante }) {
       const payload = {
         group_id: grp.id,
         user_id: user.id,
-        billing_cycle: selectedCycle,
+        billing_cycle: cicloCobrado,
         months: cycleMonths,
         custom_cycle_days: cycleDays || null,
-        custom_cycle_months: selectedCycle === 'custom' ? (grp.custom_cycle_months || null) : null,
-        custom_cycle_label: (selectedCycle === 'days' ? grp.custom_cycle_label : (selectedCycle === 'custom' ? grp.custom_cycle_label : null)) || null,
+        custom_cycle_months: cicloCobrado === 'custom' ? (grp.custom_cycle_months || null) : null,
+        custom_cycle_label: (cicloCobrado === 'days' ? grp.custom_cycle_label : (cicloCobrado === 'custom' ? grp.custom_cycle_label : null)) || null,
         payment_type: 'subscription',
-        reason: `DividePass - ${svc?.name || svc?.full_name}`,
+        reason: renovacaoAtiva
+          ? `Renovação - ${svc?.name || svc?.full_name}`.substring(0, 50)
+          : `DividePass - ${svc?.name || svc?.full_name}`,
         referral_code: referralCode || null,
-        force_new_plan: true,
+        // `renewal: true` diz ao backend que esta cobrança RENOVA a
+        // assinatura que já existe (o status não é rebaixado para "pending" e
+        // a data da próxima cobrança só avança depois que o pagamento
+        // entra). `force_new_plan` é o contrário disso: peça um plano novo.
+        renewal: renovacaoAtiva,
+        force_new_plan: !renovacaoAtiva,
         payment_method: gwPaymentMethod,
         gateway: activeGateway,
         // Diz ao backend que ESTA cobrança é de um checkout que aceita a
@@ -1154,6 +1262,10 @@ function CheckoutPagina({ variante }) {
     setTimeout(() => {
       if (paymentType === 'entrance') {
         setPaymentSuccess(null);
+      } else if (renovacaoAtiva) {
+        // Na renovação o destino é o painel: a pessoa veio de lá e é lá que a
+        // cobrança pendente deixa de aparecer.
+        navigate('/dashboard');
       } else {
         navigate('/dashboard/credentials');
       }
@@ -1604,22 +1716,63 @@ function CheckoutPagina({ variante }) {
   }
 
   const { group, service, spots } = details;
-  const hasEntranceFee = group.has_entrance_fee && Number(group.entrance_fee || 0) > 0;
+
+  // ── TAXA DE ADESÃO: é da PRIMEIRA ENTRADA no grupo ──────────────────────
+  //
+  // Três condições, e as três precisam valer:
+  //
+  //  1. o GRUPO tem taxa de adesão — não são todos que têm;
+  //  2. a pessoa AINDA NÃO entrou no grupo — quem já está no grupo (mesmo
+  //     com a assinatura atrasada ou expirada) não paga a taxa de novo,
+  //     porque a entrada já aconteceu;
+  //  3. não é uma renovação — na renovação ela já entrou.
+  //
+  // Sem a condição 2 o checkout mostraria a taxa para quem já está no grupo
+  // (e a cobrar), e sem a condição 1 ele inventaria uma taxa em grupo que
+  // não tem.
+  const grupoTemTaxa = group.has_entrance_fee && Number(group.entrance_fee || 0) > 0;
+  const statusMembro = memberStatus?.payment_status;
+  const jaEntrouNoGrupo =
+    !!memberStatus &&
+    ['entrance_paid', 'awaiting_subscription', 'active', 'overdue', 'expired'].includes(statusMembro);
+  // A RENOVAÇÃO nunca cobra taxa de adesão: a pessoa já entrou no grupo.
+  const hasEntranceFee = grupoTemTaxa && !renovacaoAtiva && !jaEntrouNoGrupo;
   const entranceAmount = hasEntranceFee ? Number(group.entrance_fee) : 0;
   const availableCycles = group.available_cycles?.length
     ? group.available_cycles
     : [group.billing_cycle || 'monthly'];
   const defaultCycle = group.billing_cycle || availableCycles[0];
-  const validSelectedCycle = availableCycles.includes(selectedCycle) ? selectedCycle : defaultCycle;
+
+  // Na RENOVAÇÃO o ciclo é o da assinatura que já existe — e não muda na
+  // tela. Motivo: o backend cobra SEMPRE o valor gravado na assinatura
+  // (`user_subscriptions.amount`), então deixar a pessoa escolher outro
+  // ciclo mostraria um total diferente do que é realmente cobrado.
+  const validSelectedCycle = renovacaoAtiva
+    ? (subRenovacao?.billing_cycle || defaultCycle)
+    : (availableCycles.includes(selectedCycle) ? selectedCycle : defaultCycle);
   const cycleMonths = monthsForCycle(validSelectedCycle, group);
-  const subscriptionAmount = Number(group.price_per_slot) * cycleMonths;
+
+  // Na renovação o valor base é o do CICLO ATUAL (o mesmo da assinatura
+  // nova): preço da vaga x meses do ciclo — com o grupo sem preço
+  // cadastrado, cai para o valor gravado na assinatura.
+  //
+  // E o desconto recorrente que já estava gravado CONTINUA valendo (é o
+  // que o backend preserva quando a pessoa não digita um cupom novo): sem
+  // isso a tela mostraria o preço cheio e o valor cobrado seria menor.
+  const baseCiclo = Number(group.price_per_slot) * cycleMonths;
+  const subscriptionAmount = renovacaoAtiva
+    ? (baseCiclo > 0 ? baseCiclo : Number(subRenovacao?.amount || 0))
+    : baseCiclo;
+  const descontoGravado = renovacaoAtiva
+    ? Math.min(Number(subRenovacao?.discount_amount || 0), subscriptionAmount)
+    : 0;
 
   const finalEntranceAmount = couponResult?.valid && couponResult.original_amount === entranceAmount
     ? couponResult.final_amount
     : entranceAmount;
   const finalSubscriptionAmount = couponResult?.valid && couponResult.original_amount === subscriptionAmount
     ? couponResult.final_amount
-    : subscriptionAmount;
+    : subscriptionAmount - descontoGravado;
 
   const renderCouponInput = (paymentType, amount) => (
     <div className="coupon-checkout-section">
@@ -1667,7 +1820,9 @@ function CheckoutPagina({ variante }) {
 
   // Grupo criado por usuário que a equipe ainda não aprovou: o grupo aparece
   // no catálogo, mas o pagamento fica bloqueado até a aprovação.
-  if (group.approval_status === 'pending') {
+  // (Na renovação isso não se aplica: a pessoa já comprou nesse grupo, ou
+  // seja, ele já foi aprovado.)
+  if (group.approval_status === 'pending' && !renovacaoAtiva) {
     return (
       <div className="fade-in checkout-page">
         <div className="empty-checkout">
@@ -1683,8 +1838,26 @@ function CheckoutPagina({ variante }) {
     );
   }
 
+  // Sem estoque no fornecedor: o produto existe, mas não dá para comprar.
+  // (Na renovação não bloqueia: quem renova já tem a vaga.)
+  if (!renovacaoAtiva && grupoEsgotado(group)) {
+    return (
+      <div className="fade-in checkout-page">
+        <div className="empty-checkout">
+          <h2>Esgotado</h2>
+          <p>
+            Este produto está sem estoque no momento. Logo que o fornecedor
+            reponha, ele volta a ficar disponível para compra.
+          </p>
+          <Link to={`/dashboard/catalog/${service?.slug || service?.id}`} className="btn btn-primary">Ver Outros Grupos</Link>
+        </div>
+      </div>
+    );
+  }
+
   // Full group
-  if (spots <= 0) {
+  // (Na renovação não bloqueia: quem renova já ocupa uma vaga do grupo.)
+  if (spots <= 0 && !renovacaoAtiva) {
     return (
       <div className="fade-in checkout-page">
         <div className="empty-checkout">
@@ -1726,7 +1899,7 @@ function CheckoutPagina({ variante }) {
                 </div>
               </div>
             )}
-            <div className="summary-row"><span>Preço mensal</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
+            <div className="summary-row"><span>{rotuloPreco(group?.billing_cycle || 'monthly', group)}</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
             {hasEntranceFee && <div className="summary-row entrance-row"><span>Taxa de Adesão (única)</span><strong>{formatCurrency(entranceAmount)}</strong></div>}
             <div className="summary-row summary-total">
               <span>Total primeiro pagamento</span>
@@ -1750,8 +1923,65 @@ function CheckoutPagina({ variante }) {
     );
   }
 
+  // ── Ainda estamos conferindo se a pessoa JÁ está no grupo? ───────────────
+  //
+  // A taxa de adesão é da PRIMEIRA entrada: para cobrar (ou dispensar) ela
+  // com segurança, a tela espera a resposta do banco em vez de mostrar a
+  // etapa da adesão para quem já está no grupo.
+  if (grupoTemTaxa && !renovacaoAtiva && !membershipCarregada) {
+    return (
+      <div className="fade-in checkout-page">
+        <div className="loading-state">
+          <Loader2 size={32} className="spin" />
+          <p>Verificando sua entrada no grupo...</p>
+        </div>
+      </div>
+    );
+  }
+
   const entrancePaid = hasEntranceFee && (entrancePaidState || memberStatus?.payment_status === 'entrance_paid' || memberStatus?.payment_status === 'awaiting_subscription' || memberStatus?.payment_status === 'active');
   const entranceExpired = hasEntranceFee && (memberStatus?.payment_status === 'expired' || memberStatus?.payment_status === 'overdue' || memberStatus?.payment_status === 'cancelled');
+
+  // ── RENOVAÇÃO: a assinatura precisa existir e ainda estar viva ──────────
+  //
+  // Cancelada (carência de 7 dias vencida) NÃO se renova: o caminho dela é
+  // comprar de novo no checkout normal. Sem este bloco a tela de renovação
+  // apareceria para um grupo que a pessoa nem tem mais.
+  // Assinatura COM Pix Automático (Woovi) TAMBÉM renova: quando a
+  // recorrência falha (a pessoa não tinha dinheiro), ela entra no app e
+  // força o pagamento — o backend cobra a PARCELA que já existe, sem criar
+  // uma segunda recorrência.
+  const assinaturaRenovavel = subRenovacao
+    && subscriptionAccessState(subRenovacao) !== ACCESS_CANCELLED;
+
+  // A data de vencimento do ciclo que está sendo renovado (só para o aviso
+  // da tela — a cobrança em si é calculada pelo backend).
+  const assinaturaVencida = (() => {
+    if (!subRenovacao) return null;
+    const data = subscriptionRenewalDate(subRenovacao);
+    if (!data) return null;
+    const ms = new Date(data).getTime();
+    if (Number.isNaN(ms) || ms >= Date.now()) return null;
+    return data;
+  })();
+
+  if (renovacaoAtiva && !carregandoRenovacao && !assinaturaRenovavel) {
+    return (
+      <div className="fade-in checkout-page">
+        <button onClick={() => navigate('/dashboard')} className="back-btn">
+          <ChevronLeft size={18} /> Voltar
+        </button>
+        <div className="empty-checkout">
+          <h2>Assinatura não encontrada</h2>
+          <p>
+            Não encontramos uma assinatura sua em {service?.full_name || group.name} para renovar.
+            Volte ao painel para conferir a situação das suas assinaturas.
+          </p>
+          <Link to="/dashboard" className="btn btn-primary">Voltar ao painel</Link>
+        </div>
+      </div>
+    );
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // FLUXO DE PAGAMENTO ÚNICO (adesão + 1ª mensalidade na mesma cobrança)
@@ -2165,7 +2395,7 @@ function CheckoutPagina({ variante }) {
                             onClick={() => setPaymentMethod('card')}
                           >
                             <CreditCard size={16} /> Cartão
-                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoCard] || gatewayDoCard}` : ''}
+                            {rotuloGatewayCartao}
                           </button>
                         )}
                         <button
@@ -2174,7 +2404,7 @@ function CheckoutPagina({ variante }) {
                           onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                         >
                           <QrCode size={16} /> PIX
-                          {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoPix] || gatewayDoPix}` : ''}
+                          {rotuloGatewayPix}
                         </button>
                       </div>
                     )}
@@ -2331,7 +2561,7 @@ function CheckoutPagina({ variante }) {
             {pagamentoUnico ? (
               <>
                 <div className="summary-row"><span>Taxa de Adesão (pagamento único)</span><strong>{formatCurrency(entranceAmount)}</strong></div>
-                <div className="summary-row"><span>Preço mensal</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
+                <div className="summary-row"><span>{rotuloPreco(validSelectedCycle, group)}</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
                 {validSelectedCycle !== 'monthly' && (
                   <div className="summary-row"><span>Ciclo</span><strong>{getCycleLabel(validSelectedCycle, group)}</strong></div>
                 )}
@@ -2367,7 +2597,7 @@ function CheckoutPagina({ variante }) {
               </>
             ) : (
               <>
-                <div className="summary-row"><span>Preço mensal</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
+                <div className="summary-row"><span>{rotuloPreco(validSelectedCycle, group)}</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
                 {validSelectedCycle !== 'monthly' && (
                   <div className="summary-row"><span>Ciclo</span><strong>{getCycleLabel(validSelectedCycle, group)}</strong></div>
                 )}
@@ -2463,11 +2693,13 @@ function CheckoutPagina({ variante }) {
               <>
                 <div className="payment-provider">
                   <div className="provider-badge"><CreditCard size={28} /></div>
-                  <h3>{pagamentoUnico ? 'Pagar adesão + assinatura' : 'Pagar Assinatura'}</h3>
+                  <h3>{pagamentoUnico ? 'Pagar adesão + assinatura' : renovacaoAtiva ? 'Renovar assinatura' : 'Pagar Assinatura'}</h3>
                   <p>
                     {pagamentoUnico
                       ? `Uma única cobrança de ${formatCurrency(valorCobrado)} (adesão + 1ª mensalidade) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
-                      : `Pagamento recorrente mensal via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`}
+                      : renovacaoAtiva
+                        ? `Renovação de ${formatCurrency(valorCobrado)} (ciclo de ${getCycleLabel(validSelectedCycle, group)}) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
+                        : `Pagamento recorrente mensal via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`}
                   </p>
                 </div>
 
@@ -2521,7 +2753,7 @@ function CheckoutPagina({ variante }) {
                             onClick={() => setPaymentMethod('card')}
                           >
                             <CreditCard size={16} /> Cartão
-                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoCard] || gatewayDoCard}` : ''}
+                            {rotuloGatewayCartao}
                           </button>
                         )}
                         {pixDisponivel && (
@@ -2531,7 +2763,7 @@ function CheckoutPagina({ variante }) {
                             onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                           >
                             <QrCode size={16} /> PIX
-                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoPix] || gatewayDoPix}` : ''}
+                            {rotuloGatewayPix}
                           </button>
                         )}
                       </div>
@@ -2642,7 +2874,9 @@ function CheckoutPagina({ variante }) {
               <p style={{ fontSize: '0.85rem' }}>
                 {paymentSuccess.type === 'entrance'
                   ? 'Taxa de adesão paga. Agora realize a assinatura para ativar o acesso.'
-                  : 'Assinatura ativada! Redirecionando para suas credenciais...'}
+                  : renovacaoAtiva
+                    ? 'Renovação concluída! Seu acesso continua ativo e voltamos para o painel...'
+                    : 'Assinatura ativada! Redirecionando para suas credenciais...'}
               </p>
               <div className="payment-success-redirect">
                 <div className="spinner-small" />
@@ -2664,9 +2898,30 @@ function CheckoutPagina({ variante }) {
         <ChevronLeft size={18} /> Voltar
       </button>
       <div className="page-header">
-        <h1>Finalizar Assinatura</h1>
-        <p>Revise os dados e siga para o pagamento seguro.</p>
+        <h1>{renovacaoAtiva ? 'Renovar assinatura' : 'Finalizar Assinatura'}</h1>
+        <p>
+          {renovacaoAtiva
+            ? 'Regularize o seu ciclo e continue com o acesso ao grupo.'
+            : 'Revise os dados e siga para o pagamento seguro.'}
+        </p>
       </div>
+
+      {/* Aviso de renovação: só o que a pessoa precisa saber — qual grupo e
+          até quando o ciclo valia. A taxa de adesão NÃO aparece aqui: ela já
+          foi paga na entrada e só confundiria quem está renovando. */}
+      {renovacaoAtiva && subRenovacao && (
+        <div className="checkout-renewal-banner" role="status">
+          <RotateCcw size={18} />
+          <div>
+            <strong>Renovação de {service?.full_name || group.name}</strong>
+            <p>
+              {assinaturaVencida
+                ? `Seu ciclo venceu em ${formatDateBR(assinaturaVencida)}.`
+                : 'Você está renovando o seu ciclo atual.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="payment-error-banner" role="alert">
@@ -2680,7 +2935,7 @@ function CheckoutPagina({ variante }) {
 
       <div className="checkout-grid checkout-simple">
         <div className="checkout-summary">
-          <h3>Resumo da Assinatura</h3>
+          <h3>{renovacaoAtiva ? 'Resumo da Renovação' : 'Resumo da Assinatura'}</h3>
           <div className="summary-item summary-service">
             <div className="summary-icon" style={{ backgroundColor: service?.color }}>{service?.icon}</div>
             <div><h4>{service?.full_name}</h4><p>{group.name}{group.plan_type ? ` • ${group.plan_type}` : group.plan_type_custom ? ` • ${group.plan_type_custom}` : ''}</p></div>
@@ -2696,10 +2951,12 @@ function CheckoutPagina({ variante }) {
             </div>
           )}
 
-          <div className="summary-row"><span>Preço mensal</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
+          <div className="summary-row"><span>{rotuloPreco(validSelectedCycle, group)}</span><strong>{formatCurrency(group.price_per_slot)}</strong></div>
           <div className="summary-row"><span>Ciclo</span><strong>{getCycleLabel(validSelectedCycle, group)}</strong></div>
           <div className="summary-row"><span>Total do ciclo</span><strong>{formatCurrency(subscriptionAmount)}</strong></div>
-          <div className="summary-row"><span>Vagas restantes</span><strong>{spots === Infinity ? 'Ilimitadas' : `${spots} ${spots === 1 ? 'vaga' : 'vagas'}`}</strong></div>
+          {!renovacaoAtiva && (
+            <div className="summary-row"><span>Vagas restantes</span><strong>{spots === Infinity ? 'Ilimitadas' : `${spots} ${spots === 1 ? 'vaga' : 'vagas'}`}</strong></div>
+          )}
 
           {renderCouponInput('subscription', subscriptionAmount)}
 
@@ -2788,15 +3045,17 @@ function CheckoutPagina({ variante }) {
               <>
                 <div className="payment-provider">
                   <div className="provider-badge"><CreditCard size={28} /></div>
-                  <h3>{pagamentoUnico ? 'Pagar adesão + assinatura' : 'Pagar Assinatura'}</h3>
+                  <h3>{pagamentoUnico ? 'Pagar adesão + assinatura' : renovacaoAtiva ? 'Renovar assinatura' : 'Pagar Assinatura'}</h3>
                   <p>
                     {pagamentoUnico
                       ? `Uma única cobrança de ${formatCurrency(valorCobrado)} (adesão + 1ª mensalidade) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
-                      : `Pagamento recorrente mensal via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`}
+                      : renovacaoAtiva
+                        ? `Renovação de ${formatCurrency(valorCobrado)} (ciclo de ${getCycleLabel(validSelectedCycle, group)}) via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`
+                        : `Pagamento recorrente mensal via ${GATEWAY_NAMES[activeGateway] || activeGateway}.`}
                   </p>
                 </div>
 
-                {availableCycles.length > 1 && (
+                {availableCycles.length > 1 && !renovacaoAtiva && (
                   <div className="cycle-selector">
                     <label>Ciclo de cobrança</label>
                     <div className="cycle-options">
@@ -2844,7 +3103,7 @@ function CheckoutPagina({ variante }) {
                             onClick={() => setPaymentMethod('card')}
                           >
                             <CreditCard size={16} /> Cartão
-                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoCard] || gatewayDoCard}` : ''}
+                            {rotuloGatewayCartao}
                           </button>
                         )}
                         {pixDisponivel && (
@@ -2854,7 +3113,7 @@ function CheckoutPagina({ variante }) {
                             onClick={() => { setPaymentMethod('pix'); setGatewayResult(null); setError(''); }}
                           >
                             <QrCode size={16} /> PIX
-                            {cfgGateway.usarSplit ? ` · ${GATEWAY_NAMES[gatewayDoPix] || gatewayDoPix}` : ''}
+                            {rotuloGatewayPix}
                           </button>
                         )}
                       </div>

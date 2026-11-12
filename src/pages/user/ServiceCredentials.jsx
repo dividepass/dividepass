@@ -19,6 +19,7 @@ import {
   MessageCircle,
   CreditCard,
   RefreshCw,
+  Phone,
   X
 } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
@@ -36,11 +37,22 @@ import { formatDateBR } from '../../lib/dateFormat';
 import GroupChat from '../../components/GroupChat';
 import GroupRules from '../../components/GroupRules';
 import ContactAdminModal from '../../components/ContactAdminModal';
-import SubscriptionRenewalModal from '../../components/SubscriptionRenewalModal';
 import RenewalReminderCard from '../../components/RenewalReminderCard';
 import EmailCodeSearch from '../../components/EmailCodeSearch';
 import ManagedEmailCard from '../../components/ManagedEmailCard';
 import './ServiceCredentials.css';
+
+/**
+ * O contato que o dono deixou no grupo pode ser e-mail ou telefone. Monta o
+ * link certo: e-mail abre o cliente de e-mail, telefone abre o discador.
+ */
+function contatoDoDono(contato) {
+  const texto = String(contato || '').trim();
+  if (!texto) return '#';
+  if (texto.includes('@')) return `mailto:${texto}`;
+  const digitos = texto.replace(/\D/g, '');
+  return digitos ? `tel:+${digitos}` : '#';
+}
 
 function ServiceCredentials() {
   const { serviceId } = useParams();
@@ -48,7 +60,7 @@ function ServiceCredentials() {
   const [searchParams] = useSearchParams();
   const groupId = searchParams.get('group');
   const { user } = useAuth();
-  const { streamingServices, getActiveServices, isSubscribedToService, refresh } = useAppDataContext();
+  const { streamingServices, getActiveServices, isSubscribedToService } = useAppDataContext();
 
   const [showCredentials, setShowCredentials] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -72,7 +84,6 @@ function ServiceCredentials() {
   // cancelada: o aviso de acesso bloqueado muda de texto.
   const [accessOverdue, setAccessOverdue] = useState(false);
   const [showBlockedModal, setShowBlockedModal] = useState(false);
-  const [showRenewal, setShowRenewal] = useState(false);
   // A CONSULTA de acesso falhou (rede/banco). Isso NÃO é "acesso negado":
   // a tela mostra "não foi possível verificar" com botão de tentar de novo.
   // Negar por causa de um erro passageiro trancava fora quem tinha pago.
@@ -323,25 +334,16 @@ function ServiceCredentials() {
     );
   }
 
-  // Pagamento de renovação — reaproveitado pelo aviso de acesso bloqueado e
-  // pela tela de acesso negado.
-  const renewalModal = (accessSubscription || activeService) ? (
-    <SubscriptionRenewalModal
-      key={showRenewal ? 'renewal-modal' : 'renewal-modal-closed'}
-      open={showRenewal}
-      subscription={accessSubscription || activeService}
-      group={activeService?.group}
-      amount={Number(accessSubscription?.amount || activeService?.amount || 0)}
-      onClose={() => setShowRenewal(false)}
-      onPaid={() => {
-        setShowRenewal(false);
-        setShowBlockedModal(false);
-        setAccessBlocked(false);
-        setVerifiedAccess(true);
-        refresh?.();
-      }}
-    />
-  ) : null;
+  // Pagamento de renovação — a pessoa é levada para a PÁGINA de checkout.
+  //
+  // Cancelada NÃO se renova: o caminho dela é comprar de novo (o checkout
+  // normal, sem o modo renovação). Atrasada/vencida renova na página.
+  const irParaPagamento = (sub) => {
+    const alvo = sub?.group?.slug || sub?.group?.id || sub?.group_id;
+    if (!alvo) return;
+    const cancelada = subscriptionAccessState(sub) === ACCESS_CANCELLED;
+    navigate(cancelada ? `/dashboard/checkout/${alvo}` : `/dashboard/checkout/${alvo}?renovacao=1`);
+  };
 
   if (verifyingAccess) {
     return (
@@ -410,7 +412,7 @@ function ServiceCredentials() {
           <p>{mensagem}</p>
           <div className="access-denied-actions">
             {accessBlocked && accessSubscription && (
-              <button className="btn btn-primary" onClick={() => setShowRenewal(true)}>
+              <button className="btn btn-primary" onClick={() => irParaPagamento(accessSubscription)}>
                 <CreditCard size={16} /> Renovar assinatura
               </button>
             )}
@@ -427,7 +429,6 @@ function ServiceCredentials() {
             </Link>
           </div>
         </div>
-        {renewalModal}
       </div>
     );
   }
@@ -768,6 +769,45 @@ function ServiceCredentials() {
                   )}
                 />
               )}
+
+              {/* Codigo repassado NA MAO pelo dono: nao existe busca automatica,
+                  e o membro precisa do CONTATO do dono para pedir o codigo. O
+                  contato foi deixado pelo proprio dono na criacao do grupo — e
+                  so aparece para quem ja pagou (a tela so existe depois do
+                  pagamento). */}
+              {group.email_code_delivery === 'manual' && (
+                <div className="owner-contact-card">
+                  <div className="owner-contact-title">
+                    <Phone size={16} />
+                    <span>Peça o código de acesso ao dono do grupo</span>
+                  </div>
+                  <p className="owner-contact-text">
+                    Este grupo repassa o código de confirmação na mão. Fale com o dono do
+                    grupo para ele te passar o código quando a plataforma pedir.
+                  </p>
+                  {group.owner_contact ? (
+                    <a
+                      className="owner-contact-value"
+                      href={contatoDoDono(group.owner_contact)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {group.owner_contact}
+                    </a>
+                  ) : (
+                    <p className="owner-contact-text">
+                      O dono ainda não deixou um contato. Se precisar, avise a nossa equipe.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className="owner-contact-button"
+                    onClick={() => setShowContactModal(true)}
+                  >
+                    Avisar a equipe
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -800,12 +840,13 @@ function ServiceCredentials() {
                 </div>
               </div>
 
-              {/* Aviso de renovação: vence em breve ou já está atrasada. */}
+              {/* Aviso de renovação: vence em breve ou já está atrasada.
+                  Renovar leva para a PÁGINA de checkout (não é popup). */}
               {needsRenewalReminder(renewalSubscription) && (
                 <RenewalReminderCard
                   subscription={renewalSubscription}
                   group={group}
-                  onRenew={() => setShowRenewal(true)}
+                  onRenew={() => irParaPagamento(renewalSubscription)}
                 />
               )}
 
@@ -870,7 +911,7 @@ function ServiceCredentials() {
               <button
                 type="button"
                 className="btn btn-primary ren-confirm-btn"
-                onClick={() => { setShowBlockedModal(false); setShowRenewal(true); }}
+                onClick={() => { setShowBlockedModal(false); irParaPagamento(renewalSubscription); }}
               >
                 <CreditCard size={16} /> Pagar assinatura
               </button>
@@ -885,8 +926,6 @@ function ServiceCredentials() {
           </div>
         </div>
       )}
-
-      {renewalModal}
 
       {showContactModal && (
         <ContactAdminModal

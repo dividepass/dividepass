@@ -41,19 +41,24 @@ if ((await skip.count()) > 0 && (await skip.first().isVisible())) {
   await page.waitForTimeout(400);
 }
 
+// A renovação NÃO é mais um popup: o botão leva para a PÁGINA de checkout
+// no modo renovação (`?renovacao=1`).
 await page.locator('button', { hasText: 'Pagar assinatura' }).first().click();
-await page.waitForTimeout(900);
-await page.locator('.ren-modal button', { hasText: /PIX/i }).first().click();
+await page.waitForTimeout(2500);
+check('abriu a página de checkout em modo renovação', /\/dashboard\/checkout\/.+renovacao=1/.test(page.url()), page.url());
+check('nenhum popup de renovação na tela', (await page.locator('.ren-modal').count()) === 0);
+
+await page.locator('.checkout-page button', { hasText: /PIX/i }).first().click();
 await page.waitForTimeout(700);
 
 // Botao final: "Pagar R$ 12,90"
-const payBtn = page.locator('.ren-modal button', { hasText: /Pagar R\$/i }).first();
+const payBtn = page.locator('.checkout-page button', { hasText: /Pagar R\$/i }).first();
 check('botao final de pagamento existe', (await payBtn.count()) > 0);
 await payBtn.click();
 
 // Espera o QR / codigo copia-e-cola aparecer
 await page.waitForTimeout(12000);
-const modalText = await page.locator('.ren-modal').innerText();
+const modalText = await page.locator('.checkout-page').innerText();
 await page.screenshot({ path: `${OUT}/7-pix-gerado.png`, fullPage: true });
 
 check('PIX gerado: valor R$ 12,90', /12,90/.test(modalText), modalText.replace(/\n/g, ' | ').slice(0, 300));

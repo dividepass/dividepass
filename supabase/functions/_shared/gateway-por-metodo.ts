@@ -35,11 +35,18 @@
  *
  * RENOVAÇÃO
  * ---------
- * Uma renovação NÃO troca de gateway: a assinatura já existe e já tem um
- * `gateway_subscription_id` no gateway antigo. Trocar agora deixaria duas
- * cobranças vivas (a antiga continuando no gateway antigo e a nova no
- * gateway novo). Por isso `resolverGatewayParaPagamento` recebe o gateway
- * atual da assinatura e o preserva.
+ * A renovação é uma cobrança NOVA e o MEIO é o que a pessoa escolheu agora.
+ * Por isso a renovação segue o gateway do MÉTODO: o PIX da assinatura é o
+ * Pix Automático (Woovi) e o cartão vai para o gateway de cartão.
+ *
+ * A troca de gateway na renovação NÃO deixa duas cobranças vivas:
+ *   - quem tinha cartão e renova por PIX passa a ser cobrada pela Woovi (o
+ *     job de recorrência do cartão não roda para assinatura da Woovi);
+ *   - quem tinha a Woovi e renova por cartão tem o mandate cancelado (ver
+ *     `create-payment`).
+ *
+ * A assinatura que JÁ é da Woovi continua na Woovi no PIX: o mandate é dela
+ * e trocar criaria uma segunda recorrência para a mesma pessoa.
  *
  * POR QUE UM MÓDULO PRÓPRIO
  * -------------------------
@@ -48,6 +55,33 @@
  * troque no outro. É o mesmo padrão já usado em `_shared/ambiente.ts` ↔
  * `src/lib/ambiente.js`.
  */
+
+/**
+ * Os gateways que o sistema aceita.
+ *
+ * A lista e o tipo ficam em sincronia por construção (ver as duas checagens
+ * logo abaixo): o tipo é escrito à mão e a lista é conferida contra ele.
+ *
+ * POR QUE O TIPO NÃO VEM DA LISTA
+ * -------------------------------
+ * A lista é um `const` (runtime) e o tipo é derivado dela com
+ * `(typeof GATEWAYS_VALIDOS)[number]`. Isso funciona no arquivo-fonte, mas
+ * QUEBRA no arquivo empacotado para o painel do Supabase: o empacotador
+ * iça os `export type` para o TOPO do arquivo (para que todos os módulos
+ * enxerguem) e mantém as `const` dentro do namespace do módulo. O tipo no
+ * topo passaria a referenciar uma `const` que ainda não existe naquele
+ * escopo — e o `deno check` acusaria "Cannot find name 'GATEWAYS_VALIDOS'".
+ *
+ * Escrevendo o tipo como união de literais, ele é autossuficiente: vale no
+ * fonte e no pacote.
+ */
+export type GatewayId =
+  | "mercadopago"
+  | "stripe"
+  | "asaas"
+  | "iopay"
+  | "pagarme"
+  | "woovi";
 
 export const GATEWAYS_VALIDOS = [
   "mercadopago",
@@ -58,7 +92,15 @@ export const GATEWAYS_VALIDOS = [
   "woovi",
 ] as const;
 
-export type GatewayId = (typeof GATEWAYS_VALIDOS)[number];
+// Checagem 1: todo gateway da LISTA é um GatewayId válido.
+// (Se alguém acrescentar um gateway na lista sem acrescentar no tipo,
+// esta linha para de compilar.)
+const _listaTemSomenteGatewaysValidos: readonly GatewayId[] = GATEWAYS_VALIDOS;
+
+// Checagem 2: todo GatewayId do TIPO está na LISTA.
+// (Se alguém remover um gateway do tipo mas esquecer a lista, idem.)
+type _FaltandoNaLista = Exclude<GatewayId, (typeof GATEWAYS_VALIDOS)[number]>;
+const _tipoTemTodosDaLista: _FaltandoNaLista extends never ? true : false = true;
 
 /** 'pix' ou 'card'. `null` = método desconhecido/ausente. */
 export type MetodoPagamento = "pix" | "card";
@@ -73,13 +115,21 @@ export const CHAVE_SPLIT_ESCOPO = "split_gateway_scope";
 export const ESCOPO_V2 = "v2";
 export const ESCOPO_ALL = "all";
 
-/** Todas as chaves que a divisão usa (para ler de uma vez). */
+/**
+ * Todas as chaves que a divisão usa (para ler de uma vez).
+ *
+ * Inclui as chaves de FAILOVER (`gateway_failover_pix` /
+ * `gateway_failover_card`) porque a leitura é feita com um `IN (...)` só —
+ * uma ida ao banco em vez de duas. Ver `_shared/gateway-failover.ts`.
+ */
 export const CHAVES_GATEWAY = [
   CHAVE_ACTIVE_GATEWAY,
   CHAVE_SPLIT_ATIVO,
   CHAVE_SPLIT_PIX,
   CHAVE_SPLIT_CARD,
   CHAVE_SPLIT_ESCOPO,
+  "gateway_failover_pix",
+  "gateway_failover_card",
 ];
 
 export const GATEWAY_PADRAO = "iopay";
@@ -190,9 +240,31 @@ export function resolverGatewayParaPagamento(args: {
 }): GatewayId {
   const { settings, metodo, renewal, gatewayAtual, split } = args;
 
-  // Renovação: fica no gateway que a assinatura já usa.
   if (renewal) {
     const atual = normalizarGateway(gatewayAtual);
+    const m = normalizarMetodo(metodo);
+
+    // A assinatura que JÁ é da Woovi (Pix Automático) continua na Woovi no
+    // PIX: o mandate é dela — trocar de gateway agora criaria uma segunda
+    // recorrência para a mesma pessoa.
+    if (atual === "woovi") {
+      if (!m || m === "pix") return "woovi";
+      // Renovar por CARTÃO uma assinatura da Woovi: o mandate é cancelado
+      // no create-payment (senão haveria duas cobranças vivas) e a
+      // assinatura passa a ser cobrada pelo cartão.
+      return gatewayDoMetodo(settings, m, { split });
+    }
+
+    // A renovação é uma cobrança NOVA e o MEIO é o que a pessoa escolheu
+    // agora. O PIX da assinatura é o Pix Automático (Woovi) — por isso a
+    // renovação por PIX vai para o gateway do PIX, e não para o gateway
+    // que a assinatura usava (que pode ser o cartão).
+    //
+    // A troca não deixa duas cobranças vivas: quem tinha cartão e renova
+    // por PIX passa a ser cobrada pela Woovi (o job de recorrência do
+    // cartão não roda para assinatura da Woovi) e quem tinha a Woovi e
+    // renova por cartão tem o mandate cancelado.
+    if (m) return gatewayDoMetodo(settings, m, { split });
     if (atual) return atual;
   }
 

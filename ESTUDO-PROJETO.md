@@ -919,7 +919,7 @@ Correção: `database/fix-missing-write-columns.sql` (colunas aditivas, nullable
 - o atalho "já confirmada" (`sub.status === 'active' && member.payment_status === 'active'`) **curto-circuitava a renovação**: o status continuava `active` durante o atraso, então o poll respondia "já pago" e a renovação nunca era aplicada. Agora ele só curto-circuita se **não** estiver vencida;
 - ao confirmar, a **fatura vencida** é baixada: busca as `invoices` pendentes com `due_date <= hoje` do par (usuário, grupo) e quita se a soma bater com o valor pago (ou a de mesmo valor). Fatura de ciclo futuro continua pendente.
 
-`src/components/SubscriptionRenewalModal.jsx` é o modal: PIX (QR + copia-e-cola) ou cartão salvo, polling de `check-iopay-tx` a cada 10s por até 10min e o aviso "a assinatura só é atualizada depois que o pagamento for confirmado".
+`src/components/SubscriptionRenewalModal.jsx` era o modal: PIX (QR + copia-e-cola) ou cartão salvo, polling de `check-iopay-tx` a cada 10s por até 10min e o aviso "a assinatura só é atualizada depois que o pagamento for confirmado". **Hoje a renovação acontece na PÁGINA de checkout** (modo `?renovacao=1`) — o modal continua no repositório, mas nenhuma tela o abre.
 
 ### Consequência colateral: o valor do log
 `logAttempt` roda no **escopo externo** do handler, onde `subscriptionAmount` valia `price_per_slot × meses`; o bloco do PIX declara uma homonima local. Na renovação o registro em `payment_attempts` gravava R$ 77,40 enquanto o gateway cobrava R$ 12,90. A correção foi tornar o valor externo renewal-aware e alimentar o `authoritativeCoupon` (que já existia para exatamente esse problema de escopo).
@@ -1481,8 +1481,9 @@ Todos os caminhos de aprovação gravam a renovação e religam a assinatura:
 
 Novo componente `src/components/RenewalReminderCard.jsx` (+ `.css`).
 Aparece quando faltam **2 dias** para o vencimento **e** durante toda a
-carência (vencida), com botão que abre o `SubscriptionRenewalModal`
-(PIX/cartão). Entrou em `SubscriptionsCarousel`, `Billing`, `SubscriptionManage`
+carência (vencida), com botão que leva para a **página de checkout** no modo
+renovação (`?renovacao=1`) — antes abria o `SubscriptionRenewalModal`.
+Entrou em `SubscriptionsCarousel`, `Billing`, `SubscriptionManage`
 e `ServiceCredentials`.
 
 ### Bug corrigido no caminho
@@ -3962,3 +3963,1007 @@ um escreve só o próprio.
 > deixado um CPF alheio gravável e a função aberta para o `anon` — e nenhuma
 > delas apareceria no QA do navegador.
 
+
+---
+
+## 31. Publicação da revenda Pulse + as armadilhas do empacotador (07/11/2026)
+
+A integração da revenda (seção 30) foi para o ar. Este registro é sobre o
+**como** e — o que importa — sobre os quatro defeitos que só apareceram na
+publicação de verdade.
+
+### 31.1 O que era "não funciona" e por quê
+
+A tela `/admin/pulse` existia, mas a função `pulse-admin` **não estava
+publicada** no Supabase: ela vivia só no disco. O sintoma é o
+`Failed to send a request to the Edge Function` — que **não** é problema de
+segredo. O painel agora traduz essa mensagem para o comando de publicação
+certo, porque a primeira leituranatural é "falta o PULSE_API_KEY".
+
+### 31.2 O fluxo de publicação
+
+As funções são publicadas pela **Management API** (o CLI do Supabase dá 403
+neste projeto), com o empacotador do repo, que embute os módulos de
+`_shared/` num arquivo só:
+
+```bash
+node scripts/empacotar-function-painel.mjs pulse-admin pulse-entrega pulse-webhook pulse-poll
+node scripts/publicar-functions.mjs --only=pulse-admin,pulse-entrega,pulse-webhook,pulse-poll --real
+```
+
+O `--only` é novo: publica **uma rodada** sem tocar no resto do que já está
+no ar. Sem ele, o script redeployava as sete functions da lista — com o
+código local, que nem sempre era o que estava no ar.
+
+O segredo e as configurações saem em `node scripts/configurar-pulse.mjs
+--aplicar`: ele cadastra o `PULSE_API_KEY` (a Management API é a única coisa
+que escreve secret), grava `pulse_webhook_url` e `pulse_markup` em
+`app_settings` e mostra o estado (functions, segredo, saldo).
+
+### 31.3 As configurações no painel (o que o dono pediu)
+
+`/admin/settings` ganhou a seção **"Revenda — Pulse Coding"**: a URL do
+webhook e a margem (%). A margem é lida pelo importador **do banco**, e não
+do código — mudar no painel vale na próxima sincronização, sem republicar
+nada.
+
+A **chave da API não é editável no painel**, de propósito: campo de texto de
+segredo no navegador é brecha. A seção explica onde ela é configurada.
+
+### 31.4 Os quatro defeitos (todos achados rodando de verdade)
+
+**1. O empacotador não entendia `import type { X } from "./y.ts"`.** O
+arquivo gerado saía com `const type { X } = m_y;` — inválido — e o deploy
+morria com *"Expected a semicolon"*. O modificador **inline**
+(`import { a, type B }`) já funcionava; a forma de **statement** não.
+Corrigido no empacotador: import só de tipo não gera vínculo (o tipo já foi
+içado para o topo do arquivo).
+
+**2. Forma abreviada com nome diferente do campo.** No importador, o campo do
+parâmetro é `grupo_id` e a variável local é `group_id`; a abreviada
+(`grupo_id,`) procurava uma variável inexistente. No `dry_run` isso **só**
+atingia as plataformas que já existiam (as novas eram puladas), então o
+catálogo parecia importar bem — e no sync real caía em **todos** os 81
+pacotes. Dry-run não prova o caminho feliz: ele nem executa a parte que cria
+o grupo.
+
+**3. Nome de função diferente do importado.** `limiterDescricao` importado de
+um módulo que exporta `limparDescricao`. TypeScript reclama; o stripper de
+tipos do Deno não — no runtime vira `undefined` e o erro só aparece no uso.
+**Regra que sobrou:** depois de mexer num módulo de `_shared/`, empacotar e
+olhar o pacote gerado antes de publicar.
+
+**4. `CHECK` do banco em `service_plans.billing_cycle`.** A tabela `groups`
+aceita `days`; `service_plans` aceita **só** monthly/quarterly/semiannual/
+annual. Um produto de prazo em dias (extensão de 7 dias) gerava `days` no
+plano e o banco recusava. O plano grava agora o ciclo mais próximo e o
+**prazo exato fica no grupo**, em `custom_cycle_days` — que é o que vale na
+cobrança e na expiração.
+
+### 31.5 Estado depois da publicação
+
+| Item | Resultado |
+|---|---|
+| Functions | 4 publicadas e **ATIVAS** (ping/balance respondem) |
+| Segredo | `PULSE_API_KEY` cadastrado |
+| Catálogo | **81 pacotes** no espelho local |
+| Vitrine | **60 grupos** abertos e visíveis (tag "Via Parceiro") |
+| Fora da vitrine | 19 grupos fechados (`closed` + `private`) |
+| Ignorados | 2 (categoria "Serviços") |
+| Erros de sync | **0** |
+
+Os 19 indisponíveis continuam no painel do admin: quando a Pulse liberar
+algum deles, o sync o traz de volta para a vitrine sozinho.
+
+### 31.6 O que ainda depende do dono
+
+- **Recarregar o saldo na Pulse** (continua em R$ 0,00 — sem isso nenhum
+  pedido real sai).
+- **Rotacionar a chave** que ficou exposta no chat de 06/11.
+- Cadastrar a URL do webhook no painel da Pulse.
+
+---
+
+## 32. No ciclo `days`, o preço é o TOTAL do período — e o front dizia "/mês" (07/11/2026)
+
+### 32.1 O que foi conferido
+
+Faltava a verificação da última ponta da integração: **o checkout aceita
+compra de um grupo em ciclo `days`?** A resposta é sim — `Checkout.jsx` já
+tratava `days` desde o começo (`monthsForCycle` devolve 1 para o cálculo e
+`daysForCycle` devolve o prazo exato, que vai no payload como
+`custom_cycle_days`), e o `confirm-payment` grava o `next_charge_at` no prazo
+correto.
+
+Mas a verificação mostrou um defeito de **texto**: o ciclo em dias quebra a
+semântica do preço.
+
+### 32.2 A regra
+
+Em todos os outros ciclos, `groups.price_per_slot` é o preço **mensal** da
+vaga — o checkout multiplica pelo ciclo. No ciclo `days` não há "mês": o
+pacote "Extensão de 7 dias" custa R$ 119,88 **pelos 7 dias**.
+
+| Grupo | `price_per_slot` | O que é |
+|---|---|---|
+| Extensão de 1 dia | R$ 23,88 | total de 1 dia |
+| Extensão de 7 dias | R$ 119,88 | total de 7 dias |
+
+Mostrar "/mês por perfil" num pacote de 7 dias mostra ao cliente um valor por
+mês que **não existe**. Três telas eram afetadas: o card do catálogo, a página
+do grupo e o resumo do checkout.
+
+### 32.3 A correção
+
+`src/lib/subscriptionCycles.js` ficou com a fonte única da verdade:
+
+| Helper | Para que serve |
+|---|---|
+| `groupPeriodLabel(group)` | `'mês'`, `'trimestre'`, `'7 dias'`, `'2 meses'` |
+| `groupPriceSuffix(group)` | `'/mês por perfil'` ou `'/7 dias'` |
+
+O `Catalog.jsx` e o `GroupDetail.jsx` passaram a usar o helper (o
+`GroupDetail` também ganhou "7 dias" no botão de entrada, que antes mostrava
+"/ dias"). O `Checkout.jsx` trocou "Preço mensal" por **"Período (7 dias)"** no
+ciclo em dias.
+
+O importador passou a gravar o rótulo em `groups.custom_cycle_label`
+(`rotuloCiclo()` em `pulse-catalog.ts`) — é ele que evita o "1 dias" no
+singular. Os dois grupos que já existiam foram corrigidos no banco.
+
+### 32.4 O que foi validado
+
+- `npm run pulse:test` → **68/68** (três asserções novas para o `rotuloCiclo`).
+- `npm run build` → ok; as strings novas estão no bundle do front.
+- eslint → só os erros **pré-existentes** (nenhum no código novo).
+- As 4 functions republicadas (o `pulse-catalog`/`pulse-import` mudaram) e o
+  **bundle publicado** conferido: `npm run pulse:bundle`.
+
+> O `conferir-bundle-pulse.mjs` nasceu dessa última checagem. *"Deployed
+> successfully"* não prova que a versão nova foi publicada — cada function
+> embute uma cópia dos módulos de `_shared/`. O script lê o corpo publicado
+> (vem em bytes: decodificar como UTF-8) e procura as marcas do código novo.
+
+---
+
+## 33. O nome do parceiro não pode aparecer para o cliente (07/11/2026)
+
+### 33.1 O pedido
+
+> "não quero que coloque o nome da pulse coding nas coisas, ninguém precisa
+> saber quem é o nosso parceiro"
+
+O nome do parceiro estava em **seis lugares** que o cliente lê:
+
+1. no nome do grupo (o título do pacote vinha cru: "Extensão Pulse Codig
+   Duração De 7 dias");
+2. na descrição do grupo (o texto do pacote, com "Suporte da PULSE para
+   dúvidas sobre a entrega");
+3. nas regras do grupo ("Esta é uma entrega individual **via Pulse Coding**…");
+4. no nome do plano (`service_plans.name`);
+5. no nome da **plataforma** — "Pulse Coding", "Combos Pulse", "Pulse Clone" —
+   que aparece no cabeçalho do catálogo e na URL;
+6. no nome do produto da tela "Minhas Entregas" e no tooltip do selo.
+
+### 33.2 A solução
+
+`semMarcaParceiro()` em `_shared/pulse-catalog.ts`: tira a marca e limpa o
+separador que ficou pendurado (o "|" do "… | PULSE" vira nada, não uma
+pípipe solta no texto).
+
+| Antes | Depois |
+|---|---|
+| Extensão Pulse Codig Duração De 7 dias | Extensão Duração De 7 dias |
+| ANTIGRAVITY — 1 BILHÃO DE TOKENS \| PULSE | ANTIGRAVITY — 1 BILHÃO DE TOKENS |
+| Suporte da PULSE para dúvidas | Suporte para dúvidas |
+| plataforma "Pulse Coding" | plataforma "Extensões" (slug `extensoes`) |
+
+As plataformas foram renomeadas **no banco** antes do sync — senão o
+importador, que procura a plataforma pelo slug, criaria uma plataforma nova
+("Extensões") e a antiga ("Pulse Coding") ficaria órfã aparecendo na vitrine
+com zero grupos.
+
+O **espelho local** (`pulse_pacotes.title`) continua com o texto cru: quem
+precisa saber qual pacote é qual é o painel do ADMIN, não o cliente.
+
+### 33.3 O chip duplicado
+
+O selo "Via Pareiro" aparecia **duas vezes** no card. A causa: o importador
+usava `groups.plan_type = 'Via Parceiro'` para marcar o grupo, e o `GroupTags`
+desenha o selo da tag **e** o de "Tipo de conta compartilhada" — que, além de
+duplicar, descrevia errado (o acesso do parceiro é PRIVADO, não compartilhado).
+O `plan_type` agora fica vazio.
+
+### 33.4 Aplicado
+
+- Importador e `pulse-entrega` sanitizam o texto na origem.
+- 4 edge functions republicadas (v8/v5/v4/v4) e o bundle conferido.
+- Sync real rodado (conta QA promovida só durante a chamada e rebaixada no
+  `finally`): 79 grupos Via Parceiro, **0** com a marca no nome, na descrição
+  ou nas regras; 0 planos e 0 plataformas com a marca.
+- Front republicado na Vercel.
+- Varredura em PRODUÇÃO (`visual-sem-marca.mjs`): vitrine (Extensões, Clones,
+  Combos, Netflix), página do grupo e "Minhas Entregas" — **0 linhas** com a
+  marca.
+- `npm run pulse:test` → 75/75 (7 asserções novas).
+
+---
+
+## 34. O fornecedor é a DividePass — e o dono dos grupos é o admin oficial (07/11/2026)
+
+### 34.1 A correção do texto
+
+A primeira passada do item "não mostra o nome do parceiro" removeu a marca.
+O dono então corrigiu o rumo:
+
+> "onde está escrito nas descrições dos grupos e onde está falando do parceiro
+> 'Pulse Coding' você vai trocar para a 'DividePass'"
+
+Ou seja: não é apagar a marca, é **trocar por DividePass**. A função passou de
+`semMarcaParceiro()` para `marcarComoDividePass()`:
+
+| Antes (marca removida) | Agora (marca trocada) |
+|---|---|
+| Extensão Duração De 7 dias | Extensão **DividePass** — Duração De 7 dias - 100 créditos |
+| Suporte para dúvidas | Suporte da **DividePass** para dúvidas |
+| ANTIGRAVITY — 1 BILHÃO DE TOKENS | ANTIGRAVITY — 1 BILHÃO DE TOKENS \| **DividePass** |
+
+Quando a marca cai no MEIO do nome, entra um separador ("Extensão DividePass —
+Duração De 7 dias"); quando está no começo ou no fim, o texto original já fica
+bom ("DividePass — 01 Clone", "… | DividePass").
+
+### 34.2 O dono dos grupos estava errado
+
+> "pude notar que criou os grupos e colocou como 'QA Mavis' — coloque o
+> usuário admin oficial do email como admin@dividepass.com"
+
+Achei o motivo: `importarCatalogoPulse` usava `adminUserId: authData.user.id`
+— o id de **quem disparou o sync**. O primeiro sync foi rodado com a conta QA
+de sondagem (a única que o projeto tem para testar), então os 79 grupos
+ficaram com `owner_id` da conta QA.
+
+Isso não é cosmético: **o `owner_id` decide para onde vai o repasse do
+dinheiro**. Os grupos da revenda são do DONO (sem repasse), mas o dono errado
+faz o dinheiro ir para a conta de teste.
+
+Agora `resolverDonoAdmin()` procura o admin oficial
+(`admin@dividepass.com`) e só cai no "admin mais antigo" se ele não existir.
+Os 79 grupos foram corrigidos e o card passou a mostrar "Criado por:
+DividePass".
+
+### 34.3 A armadilha do trigger (79 erros)
+
+Ao rodar o sync com a correção, ele quebrou em **todos** os pacotes:
+
+> Campo de moderacao (verified, is_official, approval_status, owner_id) so
+> pode ser alterado por admin
+
+O trigger `guard_group_privileged_fields` bloqueia a mudança de `owner_id` para
+quem não é admin. E a edge function roda com `service_role`, que **não passa**
+por essa checagem: `is_admin()` olha o `app_metadata` do JWT e o `auth.uid()` —
+nos dois, a service_role devolve vazio.
+
+Por que o primeiro sync funcionou? Porque os grupos ainda não existiam: o
+trigger só barra a **alteração** (UPDATE); na criação (INSERT) ele só
+preenche os campos. O bug ficou escondido até o primeiro UPDATE.
+
+A correção é surgical: o próprio trigger passa a aceitar a `service_role`
+(o backend da plataforma), sem mexer no `is_admin()` e sem abrir nada para o
+usuário — a `service_role` já ignora RLS (BYPASSRLS) em todas as tabelas.
+
+```sql
+-- seção 9.5 de database/EXECUTAR-2026-11-06-pulse-parceiro.sql
+IF public.is_admin() OR auth.role() = 'service_role' THEN
+  RETURN NEW;
+END IF;
+```
+
+### 34.4 Aplicado
+
+- Importador: `marcarComoDividePass()` + `resolverDonoAdmin()`.
+- 4 edge functions republicadas (v10/v7/v6/v6) e o bundle conferido.
+- Trigger atualizado no banco (e registrado na seção 9.5 do SQL do projeto).
+- Sync real rodado (conta QA promovida só na chamada, rebaixada no `finally`):
+  81 pacotes, **0 erros**, 79 grupos com dono `admin@dividepass.com`, 0 com a
+  marca do fornecedor.
+- Front republicado (tooltip do selo).
+- Varredura em produção: **0 linhas** com a marca do fornecedor.
+- `npm run pulse:test` → 76/76.
+
+---
+
+## 35. Capa, assinatura x pagamento único e onde está o dinheiro (07/11/2026)
+
+### 35.1 Três perguntas do dono
+
+> "coloque as fotos de capa que vem na api" · "verificar se o serviço que
+> criamos é uma assinatura ou é algo de um pagamento único" · "a ideia era
+> fazer um split… pegar o valor de fato cobrado de custo, e fazer o pagamento
+> para o parceiro"
+
+### 35.2 A API não tem capa
+
+A API de revenda devolve **23 campos** e **nenhum** é imagem. A lista
+completa: `automatic_stock, availability, available, available_stock,
+base_price, category, credit_amount, credits, delivery, description,
+discount_pct, features, id, in_stock, is_fixed_price,
+manual_delivery_available, max_quantity, min_quantity, orderable_via_api,
+original_price, price, purchase_capacity, rule_applied, stock, title`.
+
+O que existe é o **logo da plataforma** no Supabase Storage
+(`streaming_services.icon_url`): Netflix, Spotify, ChatGPT, Claude, Prime
+Video e YouTube já têm. A capa do grupo importado passou a ser esse logo
+(`groups.photo_url`) — **43 dos 81** pacotes já têm capa. Os que faltam estão
+em plataformas criadas pelo importador (Extensões, Clones, Combos,
+Antigravity…), que ainda não têm logo no bucket.
+
+### 35.3 A API também não tem "recorrente"
+
+O que ela devolve de útil para decidir a cobrança:
+
+| Campo | Serve para |
+|---|---|
+| `price` | o **custo** (o que a gente paga) |
+| `original_price` | a base do markup |
+| `delivery` | `"automatica"` ou `"manual"` |
+| `credits` / `credit_amount` | saldo que vem junto |
+| o período no título | 1 mês, 12 meses, 7 dias… |
+
+`classificarProduto()` junta isso: **período no título + acesso contínuo =
+recorrente**; **saldo (créditos/tokens) ou extensão curta = pagamento único**.
+Resultado: 36 recorrentes, 43 pagamento único, e 20 pacotes com **entrega
+manual** (o pedido fica esperando a entrega à mão).
+
+Gravado em `pulse_mapeamentos.natureza` / `entrega_tipo` (SQL 9.6) e
+exposto na view `pulse_painel` (SQL 9.7) → coluna "Cobrança" no painel
+`/admin/pulse`.
+
+**Na cobrança, os dois casos são iguais**: uma compra, `next_charge_at = NULL`.
+A diferença é o efeito (renova a cada ciclo x compra de novo quando o saldo
+acaba). A recorrência automática continua desligada de propósito — o
+`process-recurring-billing` não chama o `confirm-payment`, então cobraria sem
+comprar nada na Pulse.
+
+### 35.4 Onde está o "split"
+
+**O "split" deste projeto não é partilha de receita**: é a *divisão por
+método de pagamento* (`gateway-por-metodo.ts` — Pix num gateway, cartão
+noutro).
+
+E não é preciso partilha: o repasse ao dono do grupo é feito pelo trigger
+`trg_credit_wallet_on_payment`, que **não repassa** quando o grupo é
+`is_official` ou quando o dono é admin da plataforma. Os grupos "Via Parceiro"
+são os dois casos → **100% do valor fica na plataforma**.
+
+O pagamento ao parceiro é o `create_order` da API da Pulse, que debita o
+**saldo de revenda** com o custo — automático, mas **depende de saldo** (hoje
+R$ 0,00).
+
+### 35.5 O fluxo do dinheiro
+
+```
+Cliente paga R$ 119,88  →  gateway  →  cai na conta da plataforma
+      ↓
+confirm-payment → processarCompraViaParceiro → create_order na Pulse
+      ↓
+a Pulse debita o saldo de revenda com o CUSTO (R$ 99,90)
+      ↓
+pulse_entregas → a conta/link/licença chega ao cliente
+      ↓
+DividePass fica com a margem: R$ 19,98
+```
+
+O custo, o preço de venda e a margem ficam gravados em `pulse_mapeamentos` e
+em cada pedido (`pulse_pedidos.custo` / `preco_pago`) — dá para conferir o
+lucro de cada venda depois.
+
+### 35.6 O que foi feito
+
+- Importador: capa (logo da plataforma) + classificação gravada no mapeamento.
+- SQL: seções 9.6 (colunas) e 9.7 (view do painel).
+- 4 edge functions republicadas (v11/v8/v7/v7) e o bundle conferido.
+- Sync real rodado: 81 pacotes, 0 erros, 43 com capa.
+- Front republicado com a coluna "Cobrança".
+- `npm run pulse:test` → 83/83 (7 asserções novas do classificador).
+
+---
+
+## 36. Estoque do parceiro (tag "Esgotado") + dois bugs do empacotador (07/11/2026)
+
+### 36.1 O pedido
+
+> "não podemos vender algo sem o estoque então produtos que tiver com o
+> Estoque igual ou menor que 0 não pode ser vendido aí você desativa o grupo
+> como se estivesse cheio mas aí utilizamos a TAG 'Esgotado'"
+
+### 36.2 A API traz CINCO campos de estoque, e eles não concordam
+
+| Campo | O que é |
+|---|---|
+| `stock` / `automatic_stock` | estoque automático — **0 em 22 produtos de entrega manual que ainda vendem** |
+| `available_stock` | **o que dá para vender agora** |
+| `in_stock` / `available` | flags — `false` nos 19 produtos zerados de verdade |
+| `purchase_capacity` | limite de compra |
+
+Usar o `stock` apagaria da vitrine 22 produtos à venda. A regra ficou:
+estoque <= 0 = `available_stock <= 0` **ou** `in_stock === false`.
+
+### 36.3 O que foi feito
+
+- Importador: tag **"Esgotado"** no grupo quando o estoque acaba. O grupo
+  **continua na vitrine** (a pessoa vê que o produto existe), igual a um
+  grupo cheio.
+- Front: selo vermelho no card, botão desativado na página do grupo e tela
+  "Esgotado" no checkout (`src/lib/groupEsgotado.js`).
+- **Servidor**: `create-payment` recusa com **403 `grupo_esgotado`**. O front
+  sozinho não protege nada — dá para chamar a API direto. A renovação não é
+  bloqueada (a pessoa pagou antes).
+- **Cron**: o `pulse-poll` (a cada 5 min) agora também atualiza o estoque
+  (`_shared/pulse-estoque.ts`): 1 `list_packages` por rodada, bem dentro do
+  limite de 30 req/min da API. Sem isso a tag ficaria velha e o bloqueio
+  tardio.
+- `npm run pulse:test` → 89/89 (6 asserções novas do estoque).
+
+### 36.4 Prova em produção
+
+`prova-esgotado.mjs` põe a tag à mão, confere as três camadas e remove a tag:
+
+```
+card: CTA="Esgotado"  selo="Esgotado"
+checkout: Esgotado — Este produto está sem estoque no momento…
+create-payment -> HTTP 403 {"code":"grupo_esgotado"}
+```
+
+### 36.5 Dois bugs do empacotador (e uma armadilha)
+
+Publicando o `create-payment` (que é grande e temmany dependências), o
+deploy caiu **duas vezes** — e a segunda derrubou a função no ar
+(`BOOT_ERROR`).
+
+**Bug 1 — união de tipo em várias linhas.** O empacotador dichava o fim de um
+`export type` no primeiro `}`:
+
+```ts
+export type CouponResult =
+  | { ok: true; coupon: ResolvedCoupon }
+  | { ok: false; error: string };   // ← ficava órfão no corpo
+```
+
+O resto do tipo sobrava no corpo e o bundle saía quebrado ("Expected ',', got
+';'"). O `fimDeclaracaoTipo()` agora continua a varredura quando o próximo
+caractere é `|` ou `&`.
+
+**Bug 2 — alias de import.** `import { createCharge as apiCreateCharge }`
+virava `const { createCharge as apiCreateCharge } = m_mod;` — o `as` é
+sintaxe de **import** do TypeScript; no destructuring o apelido é com `:`.
+O bundle saía com "Expected ',', got 'as'".
+
+**A armadilha.** Depois de consertar os dois, o `create-payment` **subiu mas
+não inicializou** (`BOOT_ERROR`): o empacotador do painel manda **arquivo
+único**, e a função tem 15 módulos em `handlers/` + `_shared/`. A versão que
+funcionava em produção tinha sido publicada pela **CLI do Supabase**, que
+mantém a estrutura de diretório (o `entrypoint` no Management API mostra:
+`.../source/supabase/functions/confirm-payment/index.ts` na CLI ×
+`.../source/index.ts` no empacotador).
+
+**Regra que fica:** função grande/com muitas dependências → publicar pela
+CLI (`supabase functions deploy <fn> --project-ref … --use-api`); o
+empacotador do painel é para as functions da revenda, que são pequenas.
+
+> `create-payment` é a função que cria a cobrança: ficar no ar quebrada
+> derruba o checkout inteiro. Depois de uma publicação, **sempre chamar a
+> função e ver o status** — "deployed successfully" não prova que ela
+> inicializou.
+
+---
+
+## 37. Grupo que não dá para comprar fica TRANSPARENTE (08/11/2026)
+
+**Pedido do dono.** "quando tiver esgotado ou o grupo cheio ou desativado você
+deixa o grupo com uma opacidade menor e deixa mais transparente."
+
+**Regra.** O card de um grupo **indisponível** (esgotado, cheio ou fechado)
+perde o destaque: opacidade **0.6** no card da vitrine, **0.65** no cabeçalho
+da página do grupo e **0.6** no card de "Meus Grupos". O card transparente
+**não ganha elevação no hover** — card morto não pode chamar mais atenção que
+card vivo.
+
+**Como ficou o código.** Um lugar só decide o estado: `src/lib/groupEstado.js`
+(troca do antigo `groupEsgotado.js`):
+
+```js
+grupoEsgotado(g)      // tag "Esgotado" em g.tags (o cron do parceiro aplicou)
+grupoDesativado(g)    // g.status === 'closed'
+grupoIndisponivel(g)  // qualquer um dos dois
+```
+
+O `Catalog.jsx` aplica três classes (`group-card-full`,
+`group-card-esgotado`, `group-card-desativado`); o `GroupDetail.jsx` aplica
+`gd-header-indisponivel` no header e desativa o segundo CTA com o texto
+**"Esgotado — sem estoque"** (antes era "Entrar no grupo", que prometia uma
+compra impossível); o `MyGroups.jsx` aplica `my-group-card-inativo`.
+
+**Armadilha de copy.** "Vagas ilimitadas" (antes "Infinity vagas") — o
+cliente precisa entender que o grupo não lotou, não que o produto sumiu.
+
+**Prova (produção, estoque REAL zero).** O script abre por um instante um
+produto que o parceiro **não libera** (estoque zerado de verdade), deixa o
+cron `pulse-poll` aplicar a tag sozinho, mede e **restaura** no `finally`:
+
+```bash
+node .tmp-verify/prova-transparencia-esgotado.mjs   # estados e opacidades
+node .tmp-verify/prova-transparencia-cards.mjs      # screenshot do card
+node .tmp-verify/prova-meus-grupos.mjs              # "Meus Grupos"
+```
+
+Medido em `dividepass.com` (08/11/2026):
+
+```
+Amazon Prime Video 6M   | opacidade=1    | selo=""         | Entrar no grupo
+Amazon Prime Video 1M   | opacidade=0.6  | selo="Esgotado" | Esgotado
+Prime - Grupo 1         | opacidade=0.6  | selo=""         | Grupo lotado
+página do grupo: header opacidade=0.65 | CTA="Esgotado — sem estoque" desativado=true
+```
+
+**Como conferir se está no ar (sem confiar no "deployed successfully").** O
+bundle publicado se lê no `index.html` da Vercel: os assets `*.js` e `*.css`
+servidos em `dividepass.com` **precisam conter** as classes
+`group-card-esgotado`, `group-card-desativado`, `my-group-card-inativo` e
+`gd-header-indisponivel` — e o CSS precisa ter `opacity: 0.6` / `0.65` nelas.
+Scripts: `.tmp-verify/conferir-bundle-front.mjs` e
+`.tmp-verify/conferir-css-opacidade.mjs`.
+
+---
+
+## 10/11/2026 — A COBRANÇA PAROU: o `503 BOOT_ERROR` sem CORS
+
+### O sintoma
+
+O botão "Gerar PIX" respondia, no cliente, apenas:
+
+```
+Pagamento não concluído
+Failed to fetch
+```
+
+Não era o gateway, não era o Woovi, não era o cartão: a **edge function
+inteira não existia**.
+
+### A ASSINATURA do problema (vale para qualquer função do projeto)
+
+`POST /functions/v1/create-payment` → **HTTP 503**, corpo:
+
+```json
+{ "code": "BOOT_ERROR", "message": "Function failed to start (please check logs)" }
+```
+
+Duas pistas que denunciam o BOOT_ERROR:
+
+1. o corpo vem **em JSON** (um erro de gateway seria HTML ou texto);
+2. a resposta **NÃO traz `access-control-allow-origin`** — e é por isso que
+   o browser não mostra a mensagem: o fetch é bloqueado pela CORS e o front
+   só sabe dizer "Failed to fetch".
+
+**Diagnóstico em 30 segundos:** `OPTIONS`/`POST` na URL da função e olhar o
+`sb-error-code: BOOT_ERROR` + a ausência do header de CORS.
+
+### A causa raiz (dupla)
+
+O `scripts/empacotar-function-painel.mjs` monta o arquivo único que vai pro
+painel do Supabase. Ele tinha **DOIS** defeitos de sintaxe:
+
+1. **`return { default, handleWoovi };`** — `default` é palavra reservada em
+   JavaScript; o atalho de propriedade é **SyntaxError** ("Unexpected token
+   'default'"). O pacote não compilava, a função não subia.
+2. **Os seis `import()` dinâmicos eram içados para o topo do arquivo**, o que
+   produzia seis `const mod` no mesmo escopo ("Identifier 'mod' has already
+   been declared"). Pior: o `switch` de gateway passaria a usar **sempre o
+   último** handler — o PIX cairia no handler do Mercado Pago.
+
+Como o arquivo é publicado **inteiro**, um erro de sintaxe em qualquer canto
+derruba a função. Foi assim que o PIX ficou 100% fora do ar.
+
+### A REGRA (vale para toda publicação de edge function)
+
+**NÃO publique sem o TESTE DE BOOT.**
+
+```bash
+node scripts/empacotar-function-painel.mjs create-payment   # empacota
+node scripts/verificar-boot-painel.mjs create-payment        # SOBE?
+node scripts/publicar-functions.mjs --real --only=create-payment
+```
+
+* `scripts/verificar-boot-painel.mjs` importa o pacote empacotado **no Deno**
+  (o mesmo que o runtime faz) e pergunta se ele sobe.
+* `scripts/publicar-functions.mjs` tem a **TRAVA DE BOOT** embutida: se
+  algum pacote não sobe, a publicação é **CANCELADA**.
+* **`deno check` NÃO é o gate.** Erro de TIPO não derruba a função (o runtime
+  apaga os tipos). Erro de SINTAXE derruba. Então o gate é o teste de boot.
+
+### Os outros defeitos corrigidos no mesmo pacote
+
+| Onde | Defeito | Sintoma |
+|---|---|---|
+| `handlers/stripe.ts`, `asaas.ts`, `pagarme.ts` | `group` usado antes da declaração | **TDZ** (ReferenceError em runtime) |
+| `handlers/pagarme.ts` | `initialStatus` usado antes da declaração | TDZ |
+| `handlers/coupon.ts` | `.catch()` em cima do builder do Supabase | o builder é *thenable*, **não tem `.catch`** → TypeError |
+| `_shared/gateway-por-metodo.ts` | `GatewayId` referenciava `GATEWAYS_VALIDOS` (const que fica dentro do namespace no pacote) | "Cannot find name 'GATEWAYS_VALIDOS'" |
+
+O tipo virou **união de literais autossuficiente** + duas checagens de
+sincronia com a lista — assim ele vale no fonte e no pacote empacotado.
+
+### FAILOVER DE GATEWAY (o "não podemos ficar sem cobrar o cliente")
+
+Duas chaves em `app_settings` (arquivo `database/failover-gateway-2026-11-10.sql`):
+
+```
+gateway_failover_pix  = 'iopay'        # PIX:    Woovi  -> IO Pay
+gateway_failover_card = 'mercadopago'  # cartão: IO Pay -> Mercado Pago
+```
+
+**VAZIO = FAILOVER DESLIGADO** (padrão seguro). A lista é lida por método, na
+ordem, sem repetir o principal; nome desconhecido é ignorado.
+
+A regra que não pode ser furada: **só troca de gateway quando NADA foi
+cobrado**. Então:
+
+* 5xx, erro de rede, credencial faltando → **troca** (falha técnica);
+* recusa do cliente (cartão recusado), pedido inválido (CPF, grupo
+  esgotado), grupo não aprovado → **NÃO troca**, a resposta vai direto para
+  o usuário;
+* **renovação NUNCA troca** — a assinatura já tem cobrança viva no gateway
+  dela; trocar deixaria duas cobranças vivas.
+
+Testes da regra: `scripts/test-gateway-failover.ts` (13 casos).
+
+Prova em produção (10/11/2026, conta QA, grupo "Youcine 1"):
+
+```
+caminho normal   -> HTTP 200, gateway=woovi, pix_copy_paste presente
+failover (primário apontado para um gateway quebrado)
+                 -> HTTP 200, gateway=iopay, pix_copy_paste presente
+```
+
+### IMPERSONAÇÃO DO ADMIN (suporte sem a senha do cliente)
+
+Página: `/admin/users/<id>` → botão **"Entrar como este usuário"**.
+
+Edge nova: `supabase/functions/admin-impersonate` (publicada com
+`verify_jwt = false`, porque ela valida o admin no próprio código).
+
+* Guarda dupla de admin: `app_metadata.role` **E** `public.users.role`.
+* Bloqueia impersonar **outro admin** e a própria conta.
+* `auth.admin.generateLink({ type: "magiclink" })` — **não envia e-mail e não
+  altera a senha**; devolve só o `token_hash` (uso único).
+* O navegador troca a própria sessão com `verifyOtp`.
+* A sessão do admin fica em `sessionStorage` (morre com a aba); um marcador
+  **sem token** em `localStorage` detecta "aba fechada" e avisa o admin.
+* Banner global no `AuthProvider` (z-index acima do gate de avatar, z-800) —
+  porque o `UserLayout` não renderiza em `/onboarding`.
+* Auditoria em **duas** tabelas: `activity_logs` (sem policy — a trilha
+  confiável) e `platform_events` (visível no painel, mas falsificável).
+
+**Prova (10/11/2026, produção):** a senha do alvo e o `email_confirmed_at`
+ficaram **intactos**; `verifyOtp` trocou a sessão para a conta do cliente; o
+banner apareceu; "Voltar ao painel admin" devolveu a sessão do admin.
+
+---
+
+## 10/11/2026 — "O CLIENTE PAGOU E NÃO ENTROU": o webhook da Woovi nunca chegou
+
+### O sintoma (relato do Gabriel)
+
+> "O usuário fez o pagamento e foi bem sucesso, Aprovado, mas ele não entrou.
+> Em `/admin/users/[id]?tab=payments` o pagamento não aparece. Também não
+> apareceu no log que o cliente fez o pagamento."
+
+Cliente: Cíntia Daniela Morata Justino. Grupo "Youtube - 01" (R$ 14,90, PIX
+recorrente pela Woovi). O painel mostrava a tentativa de pagamento com o
+gateway **Woovi** e a assinatura **"Pendente"**.
+
+### A ASSINATURA do problema
+
+| Onde | O que apareceu |
+|---|---|
+| `payment_attempts` | a tentativa existe, `gateway = woovi`, `status = created` |
+| `payments` | **NENHUMA linha** (é dessa tabela que a aba Pagamentos e a lista do admin leem) |
+| `platform_events` | **NENHUM evento** de pagamento |
+| `user_subscriptions` | `status = pending` — o acesso ao grupo nunca foi liberado |
+| Na Woovi | tudo certo: parcela 1 `COMPLETED`, tentativa `PAID`, `R$ 14,90` em 10/11 11:58 |
+
+Ou seja: **o dinheiro entrou e o sistema não soube**. Não era falha de
+cobrança — era falta de CONFIRMAÇÃO.
+
+### A causa raiz (duas, uma atrás da outra)
+
+**1. O webhook não estava cadastrado na conta de PRODUÇÃO da Woovi.**
+
+A conta de produção tinha **1 dos 9 eventos** (`PIX_AUTOMATIC_APPROVED`,
+criado à mão no painel). Os 8 que faltam — entre eles o
+`PIX_AUTOMATIC_COBR_COMPLETED`, que é o que **confirma o pagamento do
+ciclo** — só existiam na conta de **SANDBOX**.
+
+Por quê? `scripts/configurar-webhook-woovi.mjs` lia o AppID de
+`app_settings.woovi_app_id` — que, no banco, é **o mesmo do sandbox**. O
+script falava com a conta errada, achava que já tinha cadastrado tudo e
+saía. Pior: ele também abortava se encontrasse **qualquer** webhook nosso
+("já existe, nada a fazer"), então mesmo com o AppID certo ele não
+completaria a lista.
+
+**2. `woovi-webhook` e `check-woovi-tx` estavam FORA da esteira de publicação.**
+
+As duas funções não estavam na lista `FUNCOES` do `publicar-functions.mjs`
+nem na do `empacotar-function-painel.mjs`. Elas estavam no ar (v6) desde uma
+publicação manual e **nunca mais recebiam as correções** — foi assim que o
+`PIX_AUTOMATIC_COBR_APPROVED` (que a Woovi dispara) ficou registrado no
+painel e **sem tratamento no código**.
+
+### O que foi feito
+
+* `scripts/configurar-webhook-woovi.mjs`:
+  - o AppID passa a ser escolhido pelo **ambiente** (mesma regra do app:
+    `_shared/woovi.ts` → `appIdDoAmbiente`), importando a função em vez de
+    reescrever a regra;
+  - a criação ficou **idempotente por evento** (`--criar` cadastra só o que
+    falta, sem duplicar);
+  - os 8 eventos faltantes foram cadastrados na **produção** (são 9 agora).
+* `woovi-webhook` e `check-woovi-tx` entraram nas listas de empacotamento e
+  de publicação (com a trava de boot).
+* `PIX_AUTOMATIC_COBR_APPROVED` passou a ser tratado (a confirmação é
+  idempotente: o `COMPLETED` que chega depois não cobra de novo).
+* `check-woovi-tx` ganhou **trava de dono**: só o dono da transação (ou um
+  admin) consegue confirmá-la. Antes, qualquer usuário logado podia
+  disparar a confirmação de outra pessoa (o id é público).
+* A confirmação agora marca a tentativa como **`approved`** — sem isso o
+  painel mostrava "Pendente" para um pagamento já pago.
+
+### O BUG EXTRA que a prova revelou: o pagamento duplicado
+
+Ao reenviar o evento da Woovi para testar, o mesmo pagamento foi gravado
+**DUAS vezes** em `payments`.
+
+A trava de idempotência do `confirmPayment` é por `transaction_code`, e o id
+usado **dependia do status da assinatura**:
+
+* 1ª confirmação (assinatura `pending`) → id do **MANDATE**;
+* 2ª confirmação da MESMA parcela (assinatura já `active`) → id da
+  **PARCELA**.
+
+Ids diferentes ⇒ a trava não reconheceu ⇒ linha duplicada (e o painel
+mostrava o cliente pagando duas vezes).
+
+**A regra estável é o número da parcela:** parcela 1 usa o id do mandate (é
+com ele que a tentativa e o cupom foram gravados); parcela 2+ usa o id da
+própria parcela. Corrigido em `_shared/woovi-confirm.ts`.
+
+### A reconciliação da Cíntia (o dinheiro já tinha entrado)
+
+Foi pelo caminho oficial — o `check-woovi-tx` (o mesmo que o navegador usa),
+que consulta a Woovi e confirma o que está lá pago. Resultado:
+
+```
+payments:        woovi/pix  R$ 14,90  pago     (linha nova, era 0)
+user_subscriptions: status = active, woovi_recurrence_status = APPROVED
+                     next_charge_at = 10/12/2026
+group_members:   "Youtube - 01" — ativa, desde 10/11/2026
+platform_events: "Pagamento de assinatura" + "Membro ingressou no grupo"
+```
+
+Prova no navegador (`dividepass.com`): a aba **Pagamentos** mostra
+`10/11/2026 | R$ 14,90 | pix | Pago`, a aba **Logs de Eventos** mostra o
+pagamento e a entrada, e a aba **Assinaturas** mostra **Ativa** (não mais
+"Pendente").
+
+**Varredura de todos os clientes Woovi:** nenhum outro caso preso (as outras
+2 assinaturas Woovi estavam confirmadas pelo polling do navegador).
+
+### O botão "Verificar no Gateway" (que falava de IO Pay)
+
+No painel de Eventos, o botão dizia *"Consulta o status real no IOPay"* e
+chamava o `force-confirm-payment` — **função que só sabe falar com o IO
+Pay**. Numa tentativa da Woovi ele consultava o IO Pay com o id de uma
+transação da Woovi e não achava nada.
+
+Agora ele roteia pelo gateway (`check-woovi-tx` para a Woovi,
+`force-confirm-payment` para o IO Pay) e o texto nomeia o gateway certo. O
+aviso de sucesso ficou **fora** do bloco do botão: como o status passa a
+"Aprovado" depois da confirmação, o bloco some — e o admin nunca veria a
+confirmação.
+
+### COMO NÃO REPETIR
+
+```bash
+node scripts/configurar-webhook-woovi.mjs            # lista e diz o que falta
+node scripts/configurar-webhook-woovi.mjs --criar    # cadastra o que falta
+```
+
+Rodar de novo é seguro (idempotente por evento). O **gateway de produção
+precisa ter os 9 eventos** — é o que garante que o próximo pagamento do
+ciclo entre no sistema sem depender do navegador do cliente estar aberto.
+
+
+
+
+---
+
+## Rodada 3 — UI/UX do usuário (Visão Geral e Perfil)
+
+### O que o dono pediu (e o que foi feito)
+
+1. **Ocultar o card "Olá, [nome]"** quando o usuário já tem assinatura.
+   Regra: `hasAnySubscription` (`src/lib/pendingPayments.js`) considera
+   assinatura **ativa, pendente ou vencida** — **cancelada NÃO conta**
+   (quem cancelou ainda pode ser recebido de volta).
+2. **Card de cobrança pendente no TOPO**, com botão de pagar, aparecendo
+   **só quando o vencimento é hoje ou já passou** (regra por **DIA
+   inteiro**, não por instante: `isPaymentDue`).
+3. **Mobile de "Explorar todos os serviços"**: os tiles estavam gigantes
+   (119×137). Foram para **4 colunas de 88×104**, nome 0.56rem, logo 34px.
+4. **Card "Sua opinião vale desconto"**: caiu de 208px para **140px**; o
+   parágrafo longo virou a **frase curta** no celular
+   (`.testimonial-prompt-text-short`), e o texto completo continua no desktop.
+5. **Perfil (`/dashboard/profile`)**: responsividade arrumada.
+
+### A regra de pendência (por que o card some e volta)
+
+`src/lib/pendingPayments.js` — funções puras, testadas em
+`scripts/test-pending-payments.mjs` (11 testes):
+
+- `pendingPaymentDate(sub)` — usa `next_charge_at` e cai para
+  `renewal_due_at`; assinatura `pending` usa `started_at` (a primeira
+  cobrança era devida já na criação).
+- `isPaymentDue(data)` — **compara o dia inteiro**: vence hoje ou já passou.
+- `daysUntilPaymentDue(data)` — "vence hoje" / "N dias em atraso".
+- `pendingPayments(subs)` / `hasAnySubscription(subs)`.
+
+O botão "Pagar agora" **não abre popup**: leva para a **página de checkout**
+no modo renovação (`/dashboard/checkout/<grupo>?renovacao=1`). O polling da
+página **roteia por gateway** (`check-woovi-tx` na Woovi, `check-iopay-tx` no
+resto) — sem isso a renovação Woovi nunca confirmaria.
+
+### A renovação virou PÁGINA (não mais popup)
+
+O pedido foi: "Pagar agora" / "Renovar agora" não podem mais abrir modal —
+tem que abrir a página do checkout. O que mudou:
+
+- `src/pages/user/Checkout.jsx` ganhou o **modo renovação** (`?renovacao=1`):
+  lê a assinatura que já existe (`user_subscriptions` do usuário no grupo) e
+  adapta a tela — **sem taxa de adesão** (já foi paga na entrada), **ciclo
+  travado** no da assinatura e o **total = preço do ciclo atual** com o
+  desconto recorrente gravado (o mesmo que o backend cobra).
+- O pedido de cobrança vai com `renewal: true` — é o que impede o backend de
+  rebaixar a assinatura para `pending` e de criar uma segunda assinatura.
+- Cancelada **não se renova**: a tela diz que não achou a assinatura e
+  manda para o checkout normal (comprar de novo).
+- Todos os pontos que abriam o `SubscriptionRenewalModal` foram para a
+  página: card de pendência do `/dashboard`, carrossel "Minhas Assinaturas",
+  `/dashboard/billing`, `/dashboard/credentials/:servico` e
+  `/dashboard/subscription/:id`.
+- `scripts/qa-renovacao-checkout.mjs` confere o fluxo no navegador de
+  verdade (cria uma assinatura fictícia e apaga no fim; a cobrança é
+  interceptada, então nada é cobrado de verdade).
+
+### A renovação por PIX é pela Woovi — e por isso pede o CPF
+
+A renovação **segue o gateway do método escolhido**: o PIX da assinatura é o
+**Pix Automático (Woovi)** e o cartão vai para o gateway de cartão.
+
+- A regra mora em `resolverGatewayParaPagamento`
+  (`supabase/functions/_shared/gateway-por-metodo.ts` ↔
+  `src/lib/gatewayPorMetodo.js`, com teste de paridade em
+  `scripts/test-gateway-por-metodo.ts`).
+- Como a renovação por PIX vai para a Woovi, o **CPF** é pedido: o Pix
+  Automático só existe para um pagador que a Woovi resolve pelo CPF. O
+  campo aparece **antes** de pagar quando o perfil não tem CPF, e o botão
+  fica barrado sem ele.
+- A assinatura que **já é** da Woovi continua na Woovi no PIX: o mandate é
+  dela, e trocar criaria uma segunda recorrência.
+- Quem tinha cartão e renova por PIX passa a ser cobrada pela Woovi (o job
+  de recorrência do cartão não roda para assinatura `gateway = 'woovi'`).
+- Quem tinha a Woovi e renova por cartão tem o **mandate cancelado** — senão
+  a Woovi cobraria o ciclo seguinte por conta própria, além do cartão.
+
+### Pagamento forçado: a assinatura é ATUALIZADA, não duplicada
+
+Quando a recorrência falha (a pessoa não tinha dinheiro), ela entra no app e
+paga agora. Isso **não** cria uma assinatura nova:
+
+- a cobrança é da **parcela em aberto** da assinatura que já existe
+  (`POST /api/v1/installments/{id}/cobr`);
+- o `woovi_subscription_id` continua o mesmo e a linha da assinatura é
+  **atualizada** (sem virar `pending` e sem duplicar a linha);
+- o `transaction_id` que o front acompanha é o **mandate** — é ele que o
+  polling e o webhook usam, e é o que impede o pagamento de entrar duas
+  vezes no painel.
+
+Contraste do card de pendência
+
+`.dash-pending-item` usava `var(--bg-card, rgba(255,255,255,.6))` — mas
+`--bg-card` **não existe** no tema, então caía no fallback **branco** e o
+texto (claro, `--text`) sumia dentro dele. Agora o fundo é escuro no tema
+escuro e branco no claro, com contraste medido (AA) em ambos.
+
+### Taxa de adesão: só na PRIMEIRA entrada no grupo
+
+A taxa de adesão é **da entrada no grupo** — não é da mensalidade e não
+volta. Três condições precisam valer (`src/pages/user/Checkout.jsx`):
+
+1. **o grupo tem taxa** — `has_entrance_fee` + `entrance_fee > 0`. Não são
+   todos que têm;
+2. **a pessoa ainda não entrou no grupo** — quem já tem vínculo
+   (`group_members`) NÃO paga a taxa de novo, nem quando a assinatura está
+   `overdue`/`expired` (isso não desfaz a entrada);
+3. **não é renovação** — na renovação (`?renovacao=1`) ela já entrou.
+
+Com isso:
+
+- **1ª compra** num grupo com taxa → a etapa "Passo 1 de 2 — Taxa de
+  Adesão" explica que é um valor único e o resumo cobra
+  `Taxa de Adesão (pagamento único) + 1ª mensalidade` numa única cobrança
+  (ex.: R$ 9,90 + R$ 9,90 = R$ 19,80);
+- **renovação** → a taxa não aparece no total **e nem é mencionada na tela**.
+  O banner só diz o que importa ("Renovação de X — seu ciclo venceu em
+  DD/MM/AAAA") e o resumo mostra o ciclo. Mencionar a taxa ("já paga, não é
+  cobrada") só confunde quem está renovando: a pessoa já pagou na entrada e
+  quer ver o valor do ciclo que está pagando.
+- **grupo sem taxa** → nenhuma menção a taxa em lugar nenhum.
+
+A tela **espera** a consulta do vínculo antes de decidir (`membershipCarregada`):
+sem isso, quem já estava no grupo veria (e poderia pagar) a etapa da adesão
+por um instante.
+
+`scripts/qa-taxa-adesao.mjs` confere os três casos no navegador (a cobrança
+é interceptada e os dados fictícios são apagados no fim).
+
+### O Perfil: o que estava quebrado (medido a 390×844)
+
+O Vite junta **todo** o CSS num bundle só, então regras de uma página
+vazam para as outras. Duas regras globais werevenceram a do perfil:
+
+- `.page-header` (vazado de `Support.css`) com `flex-direction: column` →
+  seta em cima e título embaixo no celular, e título jogado para a direita
+  no desktop.
+- `.btn-outline` (vazado de `Home.css`) com `color: var(--home-text)`
+  (branco) → **"Cancelar", "Trocar CPF", "Remover" e "Abrir Chamado ao
+  Suporte" ficavam brancos sobre cartão branco** (invisíveis).
+
+A correção foi **escopar o CSS do perfil em `.profile-page`** (só
+`UserProfile.css` mudou; o `.jsx` não precisou de alteração), forçar o
+cabeçalho em linha, devolver a cor ao botão outline, zerar o
+`margin-bottom` do `.form-group` (que somava com o `gap` e inflava o
+formulário) e reduzir fontes com `clamp()` + cortes em 900px e 640px.
+
+Resultado: altura da página 2011 → **1683px**, alvos de toque < 44px
+**9 → 0**, sem scroll horizontal em 390/768/1440, tipografia do desktop
+inalterada.
+
+> **Pendência conhecida (raiz, não do perfil):** o vazamento de
+> `.btn-outline` vem do `Home.css` e **contamina outras telas** do app. Vale
+> corrigir na raiz. O `index.css` também impõe `font-size` com
+> `!important` em `h1/h2/h3`, o que obrigou `!important` escopado no perfil.
+
+### Como foi provado
+
+`node .tmp-verify/validar-rodada3.mjs` (com `BASE_URL` para produção) —
+Playwright com a sessão da conta QA injetada no `localStorage`. Mede o DOM
+e tira screenshots (390×844 e 1440×900) do dashboard e do perfil.
+
+**Armadilhas do teste (levam tempo até achar):**
+
+- O app tem **dois gates por cima da tela**: instalação do PWA
+  (`PwaInstallGate`) e permissão de notificação push. Para ver a tela
+  real: `localStorage.pwa_gate_dismissed = '1'` e clicar em
+  "Continuar sem notificações".
+- A rolagem do dashboard **não é do `window`**: no desktop quem rola é o
+  `<main class="main-content ...">`. `window.scrollTo(0,0)` não faz nada —
+  é preciso setar `scrollTop = 0` no elemento que tem
+  `scrollHeight > clientHeight`.
+- A pendência usada no teste é **fictícia** (criada e removida pelo próprio
+  script); nunca deixar uma assinatura falsa no banco.
+
+### Publicação
+
+Front publicado na Vercel (`dividepass.com`). Medições em produção:
+hero **ausente**, card de pendência **primeiro da tela** (top 80px no
+celular, 40px no desktop), botão "Pagar agora" presente, grid de 4×88px,
+depoimento 140px com a frase curta visível, **0 erros de console**.

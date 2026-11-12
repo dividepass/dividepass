@@ -34,7 +34,6 @@ import {
   subscriptionRenewalDate,
 } from '../../lib/subscriptionAccess';
 import RenewalReminderCard from '../../components/RenewalReminderCard';
-import SubscriptionRenewalModal from '../../components/SubscriptionRenewalModal';
 import './SubscriptionManage.css';
 
 function SubscriptionManage() {
@@ -47,9 +46,7 @@ function SubscriptionManage() {
   const [cancelledIds, setCancelledIds] = useState(new Set());
   const [billingHistory, setBillingHistory] = useState([]);
   const [cancelledSub, setCancelledSub] = useState(null);
-  // Renovação em aberto (vence em breve ou atrasada): o mesmo modal de
-  // pagamento usado nas outras telas.
-  const [showRenewal, setShowRenewal] = useState(false);
+  // (A renovação foi para a PÁGINA de checkout — ver o aviso de renovação.)
 
   const activeServices = getActiveServices();
   const baseSubscription = activeServices.find(s => s.id === subscriptionId) || cancelledSub || null;
@@ -221,12 +218,16 @@ function SubscriptionManage() {
         </div>
 
         <div className="sub-manage-body">
-          {/* Aviso de renovação: vence em breve ou já está atrasada. */}
+          {/* Aviso de renovação: vence em breve ou já está atrasada.
+              Renovar leva para a PÁGINA de checkout (não é popup). */}
           {needsRenewalReminder(subscription) && (
             <RenewalReminderCard
               subscription={subscription}
               group={group}
-              onRenew={() => setShowRenewal(true)}
+              onRenew={() => {
+                const alvo = group?.slug || group?.id || subscription?.group_id;
+                if (alvo) navigate(`/dashboard/checkout/${alvo}?renovacao=1`);
+              }}
             />
           )}
 
@@ -425,22 +426,6 @@ function SubscriptionManage() {
           )}
         </div>
       </div>
-
-      {/* Renovação: mesmo modal de pagamento das outras telas. */}
-      {needsRenewalReminder(subscription) && (
-        <SubscriptionRenewalModal
-          key={showRenewal ? 'renewal-modal' : 'renewal-modal-closed'}
-          open={showRenewal}
-          subscription={subscription}
-          group={group}
-          amount={Number(subscription.amount || 0)}
-          onClose={() => setShowRenewal(false)}
-          onPaid={() => {
-            setShowRenewal(false);
-            refresh?.();
-          }}
-        />
-      )}
     </div>
   );
 }

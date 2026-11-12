@@ -163,14 +163,32 @@ test("gateway padrão ausente ou inválido → iopay (nunca mercadopago quebrado
 
 // ── RENOVAÇÃO: NÃO TROCA DE GATEWAY ────────────────────────────────────────
 
-test("renovação fica no gateway que a assinatura já usa", () => {
+// ── RENOVAÇÃO ───────────────────────────────────────────────────────────────
+//
+// A renovação é uma cobrança NOVA e segue o gateway do MÉTODO escolhido
+// agora: o PIX da assinatura é o Pix Automático (Woovi). A assinatura que já
+// é da Woovi continua na Woovi no PIX (o mandate é dela).
+
+test("renovação por PIX vai para o gateway do PIX (a divisão manda)", () => {
   const gateway = resolverGatewayParaPagamento({
-    settings: DIVIDIDO,
+    settings: DIVIDIDO_TUDO,
     metodo: "pix",
     renewal: true,
     gatewayAtual: "iopay",
+    split: splitAplicavel(DIVIDIDO_TUDO, false),
   });
-  assertEquals(gateway, "iopay", "renovação de assinatura na IO Pay");
+  assertEquals(gateway, "woovi", "renovação por PIX");
+});
+
+test("renovação por cartão vai para o gateway do cartão", () => {
+  const gateway = resolverGatewayParaPagamento({
+    settings: DIVIDIDO_TUDO,
+    metodo: "card",
+    renewal: true,
+    gatewayAtual: "woovi",
+    split: splitAplicavel(DIVIDIDO_TUDO, false),
+  });
+  assertEquals(gateway, "iopay", "renovação por cartão");
 });
 
 test("renovação de assinatura na Woovi fica na Woovi (mesmo pagando por PIX)", () => {
@@ -181,6 +199,29 @@ test("renovação de assinatura na Woovi fica na Woovi (mesmo pagando por PIX)",
     gatewayAtual: "woovi",
   });
   assertEquals(gateway, "woovi", "renovação de assinatura na Woovi");
+});
+
+test("renovação na Woovi fica na Woovi mesmo com a divisão desligada", () => {
+  const cfg = { ...DIVIDIDO, [CHAVE_SPLIT_ATIVO]: "false" };
+  const gateway = resolverGatewayParaPagamento({
+    settings: cfg,
+    metodo: "pix",
+    renewal: true,
+    gatewayAtual: "woovi",
+    split: splitAplicavel(cfg, false),
+  });
+  assertEquals(gateway, "woovi", "o mandate é dela");
+});
+
+test("renovação sem método (desconhecido) fica no gateway da assinatura", () => {
+  const gateway = resolverGatewayParaPagamento({
+    settings: DIVIDIDO_TUDO,
+    metodo: null,
+    renewal: true,
+    gatewayAtual: "iopay",
+    split: splitAplicavel(DIVIDIDO_TUDO, false),
+  });
+  assertEquals(gateway, "iopay", "sem método, vale o gateway da assinatura");
 });
 
 test("renovação sem gateway da assinatura → cai na regra normal", () => {
@@ -321,6 +362,31 @@ test("o espelho JS (frontend) dá a mesma resposta que o backend", () => {
       splitAplicavel(cfg, false),
       "splitAplicavel divergiu",
     );
+    // A RENOVAÇÃO também precisa bater: é a regra que decide para onde vai a
+    // cobrança da renovação (o PIX da assinatura é o da Woovi).
+    for (const renewal of [true, false]) {
+      for (const metodo of ["pix", "card", null]) {
+        for (const gatewayAtual of ["iopay", "woovi", null]) {
+          assertEquals(
+            front.resolverGatewayParaPagamento({
+              settings: cfg,
+              metodo,
+              renewal,
+              gatewayAtual,
+              split: splitAplicavel(cfg, true),
+            }),
+            resolverGatewayParaPagamento({
+              settings: cfg,
+              metodo,
+              renewal,
+              gatewayAtual,
+              split: splitAplicavel(cfg, true),
+            }),
+            `resolver divergiu (renewal=${renewal} metodo=${metodo} atual=${gatewayAtual})`,
+          );
+        }
+      }
+    }
   }
 });
 

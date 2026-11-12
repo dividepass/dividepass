@@ -59,6 +59,9 @@ import {
   updateCustomer as apiUpdateCustomer,
   findCustomerByTaxID as apiFindCustomerByTaxID,
   createPixAutomatic as apiCreatePixAutomatic,
+  createInstallmentCharge as apiCreateInstallmentCharge,
+  listInstallments as apiListInstallments,
+  parcelaEmAberto,
 } from "../../_shared/woovi-api.ts";
 import {
   getWooviConfig,
@@ -193,29 +196,40 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   }
 
   // ── Renovação ────────────────────────────────────────────────────────────
-  // Com Pix Automático a renovação NÃO passa por aqui: a Woovi cobra sozinha
-  // no dia do vencimento e avisa via webhook. Se o usuário continuou no fluxo
-  // antigo de "renovar agora", dizemos isso em vez de criar uma segunda
-  // cobrança.
+  //
+  // A renovação é a MESMA assinatura: a linha do banco continua a mesma e o
+  // que muda é a cobrança do ciclo.
+  //
+  // Se a assinatura JÁ tem um mandate (Pix Automático ativo), ele é
+  // REUSADO — nunca criamos outro. Criar um segundo deixaria a pessoa com
+  // DUAS recorrências de PIX Automático (e duas cobranças no ciclo
+  // seguinte). O pagamento forçado é a cobrança da PARCELA que já existe
+  // (`POST /api/v1/installments/{id}/cobr`): a pessoa paga o ciclo vencido
+  // agora e a assinatura é ATUALIZADA quando o pagamento confirma.
+  //
+  // Sem mandate (assinatura que vinha do cartão, por exemplo), a renovação
+  // por PIX cria o Pix Automático — é a assinatura passando a ser cobrada
+  // pelo Pix Automático.
   const isRenewal = body.renewal === true;
+  let assinaturaExistente: any = null;
+  let reutilizaMandate = false;
+
   if (isRenewal) {
-    const { data: existingSub } = await supabaseAdmin
+    const { data: linhas } = await supabaseAdmin
       .from("user_subscriptions")
-      .select("id, status, gateway, woovi_subscription_id, next_charge_at")
+      .select("id, status, gateway, woovi_subscription_id, woovi_recurrency_id, amount, discount_amount, next_charge_at")
       .eq("group_id", group_id)
       .eq("user_id", user_id)
-      .maybeSingle();
+      .order("created_at", { ascending: false })
+      .limit(1);
 
-    if (existingSub?.gateway === "woovi" && existingSub.woovi_subscription_id) {
-      return json(
-        {
-          error:
-            "Esta assinatura usa Pix Automático: a renovação é cobrada automaticamente na data de vencimento.",
-          code: "recurrence_is_automatic",
-          next_charge_at: existingSub.next_charge_at,
-        },
-        corsHeaders,
-        409,
+    assinaturaExistente = linhas?.[0] || null;
+    reutilizaMandate = !!assinaturaExistente?.woovi_subscription_id;
+
+    if (reutilizaMandate) {
+      console.log(
+        `[woovi] renovação REUSANDO o mandate ${assinaturaExistente.woovi_subscription_id} ` +
+          `(assinatura ${assinaturaExistente.id}) — nenhuma recorrência nova`,
       );
     }
   }
@@ -483,7 +497,21 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   // Valor do CICLO — é o que vai para o mandate (o que renova sozinho).
   const subCouponRes = await resolveCouponFor(subscriptionAmount, "subscription");
   if (!subCouponRes.ok) return json({ error: subCouponRes.error }, corsHeaders, 400);
-  const cycleAmount = subCouponRes.amount;
+  let cycleAmount = subCouponRes.amount;
+
+  // Na RENOVAÇÃO, sem cupom novo, o desconto recorrente que já estava
+  // gravado na assinatura CONTINUA valendo — é o mesmo que o IO Pay
+  // preserva. Sem isto a pessoa pagaria o preço cheio na renovação.
+  //
+  // (Com cupom novo, o cupom novo substitui o antigo — o `resolveCouponFor`
+  // acima já devolveu o valor certo.)
+  if (isRenewal && !coupon_id) {
+    const descontoGravado = Math.min(
+      Number(assinaturaExistente?.discount_amount || 0),
+      subscriptionAmount,
+    );
+    cycleAmount = subscriptionAmount - descontoGravado;
+  }
 
   const frequency = wooviFrequencyForCycle(cycle);
   const nextCharge = nextChargeDate(cycle, body.custom_cycle_months, body.custom_cycle_days);
@@ -518,7 +546,15 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   let mandate: WooviMandate | null = null;
   let mandateError: string | null = null;
 
-  if (canUsePixAutomatic) {
+  if (reutilizaMandate) {
+    // A recorrência JÁ EXISTE: o mandate NÃO é criado de novo (senão a
+    // pessoa ficaria com várias assinaturas de Pix Automático). O pagamento
+    // forçado é a cobrança da PARCELA que está em aberto — a mesma
+    // assinatura, a mesma linha no banco.
+    console.log(
+      `[woovi] renovação com mandate existente — a cobrança será da parcela em aberto (sem novo mandate)`,
+    );
+  } else if (canUsePixAutomatic) {
     // Jornada 3 no fluxo `subscription` (o QR paga o 1º ciclo) e Jornada 2 no
     // `combined` (a cobrança JÁ foi feita pelo charge; o mandate só autoriza
     // a renovação do próximo ciclo).
@@ -587,7 +623,54 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   // estava pagando por uma assinatura recorrente.
   let recurrenceFallback = false;
   let recurrenceFallbackReason: string | null = null;
-  if (!mandate && !isCombined) {
+
+  // ── Pagamento FORÇADO de uma recorrência que já existe ───────────────────
+  //
+  // A assinatura já tem um mandate (a recorrência está ativa) e a pessoa
+  // quer pagar o ciclo vencido agora — porque a cobrança automática falhou
+  // (não tinha dinheiro). A cobrança é da PARCELA que já existe:
+  //
+  //   GET  /api/v1/subscriptions/{id}/installments → a parcela em aberto
+  //   POST /api/v1/installments/{id}/cobr        → a cobrança dessa parcela
+  //
+  // Nenhuma assinatura nova é criada e a recorrência continua sendo a mesma
+  // — o que evita as "várias assinaturas de recorrência PIX" que a pessoa
+  // acabaria acumulando a cada renovação.
+  let pagamentoForcado = false;
+  if (reutilizaMandate && !isCombined) {
+    try {
+      const parcelas = await apiListInstallments(cfg, assinaturaExistente.woovi_subscription_id);
+      const parcela = parcelaEmAberto(parcelas);
+      const installmentId = parcela?.globalID || parcela?.identifier || parcela?.id;
+
+      if (!installmentId) {
+        throw new Error("A assinatura não tem parcela em aberto para cobrar.");
+      }
+
+      chargeArtifact = await apiCreateInstallmentCharge(cfg, {
+        installmentId,
+        valueCents: toCents(cycleAmount),
+      });
+      pagamentoForcado = true;
+      console.log(
+        `[woovi] pagamento forçado da parcela ${installmentId} (mandate ${assinaturaExistente.woovi_subscription_id})`,
+      );
+    } catch (e: any) {
+      console.error("[woovi] pagamento forçado da parcela falhou:", e?.message || e);
+      return json(
+        {
+          error:
+            "Não foi possível gerar a cobrança desta renovação: " +
+            (e?.message || "erro desconhecido"),
+          code: "renewal_charge_failed",
+        },
+        corsHeaders,
+        502,
+      );
+    }
+  }
+
+  if (!mandate && !isCombined && !pagamentoForcado) {
     try {
       chargeArtifact = await apiCreateCharge(cfg, {
         valueCents: toCents(cycleAmount),
@@ -605,7 +688,22 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
   }
 
   // ── Persistência ─────────────────────────────────────────────────────────
-  const paymentArtifactId = isCombined ? chargeArtifact!.identifier : mandate?.globalID || chargeArtifact?.identifier || null;
+  //
+  // O id que a tela vai usar para ACOMPANHAR o pagamento.
+  //
+  // No fluxo normal (mandate novo) é o id do mandate: é ele que o polling
+  // consulta (as parcelas) e que o webhook usa para achar a assinatura.
+  //
+  // Na RENOVAÇÃO FORÇADA (recorrência que já existe) é o mandate ANTIGO — o
+  // mesmo. Usar o id da cobrança nova faria o polling confirmar pelo id
+  // errado e o pagamento entraria DUAS vezes no painel (uma pelo polling e
+  // outra pelo webhook, com ids diferentes).
+  const paymentArtifactId = isCombined
+    ? chargeArtifact!.identifier
+    : mandate?.globalID
+      || (reutilizaMandate ? assinaturaExistente.woovi_subscription_id : null)
+      || chargeArtifact?.identifier
+      || null;
   // O código EMV (o "copia e cola") do artefato que o usuário vai PAGAR:
   //   - com mandate: o `emv` do Pix Automático (o browser gera o QR a partir
   //     dele, porque a Woovi não devolve imagem do mandate);
@@ -621,7 +719,7 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
 
   const storedAmount = cycleAmount;
   const storedOriginalAmount = subscriptionAmount;
-  const storedDiscount = subCouponRes.discount;
+  const storedDiscount = Math.max(0, Number(subscriptionAmount) - Number(cycleAmount));
 
   await logAttempt(
     "created",
@@ -669,11 +767,56 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
     subscriptionRow.woovi_recurrence_status = mandate.status;
   }
 
-  const { error: subErr } = await supabaseAdmin
-    .from("user_subscriptions")
-    .upsert(subscriptionRow, { onConflict: "user_id, group_id" });
-  if (subErr) {
-    console.error("[woovi] user_subscriptions upsert error:", subErr.message);
+  if (isRenewal && assinaturaExistente?.id) {
+    // ── RENOVAÇÃO: a MESMA linha é atualizada ──────────────────────────────
+    //
+    // Nada de criar uma assinatura nova (seriam duas linhas para a mesma
+    // pessoa no mesmo grupo — e o painel mostraria as duas). O que muda
+    // aqui é o MEIO de pagamento e o valor do ciclo.
+    //
+    // E o STATUS NÃO vira "pending": a pessoa está em uso (na carência) e
+    // rebaixar a assinatura tiraria o acesso dela ANTES do pagamento
+    // confirmar. As datas do próximo ciclo também NÃO andam agora — quem
+    // avança a data é o `confirmPayment`, quando o dinheiro entra.
+    const patch: Record<string, any> = {
+      gateway: "woovi",
+      payment_method: "pix",
+      billing_cycle: cycle,
+      amount: storedAmount,
+      original_amount: storedOriginalAmount,
+      discount_amount: storedDiscount,
+      billing_status: "active",
+      custom_cycle_days: subDays || null,
+      custom_cycle_months: cycle === "custom" ? subMonths : null,
+    };
+
+    if (mandate) {
+      // A assinatura passou a ser cobrada pelo Pix Automático (era do
+      // cartão): o mandate novo é gravado aqui.
+      patch.woovi_subscription_id = mandate.globalID;
+      patch.woovi_recurrency_id = mandate.recurrencyId;
+      patch.woovi_recurrence_status = mandate.status;
+      patch.gateway_subscription_id = mandate.globalID;
+    } else if (reutilizaMandate) {
+      // A recorrência continua sendo a MESMA (o mandate não muda).
+      patch.woovi_subscription_id = assinaturaExistente.woovi_subscription_id;
+      patch.gateway_subscription_id = assinaturaExistente.woovi_subscription_id;
+    }
+
+    const { error: updErr } = await supabaseAdmin
+      .from("user_subscriptions")
+      .update(patch)
+      .eq("id", assinaturaExistente.id);
+    if (updErr) {
+      console.error("[woovi] user_subscriptions update (renovação) error:", updErr.message);
+    }
+  } else {
+    const { error: subErr } = await supabaseAdmin
+      .from("user_subscriptions")
+      .upsert(subscriptionRow, { onConflict: "user_id, group_id" });
+    if (subErr) {
+      console.error("[woovi] user_subscriptions upsert error:", subErr.message);
+    }
   }
 
   return json({
@@ -687,9 +830,12 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
     amount: isCombined ? chargeAmount : cycleAmount,
     needs_polling: true,
     recurrence: {
-      enabled: !!mandate,
-      subscription_id: mandate?.globalID || null,
-      recurrency_id: mandate?.recurrencyId || null,
+      // A recorrência está ativa: ou o mandate acabou de ser criado, ou ele
+      // JÁ EXISTIA e o pagamento forçado foi da parcela em aberto (sem
+      // criar uma segunda recorrência).
+      enabled: !!mandate || reutilizaMandate,
+      subscription_id: mandate?.globalID || assinaturaExistente?.woovi_subscription_id || null,
+      recurrency_id: mandate?.recurrencyId || assinaturaExistente?.woovi_recurrency_id || null,
       status: mandate?.status || null,
       journey: mandate?.journey || null,
       frequency: mandate?.frequency || null,
@@ -705,6 +851,10 @@ export default async function handleWoovi(req: Request, ctx: HandlerContext) {
       fallback: recurrenceFallback,
       // POR QUE caiu para a cobrança avulsa (null quando há recorrência).
       fallback_reason: recurrenceFallback ? mandateError : null,
+      // true = pagamento FORÇADO de uma recorrência que já existia (a
+      // cobrança automática falhou e a pessoa pagou agora). A assinatura é
+      // ATUALIZADA — nenhuma recorrência nova foi criada.
+      forced: pagamentoForcado,
     },
   }, corsHeaders);
 }

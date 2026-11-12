@@ -131,12 +131,24 @@ export function gatewayDoMetodo(settings, metodo, opcoes) {
 /**
  * Decide o gateway de uma cobrança.
  *
- * `renewal` + `gatewayAtual` → fica no gateway que a assinatura já usa
- * (trocar deixaria duas cobranças vivas).
+ * `renewal` + `gatewayAtual` → a renovação é uma cobrança NOVA e segue o
+ * gateway do MÉTODO escolhido agora (o PIX da assinatura é o Pix Automático
+ * da Woovi). A assinatura que já é da Woovi continua na Woovi no PIX — o
+ * mandate é dela, e trocar criaria uma segunda recorrência.
+ *
+ * Espelho JS de `supabase/functions/_shared/gateway-por-metodo.ts`.
  */
 export function resolverGatewayParaPagamento({ settings, metodo, renewal, gatewayAtual, split }) {
   if (renewal) {
     const atual = normalizarGateway(gatewayAtual);
+    const m = normalizarMetodo(metodo);
+
+    if (atual === 'woovi') {
+      if (!m || m === 'pix') return 'woovi';
+      return gatewayDoMetodo(settings, m, { split });
+    }
+
+    if (m) return gatewayDoMetodo(settings, m, { split });
     if (atual) return atual;
   }
   return gatewayDoMetodo(settings, metodo, { split });

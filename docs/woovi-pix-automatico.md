@@ -657,11 +657,89 @@ node scripts/diagnostico-functions.mjs
   exigência do Pix Automático, e o app ainda não coleta endereço.
 - **O mandatar é o pagador**: quem paga precisa ser quem autorizou o Pix
   Automático no app do banco.
-- **Só renewal automática para quem autorizou o mandato.** Sem autorização, a
-  assinatura continua válida mas a renovação precisa ser paga na mão.
 - **Valor da recorrência é fixo no mandato.** Mudar o preço do grupo depois
   não muda o valor do Pix Automático já criado — seria preciso cancelar e
   recriar o mandato.
+
+---
+
+## 8b. A renovação por PIX: quando a recorrência falha (11/11/2026)
+
+### O problema
+
+A renovação é o ciclo que já venceu. Com o Pix Automático, a Woovi tenta
+cobrar sozinha (política `THREE_RETRIES_7_DAYS`: até 3 retentativas em 7
+dias). Quando a pessoa **não tinha dinheiro**, a cobrança falha e a assinatura
+fica atrasada.
+
+A pessoa entra no app e quer pagar agora. O caminho antigo recusava isso
+("recurrence_is_automatic") — e o caminho pior (criar outro mandate) deixaria
+a pessoa com **várias assinaturas de Pix Automático** e mais de uma cobrança
+por ciclo.
+
+### O que a API da Woovi oferece
+
+A cobrança manual de uma parcela é um recurso oficial:
+
+```
+GET  /api/v1/subscriptions/{id}/installments    → as parcelas
+POST /api/v1/installments/{id}/cobr              → cobra a parcela
+POST /api/v1/installments/{id}/cobr/retry        → refaz uma cobrança que falhou
+```
+
+A Woovi cria as parcelas de forma incremental: a última é a que está
+`SCHEDULED` (a que vence a seguir). É nela que a cobrança manual é feita.
+
+### O que o DividePass faz agora (`handlers/woovi.ts`)
+
+1. A renovação **procura a assinatura** (`user_subscriptions` do usuário no
+   grupo) e lê o `woovi_subscription_id` (o mandate).
+2. **Com mandate** → o mandate **não é criado de novo**. A cobrança é da
+   **parcela em aberto** da assinatura que já existe
+   (`POST /api/v1/installments/{id}/cobr`). A resposta traz
+   `recurrence.forced = true`.
+3. **Sem mandate** (assinatura que vinha do cartão) → a renovação por PIX
+   cria o Pix Automático (Jornada 3) e grava o `woovi_subscription_id` na
+   assinatura.
+4. A **linha da assinatura é ATUALIZADA** — nunca criada de novo. E o status
+   **não** vira `pending` (a pessoa está usando o acesso; está na carência).
+   As datas do próximo ciclo **não** andam na criação: quem avança é o
+   `confirmPayment`, quando o dinheiro entra.
+5. O valor cobrado é o do **ciclo atual** (preço da vaga × meses) com o
+   **desconto recorrente já gravado** preservado — o mesmo que o IO Pay faz.
+   É o que a tela mostra antes de pagar.
+
+### O id que a tela acompanha
+
+Na renovação forçada, o `transaction_id` devolvido ao front é o **mandate**
+(o `woovi_subscription_id`), e não o id da cobrança nova. Motivo: é o mandate
+que o polling (`check-woovi-tx`) consulta para achar as parcelas e é ele que
+o webhook usa para localizar a assinatura. Usar o id da cobrança faria o
+polling confirmar com um id e o webhook com outro — e o pagamento entraria
+**duas vezes** no painel.
+
+Por isso o polling passou a considerar a **última** parcela paga (e não a
+primeira): numa assinatura com vários ciclos, a primeira parcela paga é a do
+primeiro ciclo, e usá-la faria a trava de idempotência tratar a renovação
+como "já confirmada".
+
+### Quando a pessoa renova por CARTÃO
+
+A assinatura tinha um Pix Automático ativo. Se a pessoa renova pelo cartão, o
+mandate é **cancelado** (`PUT /api/v1/subscriptions/{id}/cancel`) — senão a
+Woovi continuaria cobrando o ciclo seguinte por conta própria, ALÉM do cartão.
+
+O inverso não precisa de nada: quem tinha cartão e renova por PIX passa a ser
+cobrada pela Woovi, e o job de recorrência do cartão **não roda** para
+assinatura com `gateway = 'woovi'`.
+
+### O CPF
+
+O Pix Automático exige o CPF do pagador (`taxID`): sem ele a Woovi recusa
+criar a assinatura ("You need to inform a customer to create a
+subscription"). Na renovação isso vale igual — e como a renovação por PIX
+vai para a Woovi, o checkout **pergunta o CPF antes de deixar pagar** (o
+campo aparece quando o perfil não tem CPF e o botão fica barrado sem ele).
 
 ---
 

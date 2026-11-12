@@ -89,6 +89,47 @@ export default {
       if (!authData?.user) {
         return json({ error: "Token inválido" }, 401);
       }
+      const authUserId = authData.user.id;
+
+      // O chamador é o DONO da transação ou um admin?
+      //
+      // POR QUE ISSO IMPORTA
+      // ---------------------
+      // Esta função CONFIRMA o pagamento de quem mandou o `transaction_id`.
+      // Sem a trava, qualquer usuário logado poderia confirmar a cobrança de
+      // outra pessoa (o id da transação é público — fica no
+      // `payment_attempts.gateway_transaction_id`). A confirmação é
+      // idempotente e só acontece se o pagamento estiver mesmo pago, mas
+      // ainda assim é uma ação de outro cliente rodando na sua sessão.
+      const { data: perfil } = await supabaseAdmin
+        .from("users")
+        .select("role")
+        .eq("id", authUserId)
+        .maybeSingle();
+      const ehAdmin = String(perfil?.role || "") === "admin";
+
+      /** A transação pertence a quem está chamando? */
+      async function transacaoEhDoDono(gatewayTransactionId: string | null | undefined) {
+        if (ehAdmin) return true;
+        if (!gatewayTransactionId) return false;
+        const { data: tentativas } = await supabaseAdmin
+          .from("payment_attempts")
+          .select("user_id")
+          .eq("gateway_transaction_id", gatewayTransactionId)
+          .order("created_at", { ascending: true })
+          .limit(1);
+        const dono = (tentativas && tentativas[0])?.user_id || null;
+        if (dono) return dono === authUserId;
+
+        // Pode ser o id do MANDATE (a assinatura), não o da tentativa.
+        const { data: assinaturas } = await supabaseAdmin
+          .from("user_subscriptions")
+          .select("user_id")
+          .eq("woovi_subscription_id", gatewayTransactionId)
+          .limit(1);
+        const donoDaAssinatura = (assinaturas && assinaturas[0])?.user_id || null;
+        return !!donoDaAssinatura && donoDaAssinatura === authUserId;
+      }
 
       const body = await req.json();
       const { transaction_id } = body;
@@ -127,6 +168,12 @@ export default {
         }
 
         // ── Cobrança paga: confirma (idempotente) ──────────────────────────
+        if (!(await transacaoEhDoDono(charge.identifier))) {
+          return json(
+            { error: "Esta transação não pertence a esta conta." },
+            403,
+          );
+        }
         const result = await confirmWooviCharge(supabaseAdmin, { charge });
         return json({
           transaction_id,
@@ -160,11 +207,17 @@ export default {
       const installments: any[] = instRes?.installments || [];
 
       // A parcela mais recente que já foi paga.
-      const paidInstallment =
-        installments.find((i: any) => {
-          const st = String(i?.status || i?.cobr?.status || "").toUpperCase();
-          return st === "COMPLETED" || isApprovedStatus(st);
-        }) || null;
+      //
+      // A ÚLTIMA que está paga — e não a primeira. Numa assinatura com
+      // vários ciclos pagos, a primeira é a do primeiro ciclo: usá-la faria
+      // a confirmação registrar o pagamento com o id da parcela errada (e a
+      // trava de idempotência trataria a renovação como "já confirmada").
+      const isPaga = (i: any) => {
+        const st = String(i?.status || i?.cobr?.status || "").toUpperCase();
+        return st === "COMPLETED" || isApprovedStatus(st);
+      };
+      const parcelasPagas = installments.filter(isPaga);
+      const paidInstallment = parcelasPagas[parcelasPagas.length - 1] || null;
 
       const latest = installments[installments.length - 1] || null;
       const latestStatus = String(
@@ -194,6 +247,12 @@ export default {
       }
 
       // ── Parcela paga: confirma ───────────────────────────────────────────
+      if (!(await transacaoEhDoDono(transaction_id))) {
+        return json(
+          { error: "Esta transação não pertence a esta conta." },
+          403,
+        );
+      }
       const result = await confirmWooviInstallment(supabaseAdmin, {
         paymentSubscriptionGlobalID: subscription.globalID,
         correlationID: subscription.correlationID,

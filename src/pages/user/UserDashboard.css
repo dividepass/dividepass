@@ -745,6 +745,114 @@
   border-color: #15803d !important;
 }
 
+/* ── Cartão de COBRANÇA PENDENTE (topo do dashboard) ────────────────────────
+   Aparece só quando o vencimento chegou (ver `lib/pendingPayments.js`).
+   A cor é de alerta, não de erro: ainda dá para pagar sem perder o acesso
+   (a carência é de 7 dias). */
+.dash-pending-card {
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  background: linear-gradient(135deg, rgba(234, 88, 12, 0.08), rgba(249, 115, 22, 0.05));
+  border-radius: 1rem;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.25rem;
+}
+
+.dash-pending-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.dash-pending-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(234, 88, 12, 0.15);
+  color: #ea580c;
+  flex-shrink: 0;
+}
+
+.dash-pending-titles {
+  min-width: 0;
+}
+
+.dash-pending-titles h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.25;
+}
+
+.dash-pending-titles p {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 0.1rem 0 0;
+}
+
+.dash-pending-list {
+  list-style: none;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dash-pending-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.7rem;
+  /* Fundo ESCURO de propósito: o texto aqui é claro (`--text`). Antes usava
+     `var(--bg-card, rgba(255,255,255,.6))` — como `--bg-card` não existe no
+     tema escuro, o fallback trazia um painel branco e o texto (claro) sumia
+     dentro dele. Aqui o fundo é sempre escuro, nos dois temas. */
+  background: rgba(2, 6, 23, 0.45);
+  border: 1px solid rgba(234, 88, 12, 0.28);
+}
+
+[data-theme="light"] .dash-pending-item {
+  background: rgba(255, 255, 255, 0.75);
+  border-color: rgba(234, 88, 12, 0.3);
+}
+
+.dash-pending-item-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dash-pending-item-info strong {
+  font-size: 0.88rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-pending-item-info span {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.dash-pending-pay {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* A versão CURTA do texto do card de depoimento só existe no celular (ver a
+   media query mais abaixo). No desktop ela fica escondida. */
+.testimonial-prompt-text-short {
+  display: none;
+}
+
 /* Home subscriptions: 2-col grid, vertical compact cards */
 .home-subscriptions-grid {
   display: grid;
@@ -3474,3 +3582,145 @@
     transition: none !important;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   CELULAR — a Visão Geral precisa caber na tela.
+
+   MEDIDO em 390px (antes): o grid de "Explorar todos os serviços" tinha
+   3 colunas de 119px (tile de 137px de altura) e o card de depoimento
+   ocupava 208px. Com 40+ serviços, a pessoa rolava a tela inteira só
+   para ver nomes de catálogo.
+
+   DEPOIS: 4 colunas de ~88px (tile de ~96px) e o card de depoimento cai
+   para ~110px com a frase curta — o contexto continua ("ganhe R$ 5"),
+   só sem o parágrafo que empurrava o resto da tela para baixo.
+   ───────────────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Explorar todos os serviços */
+  .available-services-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.28rem;
+  }
+
+  .available-service-card-wrapper {
+    padding-bottom: 0.1rem;
+  }
+
+  .available-service-header-icon {
+    width: calc(100% - 0.18rem);
+    aspect-ratio: 1;
+    border-radius: 0.6rem;
+    margin-top: 0.12rem;
+    margin-bottom: 0.02rem;
+  }
+
+  .available-service-logo-lg {
+    width: 34px;
+    height: 34px;
+    padding: 3px;
+    border-radius: 9px;
+  }
+
+  .available-service-icon-lg {
+    width: 28px;
+    height: 28px;
+    font-size: 0.85rem;
+    border-radius: 9px;
+  }
+
+  .available-service-name {
+    font-size: 0.56rem;
+    line-height: 1.2;
+  }
+
+  /* Card de depoimento: frase curta no lugar do parágrafo. */
+  .testimonial-prompt-text-full {
+    display: none;
+  }
+
+  .testimonial-prompt-text-short {
+    display: block;
+  }
+
+  .testimonial-prompt-card {
+    padding: 0.7rem 0.8rem;
+    gap: 0.6rem;
+    border-radius: 0.85rem;
+    margin-bottom: 1rem;
+  }
+
+  .testimonial-prompt-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+  }
+
+  .testimonial-prompt-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .testimonial-prompt-content strong {
+    font-size: 0.85rem;
+  }
+
+  .testimonial-prompt-content p {
+    font-size: 0.72rem;
+    line-height: 1.3;
+  }
+
+  .testimonial-cta-btn {
+    font-size: 0.74rem !important;
+    padding: 0.4rem 0.6rem;
+  }
+
+  /* Títulos de seção: no celular eles comiam espaço à toa. */
+  .section-title-row h2 {
+    font-size: 1rem;
+  }
+
+  .section-title-row p,
+  .section-subtitle {
+    font-size: 0.75rem;
+  }
+
+  /* Card de cobrança pendente: o item empilha (texto em cima, botão
+     embaixo, com o dedo inteiro). */
+  .dash-pending-card {
+    padding: 0.8rem 0.85rem;
+    border-radius: 0.85rem;
+    margin-bottom: 1rem;
+  }
+
+  .dash-pending-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+
+  .dash-pending-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .dash-pending-titles h2 {
+    font-size: 0.92rem;
+  }
+
+  .dash-pending-titles p {
+    font-size: 0.72rem;
+  }
+
+  .dash-pending-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.6rem 0.65rem;
+  }
+
+  .dash-pending-pay {
+    width: 100%;
+    justify-content: center;
+  }
+}
+

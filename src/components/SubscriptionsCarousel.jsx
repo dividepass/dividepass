@@ -7,8 +7,6 @@ import {
   subscriptionAccessLabel,
   subscriptionAccessState,
 } from '../lib/subscriptionAccess';
-import { useAppDataContext } from '../contexts/AppDataContext';
-import SubscriptionRenewalModal from './SubscriptionRenewalModal';
 import RenewalReminderCard from './RenewalReminderCard';
 import './SubscriptionsCarousel.css';
 
@@ -23,13 +21,9 @@ export default function SubscriptionsCarousel({ items }) {
   const touchEnd = useRef(null);
   const autoplayRef = useRef(null);
   const navigate = useNavigate();
-  const { refresh } = useAppDataContext();
 
   // Assinatura cancelada não entra no carrossel: o caminho dela é o histórico.
   const visibleItems = (items || []).filter((item) => isSubscriptionVisible(item));
-
-  // Renovação em aberto (o modal de pagamento já existe e é reaproveitado).
-  const [renewTarget, setRenewTarget] = useState(null);
 
   const totalPages = Math.max(1, Math.ceil(visibleItems.length / PAGE_SIZE));
 
@@ -84,6 +78,15 @@ export default function SubscriptionsCarousel({ items }) {
 
   const openCredentials = (service, group) => {
     navigate(`/dashboard/credentials/${service.slug || service.id}?group=${group.id}`);
+  };
+
+  // Renovar não abre popup: leva para a PÁGINA de checkout no modo renovação
+  // (`?renovacao=1`), onde a pessoa vê o resumo do ciclo e paga.
+  const openRenewal = (item) => {
+    const group = item?.group;
+    const alvo = group?.slug || group?.id || item?.group_id;
+    if (!alvo) return;
+    navigate(`/dashboard/checkout/${alvo}?renovacao=1`);
   };
 
   return (
@@ -145,11 +148,7 @@ export default function SubscriptionsCarousel({ items }) {
                         <RenewalReminderCard
                           subscription={item}
                           group={group}
-                          onRenew={() => setRenewTarget({
-                            subscription: item,
-                            group,
-                            amount: Number(item.amount || 0),
-                          })}
+                          onRenew={() => openRenewal(item)}
                         />
                       )}
                     </div>
@@ -177,22 +176,8 @@ export default function SubscriptionsCarousel({ items }) {
       )}
     </div>
 
-    {/* Renovação: o mesmo modal das outras telas (PIX/cartão). Fica fora do
-        container do carrossel para não herdar o swipe de navegação. */}
-    {renewTarget && (
-      <SubscriptionRenewalModal
-        key="renewal-modal"
-        open
-        subscription={renewTarget.subscription}
-        group={renewTarget.group}
-        amount={renewTarget.amount}
-        onClose={() => setRenewTarget(null)}
-        onPaid={() => {
-          setRenewTarget(null);
-          refresh?.();
-        }}
-      />
-    )}
+    {/* Renovação: sem popup. O botão "Renovar agora" leva para a página de
+        checkout no modo renovação. */}
     </>
   );
 }

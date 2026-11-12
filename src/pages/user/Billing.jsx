@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useGatewayPorMetodo } from '../../hooks/useGatewayPorMetodo';
 import { supabase } from '../../lib/supabase';
@@ -14,14 +15,14 @@ import {
   subscriptionRenewalDate,
 } from '../../lib/subscriptionAccess';
 import { formatDateBR } from '../../lib/dateFormat';
-import SubscriptionRenewalModal from '../../components/SubscriptionRenewalModal';
 import RenewalReminderCard from '../../components/RenewalReminderCard';
 import { X, Calendar, CreditCard, CheckCircle, Clock, AlertCircle, Receipt, QrCode, Copy, Loader2, Eye, EyeOff, Shield, Wallet } from 'lucide-react';
 import './Billing.css';
 
 function Billing() {
   const { user } = useAuth();
-  const { activeSubscriptions, loading: appLoading, refresh } = useAppDataContext();
+  const { activeSubscriptions, loading: appLoading } = useAppDataContext();
+  const navigate = useNavigate();
 
   // Definidos fora do componente: evita depender de identificador recriado a cada render
   const GATEWAYS_WITH_PIX = ['iopay', 'pagarme', 'asaas', 'stripe', 'woovi'];
@@ -50,7 +51,7 @@ function Billing() {
   const timerRef = useRef(null);
 
   // Renovação: assinatura vencida que precisa de um novo pagamento.
-  const [renewTarget, setRenewTarget] = useState(null);
+  // (A renovação foi para a página de checkout — ver `openRenewal`.)
 
   const fetchPayments = async () => {
     if (!user) return;
@@ -189,8 +190,13 @@ function Billing() {
     return d;
   }, []);
 
-  const openRenewal = (sub, amount) => {
-    setRenewTarget({ subscription: sub, group: sub.group, amount });
+  // Renovar não abre popup: leva para a PÁGINA de checkout no modo renovação
+  // (`?renovacao=1`), onde a pessoa vê o resumo do ciclo e paga.
+  const openRenewal = (sub) => {
+    const group = sub?.group;
+    const alvo = group?.slug || group?.id || sub?.group_id;
+    if (!alvo) return;
+    navigate(`/dashboard/checkout/${alvo}?renovacao=1`);
   };
 
   // Cartões são carregados sob demanda, ao abrir o modal de pagamento
@@ -824,22 +830,6 @@ function Billing() {
           </div>
         </div>
       )}
-
-      {/* Renovação da assinatura vencida.
-          A `key` muda com a abertura: o modal remonta com o estado limpo
-          (sem precisar resetar por effect). */}
-      <SubscriptionRenewalModal
-        key={renewTarget ? 'renewal-modal' : 'renewal-modal-closed'}
-        open={!!renewTarget}
-        subscription={renewTarget?.subscription}
-        group={renewTarget?.group}
-        amount={renewTarget?.amount}
-        onClose={() => setRenewTarget(null)}
-        onPaid={() => {
-          fetchPayments();
-          refresh?.();
-        }}
-      />
     </div>
   );
 }

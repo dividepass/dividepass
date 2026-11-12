@@ -302,3 +302,72 @@ export async function listInstallments(cfg: WooviConfig, globalID: string): Prom
 export async function cancelSubscription(cfg: WooviConfig, globalID: string): Promise<void> {
   await wooviRequest<any>(cfg, "PUT", `/api/v1/subscriptions/${globalID}/cancel`, {});
 }
+
+// ============================================================================
+// COBRANÇA DE PARCELA (o "forçar o pagamento" da recorrência)
+// ============================================================================
+
+/**
+ * Cobra UMA parcela de uma assinatura de Pix Automático que JÁ EXISTE.
+ *
+ * É o que permite o pagamento forçado: quando a recorrência falha (a pessoa
+ * não tinha dinheiro no vencimento), ela entra no app e paga agora. A
+ * cobrança é da PARCELA que já existe, da assinatura que já existe — nenhuma
+ * assinatura nova é criada (senão a pessoa acabaria com várias recorrências
+ * de PIX Automático e mais de uma cobrança por ciclo).
+ *
+ *   POST /api/v1/installments/{id}/cobr        → cria a cobrança da parcela
+ *   POST /api/v1/installments/{id}/cobr/retry  → refaz uma cobrança que falhou
+ *
+ * O `value` é opcional: sem ele a Woovi cobra o valor da parcela.
+ */
+export async function createInstallmentCharge(
+  cfg: WooviConfig,
+  args: { installmentId: string; valueCents?: number; retry?: boolean },
+): Promise<WooviCharge> {
+  const caminho = args.retry
+    ? `/api/v1/installments/${args.installmentId}/cobr/retry`
+    : `/api/v1/installments/${args.installmentId}/cobr`;
+
+  const payload: Record<string, any> = {};
+  if (typeof args.valueCents === "number" && args.valueCents > 0) {
+    payload.value = args.valueCents;
+  }
+
+  const res = await wooviRequest<any>(cfg, "POST", caminho, payload);
+  const charge = res?.charge || res?.cobr || res;
+  const identifier = charge?.identifier || charge?.globalID || charge?.id;
+
+  if (!identifier) {
+    throw new Error("Cobrança da parcela criada sem identificador de retorno.");
+  }
+
+  return {
+    identifier,
+    brCode: charge?.brCode || null,
+    qrCodeImage: charge?.qrCodeImage || null,
+    paymentLinkUrl: charge?.paymentLinkUrl || null,
+    status: charge?.status || "ACTIVE",
+    globalID: charge?.globalID || null,
+    value: Number(charge?.value || args.valueCents || 0),
+  };
+}
+
+/**
+ * A parcela que ainda está para ser paga.
+ *
+ * A Woovi cria as parcelas de forma incremental: a última é a que está
+ * `SCHEDULED` (agendada para o próximo vencimento). É nela que a cobrança
+ * forçada é feita.
+ */
+export function parcelaEmAberto(parcelas: any[]): any | null {
+  const lista = Array.isArray(parcelas) ? parcelas : [];
+  if (!lista.length) return null;
+
+  const naoPagas = lista.filter((p) => {
+    const st = String(p?.status || p?.cobr?.status || "").toUpperCase();
+    return st !== "COMPLETED" && st !== "CANCELLED" && st !== "EXPIRED";
+  });
+
+  return naoPagas[naoPagas.length - 1] || lista[lista.length - 1] || null;
+}

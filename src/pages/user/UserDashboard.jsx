@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Search, ChevronLeft, ChevronRight, X, Pin, Star, Download, Smartphone, CheckCircle2, MessageSquare, TrendingUp, ChevronDown, AlertCircle, Info, Camera, Lightbulb, ShoppingBag, ArrowRight } from 'lucide-react';
 import { useAppDataContext } from '../../contexts/AppDataContext';
 import { useAuth } from '../../hooks/useAuth';
@@ -20,6 +20,8 @@ import TopSellingServices from '../../components/TopSellingServices';
 import RecentSubscribers from '../../components/RecentSubscribers';
 import StorefrontRows from '../../components/StorefrontRows';
 import QuickShortcuts from '../../components/QuickShortcuts';
+import { isSubscriptionVisible } from '../../lib/subscriptionAccess';
+import { pendingPayments, dueLabel } from '../../lib/pendingPayments';
 import { useEngagement } from '../../hooks/useEngagement';
 import { CATEGORIAS as CATEGORIAS_CATALOG } from '../../lib/categorias';
 import { useWhatsappVipUrl } from '../../hooks/useWhatsappVipUrl';
@@ -184,6 +186,73 @@ function UserDashboard() {
   // paidPayments PRIMEIRO — usado por hasRealPayments e totalSaved
   const [paidPayments, setPaidPayments] = useState([]);
   const [paymentsLoaded, setPaymentsLoaded] = useState(false);
+
+  /* ASSINATURAS DA PESSOA (todas, incluindo as pendentes).
+   *
+   * O `useAppData` só carrega as assinaturas 'active'/'expired' — o que
+   * serve para o carrossel, mas não serve para duas perguntas do topo da
+   * tela:
+   *
+   *   - a pessoa JÁ é assinante? (se sim, o card de boas-vindas "Olá, ..." é
+   *     desnecessário e só ocupa a primeira dobra do celular);
+   *   - tem alguma cobrança em aberto que venceu? (precisa do botão de
+   *     pagar aqui no topo).
+   *
+   * A regra de "venceu" mora em `lib/pendingPayments.js` — a interface não
+   * recalcula data nenhuma. */
+  const [minhasAssinaturas, setMinhasAssinaturas] = useState([]);
+
+  useEffect(() => {
+    if (!profile?.id) {
+      setMinhasAssinaturas([]);
+      return undefined;
+    }
+    let cancelado = false;
+    supabase
+      .from('user_subscriptions')
+      .select(`
+        id, status, amount, billing_cycle, custom_cycle_days, custom_cycle_months,
+        group_id, service_id, gateway, started_at, created_at,
+        renewal_due_at, next_charge_at, expires_at,
+        group:group_id (id, name, slug, price_per_slot, billing_cycle),
+        service:service_id (id, name, full_name, icon_url, color)
+      `)
+      .eq('user_id', profile.id)
+      .then(({ data, error }) => {
+        if (cancelado) return;
+        if (error) {
+          console.warn('[Dashboard] Erro ao buscar assinaturas:', error.message);
+          return;
+        }
+        setMinhasAssinaturas(data || []);
+      });
+    return () => { cancelado = true; };
+  }, [profile?.id]);
+
+  /* A pessoa já é assinante? Uma assinatura cancelada não conta: quem
+   * cancelou ainda pode ser recebido de volta com o card de boas-vindas. */
+  const temAssinaturas = useMemo(
+    () => minhasAssinaturas.some((sub) => isSubscriptionVisible(sub)),
+    [minhasAssinaturas],
+  );
+
+  /* Cobranças em aberto que já venceram (ou vencem hoje). */
+  const pendencias = useMemo(() => pendingPayments(minhasAssinaturas), [minhasAssinaturas]);
+
+  /* Onde a pessoa PAGA a cobrança vencida.
+   *
+   * Não é mais um popup: o botão leva para a PÁGINA de checkout no modo
+   * renovação (`?renovacao=1`). Lá a pessoa vê o resumo do ciclo, escolhe o
+   * método e paga — com a URL no histórico, o que permite voltar e conferir
+   * a cobrança depois. */
+  const navigate = useNavigate();
+
+  const irParaRenovacao = useCallback((sub) => {
+    const grupo = sub?.group;
+    const alvo = grupo?.slug || grupo?.id || sub?.group_id;
+    if (!alvo) return;
+    navigate(`/dashboard/checkout/${alvo}?renovacao=1`);
+  }, [navigate]);
 
   // hasRealPayments depende de paidPayments
   const hasRealPayments = useMemo(() =>
@@ -507,6 +576,52 @@ function UserDashboard() {
 
   return (
     <div className="fade-in">
+      {/* COBRANÇA EM ABERTO — o card mais importante da tela, então fica no
+          TOPO, antes até dos avisos da plataforma.
+          Só aparece quando o vencimento chegou (é hoje ou já passou): antes
+          disso a pessoa ainda tem dias e um cartaz de "pendência" só
+          assusta. A regra está em `lib/pendingPayments.js`. */}
+      {pendencias.length > 0 && (
+        <section className="dash-pending-card" role="alert">
+          <div className="dash-pending-head">
+            <span className="dash-pending-icon">
+              <AlertCircle size={18} />
+            </span>
+            <div className="dash-pending-titles">
+              <h2>
+                {pendencias.length === 1
+                  ? 'Você tem 1 cobrança pendente'
+                  : `Você tem ${pendencias.length} cobranças pendentes`}
+              </h2>
+              <p>Regularize agora para não perder o acesso.</p>
+            </div>
+          </div>
+
+          <ul className="dash-pending-list">
+            {pendencias.map((sub) => (
+              <li key={sub.id} className="dash-pending-item">
+                <div className="dash-pending-item-info">
+                  <strong>
+                    {sub.service?.full_name || sub.service?.name || sub.group?.name || 'Assinatura'}
+                  </strong>
+                  <span>
+                    {sub.group?.name ? `${sub.group.name} · ` : ''}
+                    {fmtBRL(sub.amount)} · {dueLabel(sub)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm dash-pending-pay"
+                  onClick={() => irParaRenovacao(sub)}
+                >
+                  Pagar agora
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {visibleAnnouncements.length > 0 && (
         <div className="announcements-banner-list">
           {visibleAnnouncements.map(a => (
@@ -531,13 +646,20 @@ function UserDashboard() {
           A saudação saiu daqui porque o hero já fala com a pessoa pelo nome e
           mostra a plataforma que ela marcou no cadastro — com o preço que ela
           paga de verdade na DividePass. O convite do Grupo VIP ficou logo
-          abaixo, ainda no primeiro campo de visão. */}
-      <DashboardHero
-        firstName={primeiroNome}
-        services={streamingServices}
-        groups={groups}
-        interests={interests}
-      />
+          abaixo, ainda no primeiro campo de visão.
+
+          E o hero inteiro só aparece para quem AINDA não assina: quem já tem
+          assinatura não precisa de boas-vindas, e no celular esse card
+          comia a primeira dobra da tela — a mesma dobra onde mora o aviso de
+          cobrança em aberto. */}
+      {!temAssinaturas && (
+        <DashboardHero
+          firstName={primeiroNome}
+          services={streamingServices}
+          groups={groups}
+          interests={interests}
+        />
+      )}
 
       <div className="dashboard-vip-row">
         <a
@@ -830,7 +952,16 @@ function UserDashboard() {
           </div>
           <div className="testimonial-prompt-content">
             <strong>Sua opinião vale desconto!</strong>
-            <p>Conte como está sendo sua experiência com a DividePass e ganhe <strong>R$ 5 de desconto</strong> na sua próxima assinatura. Sua avaliação nos ajuda a melhorar cada vez mais.</p>
+            {/* No celular o parágrafo inteiro virava um bloco de texto que
+                empurrava o resto da tela para baixo. A versão curta mantém o
+                contexto (o que se ganha e por quê) em uma linha; a completa
+                continua no desktop. */}
+            <p className="testimonial-prompt-text-full">
+              Conte como está sendo sua experiência com a DividePass e ganhe <strong>R$ 5 de desconto</strong> na sua próxima assinatura. Sua avaliação nos ajuda a melhorar cada vez mais.
+            </p>
+            <p className="testimonial-prompt-text-short">
+              Ganhe <strong>R$ 5 de desconto</strong> na sua próxima assinatura avaliando a DividePass.
+            </p>
           </div>
           <div className="testimonial-prompt-action">
             <Link to="/dashboard/testimonial" className="btn btn-primary btn-sm testimonial-cta-btn">
