@@ -7,7 +7,7 @@ import { useGatewayPorMetodo } from '../../hooks/useGatewayPorMetodo';
 import { supabase } from '../../lib/supabase';
 import { reportGoogleAdsConversion } from '../../lib/googleAds';
 import { mascararCpf, cpfValido, soDigitos } from '../../lib/cpf';
-import { grupoEsgotado } from '../../lib/groupEstado';
+import { grupoEsgotado, grupoDesativado, grupoIndisponivel } from '../../lib/groupEstado';
 import { ACCESS_CANCELLED, subscriptionAccessState, subscriptionRenewalDate } from '../../lib/subscriptionAccess';
 import { formatDateBR } from '../../lib/dateFormat';
 import IOPayCardForm from '../../components/IOPayCardForm';
@@ -1839,16 +1839,19 @@ function CheckoutPagina({ variante }) {
     );
   }
 
-  // Sem estoque no fornecedor: o produto existe, mas não dá para comprar.
+  // Sem estoque no fornecedor (ou grupo desativado pela sincronização com a
+  // Pulse): o produto existe, mas não dá para comprar.
   // (Na renovação não bloqueia: quem renova já tem a vaga.)
-  if (!renovacaoAtiva && grupoEsgotado(group)) {
+  if (!renovacaoAtiva && grupoIndisponivel(group)) {
+    const desativado = grupoDesativado(group);
     return (
       <div className="fade-in checkout-page">
         <div className="empty-checkout">
           <h2>Esgotado</h2>
           <p>
-            Este produto está sem estoque no momento. Logo que o fornecedor
-            reponha, ele volta a ficar disponível para compra.
+            {desativado
+              ? 'Este produto está indisponível no momento e não aceita novos pagamentos. Logo que o fornecedor volte a liberá-lo, ele fica disponível de novo.'
+              : 'Este produto está sem estoque no momento. Logo que o fornecedor reponha, ele volta a ficar disponível para compra.'}
           </p>
           <Link to={`/dashboard/catalog/${service?.slug || service?.id}`} className="btn btn-primary">Ver Outros Grupos</Link>
         </div>

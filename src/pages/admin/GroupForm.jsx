@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Save, Plus, Trash2, CheckCircle, X, Info, UserPlus, UserMinus, Camera, RefreshCw, AlertTriangle, Tv, Crown, Eye, KeyRound, QrCode, ShieldCheck } from 'lucide-react';
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { ArrowLeft, Loader2, Save, Plus, Trash2, CheckCircle, X, Info, UserPlus, UserMinus, Camera, RefreshCw, AlertTriangle, Tv, Crown, Eye, KeyRound, QrCode, ShieldCheck, ChevronDown, Landmark, ExternalLink, CreditCard, TrendingUp, TrendingDown } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import NotificationComposerCard from '../../components/NotificationComposerCard';
@@ -16,8 +16,9 @@ import {
   buildGroupName, fetchPlansForService, maxSlotsFor,
   pricePerSlot, suggestedGroupTotal, slotPriceOutOfRange, planSlotRangeText,
 } from '../../lib/platformPlans';
-import { unmaskPixKey } from '../../lib/pixKeyMask';
+import { unmaskPixKey, maskPixKey, pixTypeLabel } from '../../lib/pixKeyMask';
 import { DEFAULT_RULE_TEXT, rulesSummary } from '../../lib/groupRuleTypes';
+import { EVENT_META, formatFullDate, parseMetadata } from './eventLogMeta';
 import AdsToggle from '../../components/AdsToggle';
 
 import WizardSteps from '../../components/group-creation/WizardSteps';
@@ -116,6 +117,7 @@ function stripMissingGroupColumns(payload, error) {
     { field: 'visibility', test: isMissingVisibilityColumn },
     { field: 'subscription_status', test: isMissingSubscriptionStatusColumn },
     { field: 'chat_enabled', test: isMissingChatColumn },
+    { field: 'owner_contact', test: (err) => isMissingColumn(err, 'owner_contact') },
   ];
 
   optional.forEach(({ field, test }) => {
@@ -126,6 +128,217 @@ function stripMissingGroupColumns(payload, error) {
   });
 
   return missing.length ? { payload: next, missing } : null;
+}
+
+/**
+ * O banco recusou a coluna (42703 / PGRST204).
+ *
+ * Serve para as colunas que entram por migration: a tela avisa o admin e
+ * segue funcionando sem elas, em vez de quebrar a tela inteira.
+ */
+function isMissingColumn(error, column) {
+  if (!error) return false;
+  const texto = `${error.message || ''} ${error.details || ''} ${error.code || ''} ${error.hint || ''}`;
+  return new RegExp(column, 'i').test(texto)
+    && /(column|does not exist|nao existe|PGRST204|42703)/i.test(texto);
+}
+
+/**
+ * Bloco recolhível da tela de edição.
+ *
+ * O corpo fica SEMPRE no DOM (recolhe com altura zero) porque os campos
+ * obrigatórios da seção "Dados do Grupo" precisam continuar validados pelo
+ * navegador mesmo com a seção fechada.
+ */
+function AccordionSection({ id, title, open, onToggle, children }) {
+  return (
+    <section className={`accordion-card ${open ? 'is-open' : ''}`} data-section={id}>
+      <button
+        type="button"
+        className="accordion-header"
+        aria-expanded={open}
+        aria-controls={`${id}-body`}
+        onClick={onToggle}
+      >
+        <span className="accordion-title">{title}</span>
+        <ChevronDown size={18} className="accordion-chevron" />
+      </button>
+      <div className="accordion-body" id={`${id}-body`}>
+        <div className="accordion-body-inner">{children}</div>
+      </div>
+    </section>
+  );
+}
+
+/* Rótulos em pt-BR dos status que aparecem no log do grupo. */
+const PAGAMENTO_STATUS = {
+  pending: 'Pendente',
+  paid: 'Pago',
+  failed: 'Falhou',
+  refunded: 'Reembolsado',
+  cancelled: 'Cancelado',
+};
+
+const SAQUE_STATUS = {
+  pending: 'Pendente',
+  processing: 'Em análise',
+  completed: 'Realizado',
+  rejected: 'Recusado',
+};
+
+const TRANSACAO_TIPO = {
+  credit: 'Crédito',
+  debit: 'Débito',
+  withdrawal: 'Saque',
+  refund: 'Reembolso',
+};
+
+/**
+ * Dados extras do saque (vem em JSON no `payment_details`).
+ */
+function detalhesSaque(wd) {
+  try {
+    const parsed = JSON.parse(wd.payment_details || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Para onde o dinheiro de um saque foi (ou vai ser) enviado.
+ *
+ * Os dados bancários podem estar em colunas próprias ou dentro do
+ * `payment_details` (JSON) — vale a leitura dos dois lugares.
+ */
+function destinoSaque(wd) {
+  const extra = detalhesSaque(wd);
+
+  if (wd.payment_method && wd.payment_method !== 'bank') {
+    const pix = wd.pix_key || extra.pix_key || '';
+    return pix ? `PIX ${pix}` : 'Sem chave PIX';
+  }
+
+  const partes = [
+    wd.bank_name || extra.bank_name || '',
+    wd.bank_agency || extra.bank_agency || '',
+    wd.bank_account || extra.bank_account || '',
+    wd.bank_holder || extra.bank_holder || '',
+  ].filter(Boolean);
+
+  return partes.length ? partes.join(' · ') : 'Destino não informado';
+}
+
+/**
+ * Eventos da plataforma ligados ao grupo.
+ *
+ * O filtro `metadata->>group_id` é o mesmo do EventLog.jsx. Quando o
+ * PostgREST recusa esse operador, lemos os eventos mais recentes e filtramos
+ * pelo metadata no front — a tela nunca fica sem log.
+ */
+async function carregarEventosDoGrupo(groupId) {
+  let eventos = [];
+  let filtrouNoBanco = false;
+
+  try {
+    const res = await supabase
+      .from('platform_events')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .eq('metadata->>group_id', groupId)
+      .limit(60);
+    if (!res.error) {
+      filtrouNoBanco = true;
+      eventos = res.data || [];
+    }
+  } catch {
+    /* o banco recusou o filtro por metadata */
+  }
+
+  if (!filtrouNoBanco) {
+    const res = await supabase
+      .from('platform_events')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(300);
+    if (!res.error) {
+      eventos = (res.data || []).filter(
+        (ev) => String(parseMetadata(ev.metadata)?.group_id || '') === String(groupId),
+      );
+    }
+  }
+
+  return eventos.map((ev) => {
+    const meta = EVENT_META[ev.event_type];
+    return {
+      id: `evento-${ev.id}`,
+      tipo: meta?.label || 'Evento',
+      titulo: ev.title || 'Evento da plataforma',
+      mensagem: ev.message || '',
+      data: ev.created_at,
+      icone: meta?.icon || Info,
+    };
+  });
+}
+
+/** Pagamentos feitos no grupo (o dinheiro que entra). */
+async function carregarPagamentosDoGrupo(groupId) {
+  const colunas = 'id, amount, status, method, payment_type, gateway, transaction_code, created_at, paid_at, user_id, user:user_id (id, name, email)';
+
+  let res = await supabase
+    .from('payments')
+    .select(colunas)
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (res.error) {
+    // O join com o usuário pode não existir: refaz a consulta sem ele.
+    res = await supabase
+      .from('payments')
+      .select('id, amount, status, method, payment_type, gateway, transaction_code, created_at, paid_at, user_id')
+      .eq('group_id', groupId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+  }
+
+  if (res.error || !res.data) return [];
+
+  return res.data.map((p) => ({
+    id: `pagamento-${p.id}`,
+    tipo: 'Pagamento',
+    titulo: `Pagamento de R$ ${brl(p.amount)}`,
+    mensagem: [
+      p.user?.name || p.user?.email || '',
+      PAGAMENTO_STATUS[p.status] || p.status || '',
+    ].filter(Boolean).join(' · '),
+    data: p.created_at,
+    icone: CreditCard,
+  }));
+}
+
+/** Movimentações da carteira ligadas ao grupo (o dinheiro que sai). */
+async function carregarTransacoesDoGrupo(groupId) {
+  const res = await supabase
+    .from('wallet_transactions')
+    .select('id, type, amount, description, status, created_at')
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (res.error || !res.data) return [];
+
+  return res.data.map((t) => {
+    const tipo = TRANSACAO_TIPO[t.type] || 'Movimentação';
+    return {
+      id: `transacao-${t.id}`,
+      tipo,
+      titulo: `${tipo} de R$ ${brl(t.amount)}`,
+      mensagem: t.description || '',
+      data: t.created_at,
+      icone: t.type === 'credit' ? TrendingUp : TrendingDown,
+    };
+  });
 }
 
 function GroupForm() {
@@ -230,6 +443,23 @@ function GroupForm() {
   const [pixType, setPixType] = useState('cpf');
   const [hasPixColumn, setHasPixColumn] = useState(true);
 
+  /* Seções recolhíveis da tela de EDIÇÃO. Todas começam fechadas: o admin
+     clica só na categoria que precisa (evita rolar a página inteira). */
+  const [openSections, setOpenSections] = useState({});
+  /* Contato do dono (groups.owner_contact) — coluna nova, entra por
+     migration; só é gravada quando o banco já a conhece. */
+  const [ownerContact, setOwnerContact] = useState('');
+  const [hasOwnerContactColumn, setHasOwnerContactColumn] = useState(false);
+  /* Dados bancários do dono (carteira + saques) e o histórico do grupo. */
+  const [bankData, setBankData] = useState({
+    loading: true,
+    wallet: null,
+    hasBankColumns: true,
+    withdrawals: [],
+    error: '',
+  });
+  const [groupLogs, setGroupLogs] = useState({ loading: true, items: [], error: '' });
+
   const [emailCodeEnabled, setEmailCodeEnabled] = useState(false);
   const [emailAddress, setEmailAddress] = useState('');
   const [emailImapServer, setEmailImapServer] = useState('');
@@ -253,6 +483,26 @@ function GroupForm() {
   const priceSimulation = useMemo(() => {
     return simulatePrice(formData.price_per_slot);
   }, [formData.price_per_slot]);
+
+  /* Abre/fecha uma seção do accordion da edição. */
+  const toggleSection = (id) => {
+    setOpenSections(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  /*
+   * Campo obrigatório que está dentro de uma seção fechada: o navegador
+   * não consegue focar o campo, então abrimos a seção para o admin ver o
+   * que falta.
+   */
+  const handleFormInvalid = (e) => {
+    const alvo = e.target;
+    if (!alvo || typeof alvo.closest !== 'function') return;
+    const card = alvo.closest('.accordion-card');
+    if (!card) return;
+    const id = card.getAttribute('data-section');
+    if (!id) return;
+    setOpenSections(prev => (prev[id] ? prev : { ...prev, [id]: true }));
+  };
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -563,6 +813,12 @@ function GroupForm() {
           setHasVisibilityColumn(await visibilityColumnAvailable());
           const pixProbe = await supabase.from('groups').select('id, pix_key').limit(1);
           setHasPixColumn(!pixProbe.error);
+          /* A coluna owner_contact (migration
+             database/EXECUTAR-2026-11-07-plataforma-codigo-email.sql) pode
+             ainda não existir no banco — sem ela o contato do dono não é
+             gravado, mas o resto do grupo continua salvando. */
+          const contactProbe = await supabase.from('groups').select('id, owner_contact').limit(1);
+          setHasOwnerContactColumn(!contactProbe.error);
           // As colunas subscription_status e chat_enabled entram pela mesma
           // migration da visibility — o front detecta antes de mandar no payload.
           setHasSubscriptionColumn(await subscriptionStatusColumnAvailable());
@@ -616,6 +872,7 @@ function GroupForm() {
             if (group.plan_id) setPlanId(group.plan_id);
             if (group.pix_key) setPixKey(group.pix_key);
             if (group.pix_type) setPixType(group.pix_type);
+            if (group.owner_contact) setOwnerContact(group.owner_contact);
             if (group.plan_type) { setPlanType(group.plan_type); setCustomPlanActive(false); }
             if (group.plan_type_custom) { setPlanTypeCustom(group.plan_type_custom); setCustomPlanActive(true); }
             setHasAds(group.has_ads === true ? true : (group.has_ads === false ? false : null));
@@ -700,6 +957,115 @@ function GroupForm() {
     load();
     return () => { cancelled = true; };
   }, [groupId, isEditing, searchParams]);
+
+  /* ------------------------------------------------------------------ *
+   * Dados bancários do dono (leitura).
+   *
+   * As colunas `bank_*` só existem depois da migration
+   * database/fix-wallet-repasse.sql. Quando o banco recusa a coluna, a
+   * consulta é refeita sem ela — mesmo padrão defensivo do walletApi.js —
+   * para a tela não quebrar em produção antes da migration.
+   * ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!isEditing || !groupId) return undefined;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        let wallet = null;
+        let hasBankColumns = true;
+        let withdrawals = [];
+
+        if (ownerId) {
+          let walletRes = await supabase
+            .from('user_wallets')
+            .select('user_id, balance, total_earned, bank_name, bank_agency, bank_account, bank_holder')
+            .eq('user_id', ownerId)
+            .maybeSingle();
+
+          if (walletRes.error) {
+            hasBankColumns = !isMissingColumn(walletRes.error, 'bank_name');
+            walletRes = await supabase
+              .from('user_wallets')
+              .select('user_id, balance, total_earned')
+              .eq('user_id', ownerId)
+              .maybeSingle();
+          }
+          wallet = walletRes.data || null;
+
+          let wdRes = await supabase
+            .from('wallet_withdrawals')
+            .select('id, amount, status, payment_method, payment_details, pix_key, pix_type, bank_name, bank_agency, bank_account, bank_holder, requested_at, processed_at')
+            .eq('user_id', ownerId)
+            .order('requested_at', { ascending: false })
+            .limit(8);
+
+          if (wdRes.error) {
+            wdRes = await supabase
+              .from('wallet_withdrawals')
+              .select('id, amount, status, payment_method, payment_details, requested_at, processed_at')
+              .eq('user_id', ownerId)
+              .order('requested_at', { ascending: false })
+              .limit(8);
+          }
+          withdrawals = wdRes.data || [];
+        }
+
+        if (!cancelled) {
+          setBankData({ loading: false, wallet, hasBankColumns, withdrawals, error: '' });
+        }
+      } catch (err) {
+        console.error('[GroupForm] dados bancários do dono:', err);
+        if (!cancelled) {
+          setBankData(prev => ({
+            ...prev,
+            loading: false,
+            error: 'Não foi possível carregar os dados bancários do dono.',
+          }));
+        }
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [groupId, isEditing, ownerId]);
+
+  /* ------------------------------------------------------------------ *
+   * Histórico do grupo (leitura): eventos da plataforma + pagamentos +
+   * movimentações da carteira, todos juntos numa linha do tempo.
+   * ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!isEditing || !groupId) return undefined;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const [eventos, pagamentos, transacoes] = await Promise.all([
+          carregarEventosDoGrupo(groupId),
+          carregarPagamentosDoGrupo(groupId),
+          carregarTransacoesDoGrupo(groupId),
+        ]);
+
+        const itens = [...eventos, ...pagamentos, ...transacoes]
+          .sort((a, b) => new Date(b.data || 0) - new Date(a.data || 0))
+          .slice(0, 60);
+
+        if (!cancelled) setGroupLogs({ loading: false, items: itens, error: '' });
+      } catch (err) {
+        console.error('[GroupForm] log do grupo:', err);
+        if (!cancelled) {
+          setGroupLogs(prev => ({
+            ...prev,
+            loading: false,
+            error: 'Não foi possível carregar o histórico do grupo.',
+          }));
+        }
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [groupId, isEditing]);
 
   useEffect(() => {
     // Planos da plataforma (service_plans): o grupo pode ser vinculado a um
@@ -791,6 +1157,9 @@ function GroupForm() {
         ...(hasChatColumn ? { chat_enabled: formData.chat_enabled !== false } : {}),
         // Chave PIX de pagamento.
         ...(hasPixColumn && pixKey ? { pix_key: unmaskPixKey(pixKey, pixType), pix_type: pixType } : {}),
+        // Contato do dono — só entra no payload quando a coluna já existe
+        // no banco (migration EXECUTAR-2026-11-07-plataforma-codigo-email.sql).
+        ...(isEditing && hasOwnerContactColumn ? { owner_contact: ownerContact || null } : {}),
         // Grupo criado pelo painel admin já nasce aprovado: a fila de aprovação
         // é para grupos que o USUÁRIO criou. Ao editar, o status de aprovação
         // não é tocado (aprovar é ação explícita na tela de grupos).
@@ -813,6 +1182,7 @@ function GroupForm() {
               if (field === 'visibility') setHasVisibilityColumn(false);
               if (field === 'subscription_status') setHasSubscriptionColumn(false);
               if (field === 'chat_enabled') setHasChatColumn(false);
+              if (field === 'owner_contact') setHasOwnerContactColumn(false);
             });
             const again = await supabase.from('groups').update(retry.payload).eq('id', groupId);
             updateError = again.error;
@@ -833,6 +1203,7 @@ function GroupForm() {
               if (field === 'visibility') setHasVisibilityColumn(false);
               if (field === 'subscription_status') setHasSubscriptionColumn(false);
               if (field === 'chat_enabled') setHasChatColumn(false);
+              if (field === 'owner_contact') setHasOwnerContactColumn(false);
             });
             const again = await supabase.from('groups').insert(retry.payload).select('id').single();
             newGroup = again.data;
@@ -1276,7 +1647,11 @@ function GroupForm() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <form onSubmit={handleSubmit} className="group-form-card">
+      <form
+        onSubmit={handleSubmit}
+        onInvalid={handleFormInvalid}
+        className={`group-form-card ${isEditing ? 'is-compact' : ''}`}
+      >
         {!isEditing ? (
           <>
             <div className="admin-wizard-steps">
@@ -1473,9 +1848,9 @@ function GroupForm() {
                         <div className="form-group">
                           <label>Status</label>
                           <select name="status" value={formData.status} onChange={handleChange}>
-                            <option value="open">Aberto</option>
+                            <option value="open">Na vitrine</option>
                             <option value="forming">Formando</option>
-                            <option value="closed">Fechado</option>
+                            <option value="closed">Esgotado</option>
                           </select>
                         </div>
                         <div className="form-group">
@@ -1608,8 +1983,12 @@ function GroupForm() {
           </>
         ) : (
           <>
-        <section className="form-section">
-          <h2>Dados do Grupo</h2>
+        <AccordionSection
+          id="dados"
+          title="Dados do Grupo"
+          open={!!openSections.dados}
+          onToggle={() => toggleSection('dados')}
+        >
 
           <div className="form-grid">
             <div className="form-group">
@@ -1958,9 +2337,9 @@ function GroupForm() {
             <div className="form-group">
               <label>Status</label>
               <select name="status" value={formData.status} onChange={handleChange}>
-                <option value="open">Aberto</option>
+                <option value="open">Na vitrine</option>
                 <option value="forming">Formando</option>
-                <option value="closed">Fechado</option>
+                <option value="closed">Esgotado</option>
               </select>
             </div>
             <div className="form-group checkbox-group">
@@ -2051,10 +2430,14 @@ function GroupForm() {
                 : 'Busque para colocar outra pessoa como dona. Sem escolha, o grupo fica com você.'}
             </small>
           </div>
-        </section>
+        </AccordionSection>
 
-        <section className="form-section">
-          <h2>Credenciais de Acesso</h2>
+        <AccordionSection
+          id="credenciais"
+          title="Credenciais de Acesso"
+          open={!!openSections.credenciais}
+          onToggle={() => toggleSection('credenciais')}
+        >
           <p className="section-desc">
             Configure as credenciais de acesso ao serviço. Compartilhadas entre todos os membros do grupo.
           </p>
@@ -2298,10 +2681,14 @@ function GroupForm() {
               </button>
             </div>
           )}
-        </section>
+        </AccordionSection>
 
-        <section className="form-section">
-          <h2>Busca de Código por E-mail (Opcional)</h2>
+        <AccordionSection
+          id="email"
+          title="Busca de Código por E-mail (Opcional)"
+          open={!!openSections.email}
+          onToggle={() => toggleSection('email')}
+        >
           <p className="section-desc">
             Quando habilitado, os membros do grupo poderão buscar códigos de verificação diretamente pela DividePass, sem precisar acessar o e-mail da conta.
           </p>
@@ -2461,17 +2848,19 @@ function GroupForm() {
                 </div>
             </div>
           )}
-        </section>
+        </AccordionSection>
 
         {isEditing && (
-          <section className="form-section">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h2>Membros do Grupo</h2>
-                <p className="section-desc">
-                  {members.length} membro(s) neste grupo ({members.filter(m => m.status === 'active').length} ativo(s), {members.filter(m => m.status === 'pending').length} pendente(s)). Você pode adicionar ou remover membros manualmente.
-                </p>
-              </div>
+          <AccordionSection
+            id="membros"
+            title="Membros do Grupo"
+            open={!!openSections.membros}
+            onToggle={() => toggleSection('membros')}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <p className="section-desc">
+                {members.length} membro(s) neste grupo ({members.filter(m => m.status === 'active').length} ativo(s), {members.filter(m => m.status === 'pending').length} pendente(s)). Você pode adicionar ou remover membros manualmente.
+              </p>
               <button type="button" className="btn btn-primary btn-sm" onClick={handleSyncMembers} disabled={syncing}>
                 {syncing ? <><Loader2 size={14} className="spin" /> Sincronizando...</> : <><RefreshCw size={14} /> Sincronizar Assinaturas</>}
               </button>
@@ -2557,7 +2946,180 @@ function GroupForm() {
                 Adicionar
               </button>
             </div>
-          </section>
+          </AccordionSection>
+        )}
+
+        {isEditing && (
+          <AccordionSection
+            id="banco"
+            title="Dados Bancários / Transferência"
+            open={!!openSections.banco}
+            onToggle={() => toggleSection('banco')}
+          >
+            <p className="section-desc">
+              Para onde o dinheiro do grupo está indo: a chave PIX de recebimento do grupo e os dados de repasse do dono.
+            </p>
+
+            {!hasPixColumn && (
+              <div className="gf-note warn">
+                <Info size={15} />
+                <span>
+                  A coluna <code>pix_key</code> ainda não existe no banco, então a chave PIX do grupo não aparece aqui.
+                  Aplique a migration <code>database/add-group-pix.sql</code> no SQL Editor do Supabase.
+                </span>
+              </div>
+            )}
+
+            <div className="bank-grid">
+              <div className="bank-item">
+                <span className="bank-item-label">Chave PIX de recebimento do grupo</span>
+                <span className={`bank-item-value ${pixKey ? '' : 'is-empty'}`}>
+                  {pixKey ? maskPixKey(pixKey, pixType) : 'Não informada'}
+                </span>
+                <small className="bank-item-hint">
+                  {pixKey ? `${pixTypeLabel(pixType)} — somente leitura` : 'O grupo ainda não cadastrou uma chave PIX.'}
+                </small>
+              </div>
+
+              <div className="bank-item">
+                <span className="bank-item-label">Contato do dono</span>
+                {hasOwnerContactColumn ? (
+                  <>
+                    <input
+                      type="text"
+                      className="bank-item-input"
+                      value={ownerContact}
+                      onChange={e => setOwnerContact(e.target.value)}
+                      placeholder="Ex: dono@email.com ou (11) 90000-0000"
+                    />
+                    <small className="bank-item-hint">
+                      É o contato que o membro usa para falar com o dono quando o código é repassado manualmente.
+                    </small>
+                  </>
+                ) : (
+                  <>
+                    <span className="bank-item-value is-empty">Indisponível no banco</span>
+                    <small className="bank-item-hint">
+                      A coluna <code>owner_contact</code> ainda não existe — aplique a migration
+                      <code> database/EXECUTAR-2026-11-07-plataforma-codigo-email.sql</code> para poder gravar o contato.
+                    </small>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <h3 className="bank-subtitle">Repasse para o dono</h3>
+
+            {bankData.loading ? (
+              <p className="section-desc">Carregando os dados bancários do dono...</p>
+            ) : (
+              <>
+                {bankData.error && (
+                  <div className="gf-note warn">
+                    <Info size={15} />
+                    <span>{bankData.error}</span>
+                  </div>
+                )}
+
+                <div className="bank-grid">
+                  <div className="bank-item">
+                    <span className="bank-item-label">Titular</span>
+                    <span className={`bank-item-value ${bankData.wallet?.bank_holder ? '' : 'is-empty'}`}>
+                      {bankData.wallet?.bank_holder || 'Não informado'}
+                    </span>
+                  </div>
+                  <div className="bank-item">
+                    <span className="bank-item-label">Banco</span>
+                    <span className={`bank-item-value ${bankData.wallet?.bank_name ? '' : 'is-empty'}`}>
+                      {bankData.wallet?.bank_name || 'Não informado'}
+                    </span>
+                  </div>
+                  <div className="bank-item">
+                    <span className="bank-item-label">Agência</span>
+                    <span className={`bank-item-value ${bankData.wallet?.bank_agency ? '' : 'is-empty'}`}>
+                      {bankData.wallet?.bank_agency || 'Não informada'}
+                    </span>
+                  </div>
+                  <div className="bank-item">
+                    <span className="bank-item-label">Conta</span>
+                    <span className={`bank-item-value ${bankData.wallet?.bank_account ? '' : 'is-empty'}`}>
+                      {bankData.wallet?.bank_account || 'Não informada'}
+                    </span>
+                  </div>
+                </div>
+
+                {!bankData.hasBankColumns && (
+                  <div className="gf-note info">
+                    <Landmark size={15} />
+                    <span>
+                      Os dados bancários do dono ainda não existem no banco (colunas <code>bank_*</code>).
+                      Aplique a migration <code>database/fix-wallet-repasse.sql</code> no SQL Editor do Supabase.
+                    </span>
+                  </div>
+                )}
+
+                <div className="bank-list">
+                  {bankData.withdrawals.map((wd) => (
+                    <div className="bank-row" key={wd.id}>
+                      <div>
+                        <strong>R$ {brl(wd.amount)}</strong>
+                        <div className="bank-row-meta">
+                          {SAQUE_STATUS[wd.status] || wd.status} · {formatFullDate(wd.requested_at)}
+                        </div>
+                      </div>
+                      <div className="bank-row-meta">{destinoSaque(wd)}</div>
+                    </div>
+                  ))}
+
+                  {bankData.withdrawals.length === 0 && (
+                    <p className="section-desc">O dono ainda não pediu nenhum saque.</p>
+                  )}
+                </div>
+
+                <Link to="/admin/wallets" className="btn btn-sm btn-outline">
+                  <ExternalLink size={14} /> Ver carteiras e saques
+                </Link>
+              </>
+            )}
+          </AccordionSection>
+        )}
+
+        {isEditing && (
+          <AccordionSection
+            id="logs"
+            title="Logs do Grupo"
+            open={!!openSections.logs}
+            onToggle={() => toggleSection('logs')}
+          >
+            <p className="section-desc">
+              Histórico do grupo: eventos da plataforma, pagamentos recebidos e movimentações da carteira.
+            </p>
+
+            {groupLogs.loading ? (
+              <p className="section-desc">Carregando o histórico...</p>
+            ) : groupLogs.items.length === 0 ? (
+              <p className="log-empty">Nenhum registro ainda.</p>
+            ) : (
+              <div className="log-timeline">
+                {groupLogs.items.map((item) => {
+                  const Icone = item.icone || Info;
+                  return (
+                    <div className="log-item" key={item.id}>
+                      <span className="log-item-icon"><Icone size={15} /></span>
+                      <div className="log-item-main">
+                        <div className="log-item-title">{item.titulo}</div>
+                        {item.mensagem && <div className="log-item-msg">{item.mensagem}</div>}
+                        <div className="log-item-meta">
+                          <span className="log-badge">{item.tipo}</span>
+                          <span>{formatFullDate(item.data)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </AccordionSection>
         )}
 
           </>

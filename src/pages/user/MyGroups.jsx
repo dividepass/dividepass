@@ -4,6 +4,7 @@ import { Plus, Settings, Trash2, Globe, X, AlertTriangle, Loader2, ArrowRight } 
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import GroupTags from '../../components/GroupTags';
+import { grupoDesativado, grupoEsgotado, grupoIndisponivel, statusGrupoLabel } from '../../lib/groupEstado';
 import './MyGroups.css';
 
 function DeleteGroupModal({ groupName, onConfirm, onCancel, loading, error }) {
@@ -128,8 +129,11 @@ function MyGroups() {
             const spots = group.max_size ? Math.max(0, group.max_size - activeMembers) : null;
             const full = spots === 0;
             const isDraft = group.status === 'draft';
+            // Grupo fechado, sem estoque ou lotado: o card fica mais
+            // transparente (o cliente vê na hora o que dá para comprar).
+            const inativo = grupoDesativado(group) || grupoEsgotado(group) || full;
             return (
-              <div key={group.id} className={`my-group-card ${isDraft ? 'is-draft' : ''}`}>
+              <div key={group.id} className={`my-group-card ${isDraft ? 'is-draft' : ''} ${inativo ? 'my-group-card-inativo' : ''}`}>
                 <div className="mg-top">
                   {group.photo_url ? (
                     <div className="mg-photo">
@@ -148,6 +152,11 @@ function MyGroups() {
                     <div className="mg-name-row">
                       <h3>{group.name}</h3>
                       {isDraft && <span className="mg-draft-badge">Rascunho</span>}
+                      {!isDraft && (
+                        <span className={`mg-status-badge ${grupoIndisponivel(group) ? 'is-esgotado' : ''}`}>
+                          {statusGrupoLabel(group)}
+                        </span>
+                      )}
                     </div>
                     <GroupTags group={group} size="sm" className="mg-tags" />
                     <div className="mg-stats-row">
@@ -161,7 +170,13 @@ function MyGroups() {
                             <span className="gc-members">{activeMembers} {activeMembers === 1 ? 'membro' : 'membros'}</span>
                           )}
                           {spots !== null && (
-                            <span className={`gc-vagas ${full ? 'full' : ''}`}>{full ? 'CHEIO' : `${spots} VAGAS`}</span>
+                            <span className={`gc-vagas ${full ? 'full' : ''}`}>
+                              {group.has_slot_limit === false
+                                ? 'VAGAS LIVRES'
+                                : full
+                                  ? 'CHEIO'
+                                  : `${spots} VAGAS`}
+                            </span>
                           )}
                         </>
                       )}

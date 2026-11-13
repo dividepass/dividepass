@@ -44,10 +44,20 @@ const FUNCOES = [
   "process-recurring-billing",
   // Tier 2 — pagamento/renovação
   "check-iopay-tx",
+  // A integração da Woovi (Pix Automático) é o gateway de PIX recorrente:
+  // a webhook confirma o pagamento do ciclo e o polling é a rede de
+  // segurança. As DUAS precisam entrar na esteira de validação/publicação
+  // — fora dela, elas ficavam com o código antigo no ar (foi assim que o
+  // cliente pagou e o sistema não confirmou).
+  "check-woovi-tx",
+  "woovi-webhook",
   "confirm-payment",
   "force-confirm-payment",
   "create-payment",
   "mercado-pago-webhook",
+  // Tier 2 — prazo de 12h da entrada (rodada de 09/11/2026: não estorna nem
+  // cancela quem tem assinatura paga e vigente)
+  "check-entrance-deadline",
   // Tier 2 — reconciliação: "paguei e não fui add ao grupo" (rodada de 01/11/2026)
   "reconcile-payments",
   // Tier 2 — exclusão de conta (a versão corrigida limpa platform_events e
@@ -58,6 +68,22 @@ const FUNCOES = [
   "asaas-webhook",
   "pagarme-webhook",
   "stripe-webhook",
+  // Tier 3 — gateway legado ainda no ar (rodada de 09/11/2026: o cancelamento
+  // no gateway não encerra o acesso de quem tem período pago pela frente)
+  "mercado-pago-webhook",
+  "mercado-pago-create-subscription",
+  // Tier 3 — revenda Pulse Coding (rodada de 06/11/2026)
+  "pulse-admin",
+  "pulse-entrega",
+  "pulse-webhook",
+  "pulse-poll",
+  // Rodada de 13/11/2026: sincronização de STATUS dos grupos com a Pulse
+  // (cron de 5 em 5 horas — "Na vitrine" libera, "Indisponível" desativa).
+  "pulse-status",
+  // Suporte (rodada de 10/11/2026): admin entra na conta do cliente sem a
+  // senha dele. A função não tem import local — o empacotador só a embrulha
+  // para que ela entre na mesma esteira de validação e publicação.
+  "admin-impersonate",
 ];
 
 /* ------------------------------------------------------------------ helpers */
@@ -97,8 +123,19 @@ function fimDeclaracaoTipo(src, inicio) {
     } else if (ch === "}") {
       depth--;
       if (depth <= 0 && sawBrace) {
+        // A UNION pode continuar na linha seguinte:
+        //   export type CouponResult =
+        //     | { ok: true; ... }
+        //     | { ok: false; error: string };
+        // Se o declaration termina no primeiro `}`, o resto fica no corpo e
+        // o bundle sai sintaticamente quebrado ("Expected ',', got ';'").
         let j = i + 1;
         while (j < src.length && /\s/.test(src[j])) j++;
+        if (src[j] === "|" || src[j] === "&") {
+          // União/intersecção continua: segue varrendo sem fechar aqui.
+          sawBrace = false;
+          continue;
+        }
         if (src[j] === ";") j++;
         return j;
       }
@@ -163,14 +200,44 @@ function analisar(absPath) {
     return "";
   });
 
+  // ── Import DINÂMICO ────────────────────────────────────────────────────
+  //
+  // `const mod = await import("./handlers/woovi.ts")` vira, no arquivo
+  // empacotado, `const mod = m_create_payment_handlers_woovi;`.
+  //
+  // ONDE ESSA LINHA FICA
+  // --------------------
+  // No LUGAR original — dentro do bloco onde o import estava — e NÃO no topo
+  // do arquivo.
+  //
+  // Por que isso importa: no `create-payment` os seis handlers são importados
+  // dinamicamente, cada um dentro do seu `case` do `switch`:
+  //
+  //     switch (gateway) {
+  //       case "stripe": { const mod = await import("./handlers/stripe.ts"); ... }
+  //       case "woovi":   { const mod = await import("./handlers/woovi.ts");   ... }
+  //     }
+  //
+  // Içando os seis para o topo do arquivo produzia `const mod` repetido no
+  // MESMO escopo — "Cannot redeclare block-scoped variable 'mod'" (SyntaxError
+  // de verdade em JS) — e, pior, o `switch` passaria a usar sempre o ÚLTIMO
+  // handler: o pagamento de PIX cairia no handler do Mercado Pago.
+  //
+  // Cada `case` tem o seu próprio bloco, então mantê-los no lugar original
+  // dá um escopo por handler — que é exatamente o que o fonte tem.
+  //
+  // A troca é feita em duas etapas porque o nome do namespace (`m_*`) só é
+  // conhecido depois: aqui a linha vira um MARCADOR, e o empacotador troca
+  // o marcador pela linha final.
   corpo = corpo.replace(RE_DINAMICO, (_achado, nomes, mod) => {
     const linha = `const ${nomes.replace(/\s+/g, " ").trim()} = await import("${mod}");`;
     if (/^https?:\/\//.test(mod)) {
       externos.push(linha);
-    } else {
-      dinâmicos.push({ nomes: nomes.trim(), mod, linha });
+      return "";
     }
-    return "";
+    const marcador = `__IMPORT_DINAMICO_${dinâmicos.length}__`;
+    dinâmicos.push({ nomes: nomes.trim(), mod, linha, marcador });
+    return marcador;
   });
 
   // exports
@@ -186,13 +253,35 @@ function analisar(absPath) {
       return `${kind} ${nome}`;
     }
   );
+  // ── `export default async function X()` / `export default function X()` ──
+  //
+  // O nome exportado é o PRÓPRIO nome da função. Como o namespace do módulo
+  // vira um objeto, o export precisa ser `default: nomeDaFuncao` — e NÃO o
+  // atalho `{ default }`.
+  //
+  // POR QUE O ATALHO QUEBRA O DEPLOY
+  // ---------------------------------
+  // `default` é palavra reservada em JavaScript. O atalho de propriedade
+  // `{ default }` é um SyntaxError ("Unexpected token 'default'"), então o
+  // arquivo empacotado NÃO COMPILA — a edge function morre no BOOT e o
+  // Supabase responde 503 BOOT_ERROR.
+  //
+  // E o 503 NÃO vem com header de CORS: o navegador bloqueia a resposta e o
+  // front mostra "Failed to fetch" (sem mensagem de gateway nenhuma).
+  //
+  // Foi exatamente o que aconteceu com `create-payment` em 09/11/2026: o
+  // empacotador gerava `return { default, handleWoovi };` nos seis handlers
+  // de gateway, a função não subia, e o PIX do cliente parou de funcionar.
+  //
+  // Antes, o nome ficava em `exportsValor` como `default` E o nome da
+  // função — mas o `default` solto é justamente o atalho inválido.
   corpo = corpo.replace(/__EXPORT_DEFAULT__\s+async\s+function\s+([A-Za-z0-9_$]+)/g, (l, nome) => {
-    exportsValor.push("default");
+    exportsValor.push(`default: ${nome}`);
     exportsValor.push(nome);
     return `async function ${nome}`;
   });
   corpo = corpo.replace(/__EXPORT_DEFAULT__\s+function\s+([A-Za-z0-9_$]+)/g, (l, nome) => {
-    exportsValor.push("default");
+    exportsValor.push(`default: ${nome}`);
     exportsValor.push(nome);
     return `function ${nome}`;
   });
@@ -207,6 +296,39 @@ function analisar(absPath) {
     corpo = corpo.replace(/const __default__ = /g, "export default ");
   }
 
+  // ── `export { A, B }` (reexport de valor) ────────────────────────────────
+  //
+  // O empacotado vira uma IIFE por módulo: um `export` NO CORPO do módulo é
+  // inválido ("'import', and 'export' cannot be used outside of module
+  // code") e o deploy caía com HTTP 400.
+  //
+  // Exemplo real que quebrou o deploy de 09/11/2026:
+  //   `export { DAY_MS };` no fim de `_shared/subscription-dates.ts`
+  //
+  // A forma é removida do corpo e os nomes entram na lista de exports de
+  // valor do módulo (é assim que quem importa `{ DAY_MS }` continua
+  // recebendo o valor).
+  corpo = corpo.replace(
+    /^[ \t]*export\s*\{([^}]*)\}\s*;?[ \t]*$/gm,
+    (l, lista) => {
+      for (const bruto of lista.split(",")) {
+        const nome = bruto.trim();
+        if (!nome) continue;
+        // `export { A as B }` — o nome EXPORTADO é B, o local é A.
+        const partes = nome.split(/\s+as\s+/);
+        const local = partes[0].trim();
+        const exportado = (partes[1] || partes[0]).trim();
+        if (!exportado) continue;
+        if (exportado.startsWith("type ")) {
+          exportsTipo.push(exportado.slice(5).trim());
+        } else {
+          exportsValor.push(exportado === local ? exportado : `${exportado}: ${local}`);
+        }
+      }
+      return "";
+    },
+  );
+
   return { src, externos, locais, dinâmicos, exportsValor, exportsTipo, tipos, corpo };
 }
 
@@ -218,6 +340,16 @@ function analisar(absPath) {
  */
 function linhaVinculo(d, indent = "", tiposAlvo = []) {
   const nomes = d.nomes.trim();
+
+  // `import type { Foo } from "./x.ts"` — import só de TIPOS.
+  //
+  // O tipo não existe em runtime: o `type` já foi içado para o topo do
+  // arquivo empacotado (ver `analisar`), então aqui não deve nascer NENHUM
+  // vínculo. Sem esta guarda o empacotado saía com
+  // `const type { Foo } = m_x;` — sintaxe inválida e o deploy caía com
+  // "Expected a semicolon".
+  if (/^type\s/.test(nomes)) return "";
+
   if (nomes.startsWith("{")) {
     // `import { type Foo, bar } from "./x.ts"` — o modificador `type` é de
     // TIPOS e não existe em runtime. Se ele for carried para o destructuring
@@ -235,6 +367,11 @@ function linhaVinculo(d, indent = "", tiposAlvo = []) {
       .map((s) => s.replace(/^type\s+/, "").trim())
       .filter(Boolean)
       .filter((s) => !tiposAlvo.includes(s.split(/\s+as\s+/)[0].trim()))
+      // `import { createCharge as apiCreateCharge }` — o "as" é sintaxe de
+      // IMPORT do TypeScript. No destructuring gerado o apelido é com ":".
+      // Sem esta troca o bundle saía com `const { x as y } = m_mod;` e o
+      // deploy caía com "Expected ',', got 'as'".
+      .map((s) => s.replace(/\s+as\s+/, ": "))
       .join(", ");
     if (!dentro.trim()) return "";
     return `${indent}const { ${dentro} } = ${slug(d.abs)};`;
@@ -327,12 +464,21 @@ function empacotar(nomeFuncao) {
     partes.push(`const ${slug(absPath)} = (() => {`);
     for (const d of deps) {
       if (!d.nomes || !d.nomes.trim()) continue;
+      // Import dinâmico fica no LUGAR original (dentro do módulo), para não
+      // repetir `const <mesmo nome>` no escopo do módulo. Ver `analisar()`.
+      if (d.dinamico) continue;
       const tiposAlvo = visitados.get(d.abs)?.info?.exportsTipo || [];
       const linha = linhaVinculo(d, "  ", tiposAlvo);
       if (linha) partes.push(linha);
     }
     if (deps.length) partes.push("");
-    partes.push(info.corpo.trim());
+    // imports dinâmicos: marcador -> referência ao namespace, no lugar
+    let corpoModulo = info.corpo;
+    for (const d of deps) {
+      if (!d.dinamico) continue;
+      corpoModulo = corpoModulo.replace(d.marcador, linhaVinculo(d, "  "));
+    }
+    partes.push(corpoModulo.trim());
     partes.push("");
     partes.push(`  return { ${[...new Set(info.exportsValor)].join(", ")} };`);
     partes.push(`})();`);
@@ -344,13 +490,17 @@ function empacotar(nomeFuncao) {
   partes.push(`// ── entrypoint: ${nomeFuncao}/index.ts ${"─".repeat(Math.max(0, 30 - nomeFuncao.length))}`);
   for (const d of entry.deps) {
     if (!d.nomes || !d.nomes.trim()) continue;
+    // Import DINÂMICO não vira linha no topo: ele é trocado no lugar onde
+    // estava (dentro do bloco do `case`), para cada `const mod` ficar no
+    // escopo do seu handler. Ver a nota em `analisar()`.
+    if (d.dinamico) continue;
     partes.push(linhaVinculo(d, ""));
   }
-  // imports dinâmicos viram referência ao namespace
+  // imports dinâmicos viram referência ao namespace, NO LUGAR ORIGINAL
   let corpoEntry = entry.info.corpo;
   for (const d of entry.deps) {
     if (!d.dinamico) continue;
-    corpoEntry = corpoEntry.replace(d.linha, linhaVinculo(d, ""));
+    corpoEntry = corpoEntry.replace(d.marcador, linhaVinculo(d, ""));
   }
   partes.push(corpoEntry.trim());
   partes.push("");

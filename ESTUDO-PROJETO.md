@@ -5011,3 +5011,58 @@ Front publicado na Vercel (`dividepass.com`). Medições em produção:
 hero **ausente**, card de pendência **primeiro da tela** (top 80px no
 celular, 40px no desktop), botão "Pagar agora" presente, grid de 4×88px,
 depoimento 140px com a frase curta visível, **0 erros de console**.
+
+---
+
+## 32. Status dos grupos sincronizado com a Pulse — cron de 5 em 5 horas (13/11/2026)
+
+### 32.1 O pedido
+
+"Precisamos criar um cron que a cada 5 horas fazemos a sincronia de dados com
+a Pulse… se o grupo X estava com o status **Na vitrine** e na nova sincronia
+esse grupo X passou a ficar com status **Indisponível**, devemos **desativar**
+o grupo para que mais nenhuma pessoa faça pagamento e entre neste grupo."
+
+E, na mesma mensagem: o vocabulário de status do app passa a ser o **mesmo do
+painel da Pulse** — "Na vitrine" (liberado e clicável) e "Esgotado"
+(indisponível, **não** clicável). Hoje o app dizia "Aberto" / "Formando" /
+"Fechado", e o grupo **continuava clicável** mesmo fechado.
+
+### 32.2 O que foi feito
+
+| Peça | Onde |
+|---|---|
+| Regra do status do produto | `supabase/functions/_shared/pulse-catalog.ts` → `statusPulseDoPacote()` |
+| A sincronização | `supabase/functions/_shared/pulse-status.ts` → `sincronizarStatusParceiro()` |
+| A edge function (alvo do cron) | `supabase/functions/pulse-status/index.ts` |
+| O job | `database/EXECUTAR-2026-11-13-pulse-status-cron.sql` → `0 */5 * * *` |
+| Trava de pagamento | `create-payment` → **403 `grupo_desativado`** |
+| Trava de entrada | `joinGroup` (front) recusa grupo indisponível |
+| Vocabulário | `src/lib/groupEstado.js` → `statusGrupoLabel()` ("Na vitrine" / "Formando" / "Esgotado") |
+
+### 32.3 A regra (duas colunas, não uma)
+
+| Na Pulse | No grupo | Cliente |
+|---|---|---|
+| "Na vitrine" | `open` + `public` | liberado, clicável |
+| "Indisponível" | `closed` + `private` | **desativado**: fora da vitrine, sem pagamento, sem entrada |
+| "Na vitrine" **sem estoque** | `open` + `public` + tag **"Esgotado"** | continua anunciado, mas **não clicável** e sem compra |
+
+E volta: quando a Pulse volta a liberar, o grupo é **reativado**.
+
+### 32.4 A regra de ouro
+
+A sincronização **só mexe em grupo cujo pacote está no catálogo da rodada**.
+Catálogo parcial da API ⇒ nenhum grupo desativado. (Deu verdade: 8 produtos
+saíram do catálogo da Pulse e os grupos deles ficaram como estavam.)
+
+### 32.5 Prova em produção
+
+```
+pulse-status: total=101 na_vitrine=72 indisponiveis=21 reativados=1
+create-payment em grupo desativado → HTTP 403 {"code":"grupo_desativado"}
+node scripts/pulse-teste.mjs → 107 passaram · 0 falharam
+```
+
+Detalhes e arquivos: `docs/pulse-parceiro.md`, seção 19.
+

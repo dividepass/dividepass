@@ -242,7 +242,7 @@ export default {
       if (!isRenewal && payment_type !== "invoice") {
         const { data: groupForApproval } = await supabaseAdmin
           .from("groups")
-          .select("id, name, approval_status, tags")
+          .select("id, name, approval_status, tags, status")
           .eq("id", group_id)
           .maybeSingle();
 
@@ -258,6 +258,32 @@ export default {
                 : "Este grupo está aguardando aprovação da equipe DividePass. Os pagamentos são liberados assim que o grupo for aprovado.",
               code: "group_not_approved",
               approval_status: groupForApproval.approval_status,
+            }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // ── Grupo DESATIVADO ────────────────────────────────────────────────
+        // O status do grupo é o Interruptor: "open" = liberado, "closed" =
+        // desativado (ninguém paga, ninguém entra).
+        //
+        // Quem desativa é a sincronização com a Pulse (cron de 5 em 5 horas):
+        // quando o parceiro tira o produto do cardápio ("Indisponível" no
+        // painel da Pulse), o grupo é desativado aqui. O status do grupo
+        // também é o que o front usa — se o front diz "Esgotado", é este
+        // bloco que barra a cobrança.
+        //
+        // A renovação NÃO é bloqueada: a pessoa pagou antes e o acesso dela
+        // depende disso.
+        const statusGrupo = String(groupForApproval?.status || "").trim().toLowerCase();
+        if (statusGrupo && statusGrupo !== "open" && statusGrupo !== "forming") {
+          console.log(`[create-payment] BLOQUEADO: grupo ${group_id} esta DESATIVADO (status=${statusGrupo})`);
+          return new Response(
+            JSON.stringify({
+              error:
+                "Este produto está indisponível no momento e não aceita novos pagamentos.",
+              code: "grupo_desativado",
+              status: statusGrupo,
             }),
             { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );

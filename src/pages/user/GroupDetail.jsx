@@ -1,20 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Shield, Users, ChevronDown, ChevronUp, Star, AlertCircle, CheckCircle2, Clock, CreditCard, Share2, Check } from 'lucide-react';
+import { ArrowLeft, Loader2, Shield, Users, ChevronDown, ChevronUp, Star, AlertCircle, CheckCircle2, Clock, CreditCard, Share2, Check, PackageX } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { logPlatformEvent } from '../../lib/platformEventLogger';
 import GroupTags from '../../components/GroupTags';
 import GroupRules from '../../components/GroupRules';
+import { groupPeriodLabel, groupPriceSuffix } from '../../lib/subscriptionCycles';
+import { grupoEsgotado, grupoDesativado, grupoIndisponivel, statusGrupoLabel } from '../../lib/groupEstado';
 import './GroupDetail.css';
-
-const CYCLE_LABELS = {
-  monthly: 'mês',
-  quarterly: 'trimestre',
-  semiannual: 'semestre',
-  annual: 'ano',
-  days: 'dias',
-};
 
 const FAQ_ITEMS = [
   { q: 'Quando terei acesso ao serviço?', a: 'Após a confirmação do pagamento, você receberá as credenciais de acesso por e-mail ou diretamente no painel de credenciais da plataforma.' },
@@ -107,6 +101,11 @@ function GroupDetail() {
   const maxMembers = group?.has_slot_limit === false ? Infinity : (group?.max_size || service?.max_group_size || 4);
   const spots = maxMembers === Infinity ? Infinity : Math.max(0, maxMembers - allOccupants);
   const isFull = spots === 0;
+  // Sem estoque no fornecedor: o grupo existe, mas não aceita mais gente.
+  // "Indisponível" (desativado pela sincronização com a Pulse) também conta.
+  const esgotado = grupoIndisponivel(group);
+  // Esgotado, fechado ou lotado: a vitrine do grupo fica mais transparente.
+  const indisponivel = esgotado || isFull;
   const isMember = user && members.some(m => m.user?.id === user.id);
   const hasActiveSubscription = user && members.some(m => m.user?.id === user.id && (m.payment_status === 'active' || m.payment_status === 'awaiting_subscription'));
 
@@ -137,7 +136,6 @@ function GroupDetail() {
   }
 
   const price = Number(group?.price_per_slot) || 0;
-  const cycle = group?.billing_cycle || 'monthly';
   // Grupo criado por usuário que a equipe ainda não aprovou: aparece no
   // catálogo, mas não aceita pagamento.
   const awaitingApproval = group?.approval_status === 'pending';
@@ -189,7 +187,7 @@ function GroupDetail() {
       </button>
 
       {/* Header */}
-      <div className="gd-header">
+      <div className={`gd-header ${indisponivel ? 'gd-header-indisponivel' : ''}`}>
         <div className="gd-header-service" style={{ backgroundColor: service?.color }}>
           {service?.icon_url ? (
             <img src={service.icon_url} alt={service.name} className="gd-service-logo" />
@@ -211,18 +209,25 @@ function GroupDetail() {
                 <Clock size={12} /> Aguardando aprovação
               </span>
             )}
+            {/* Status no mesmo tom do painel da Pulse: "Na vitrine" está
+                liberado e clicável; "Esgotado" é indisponível. */}
             <span className={`gd-badge status ${group?.status}`}>
-              {group?.status === 'open' ? 'Aberto' : group?.status === 'forming' ? 'Formando' : 'Fechado'}
+              {statusGrupoLabel(group)}
             </span>
             <span className="gd-badge spots">
-              <Users size={12} /> {spots > 0 ? `${spots} vaga${spots > 1 ? 's' : ''}` : 'Lotado'}
+              <Users size={12} />{' '}
+              {spots === Infinity
+                ? 'Vagas ilimitadas'
+                : spots > 0
+                  ? `${spots} vaga${spots > 1 ? 's' : ''}`
+                  : 'Lotado'}
             </span>
           </div>
           <GroupTags group={group} showVerified={false} className="gd-group-tags" />
         </div>
         <div className="gd-header-price">
           <span className="gd-price-value">R$ {price.toFixed(2).replace('.', ',')}</span>
-          <span className="gd-price-cycle">/mês por perfil</span>
+          <span className="gd-price-cycle">{groupPriceSuffix(group)}</span>
         </div>
       </div>
 
@@ -235,6 +240,11 @@ function GroupDetail() {
         ) : isMember ? (
           <button type="button" onClick={handleCheckoutClick} className="btn btn-primary gd-cta-btn">
             <CreditCard size={18} /> Continuar Assinatura
+          </button>
+        ) : esgotado ? (
+          <button className="btn btn-outline gd-cta-btn" disabled>
+            <PackageX size={18} />
+            {grupoDesativado(group) ? 'Esgotado — indisponível' : 'Esgotado — sem estoque'}
           </button>
         ) : isFull ? (
           <button className="btn btn-outline gd-cta-btn" disabled>
@@ -295,9 +305,14 @@ function GroupDetail() {
 
             <h3>Situação</h3>
             <p>
-              {group?.status === 'open' && 'O grupo está ativo e existem vagas disponíveis.'}
-              {group?.status === 'forming' && 'O grupo está em formação. Aguarde a confirmação dos membros.'}
-              {group?.status === 'closed' && 'O grupo está fechado para novos membros.'}
+              {statusGrupoLabel(group) === 'Esgotado' &&
+                (grupoDesativado(group)
+                  ? 'O grupo está indisponível no momento e não aceita novos membros.'
+                  : 'O produto está sem estoque no fornecedor no momento. Logo que reponha, ele volta a ficar disponível.')}
+              {statusGrupoLabel(group) === 'Formando' &&
+                'O grupo está em formação. Aguarde a confirmação dos membros.'}
+              {statusGrupoLabel(group) === 'Na vitrine' &&
+                'O grupo está ativo e existem vagas disponíveis.'}
             </p>
           </div>
         )}
@@ -385,13 +400,17 @@ function GroupDetail() {
           </Link>
         ) : isFull ? (
           <button className="btn btn-outline gd-cta-btn" disabled>Grupo Lotado</button>
+        ) : esgotado ? (
+          <button className="btn btn-outline gd-cta-btn" disabled>
+            Esgotado — sem estoque
+          </button>
         ) : awaitingApproval ? (
           <button className="btn btn-outline gd-cta-btn" disabled>
             Aguardando aprovação da equipe
           </button>
         ) : (
           <Link to={`/dashboard/checkout/${group?.slug || group?.id}`} className="btn btn-primary gd-cta-btn">
-            Entrar no Grupo — R$ {price.toFixed(2).replace('.', ',')} / {CYCLE_LABELS[cycle] || cycle}
+            Entrar no Grupo — R$ {price.toFixed(2).replace('.', ',')} / {groupPeriodLabel(group)}
           </Link>
         )}
       </div>

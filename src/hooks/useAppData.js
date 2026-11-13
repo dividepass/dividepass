@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from './useAuth';
 import { isSubscriptionVisible } from '../lib/subscriptionAccess';
 import { visibilityColumnAvailable } from '../lib/groupVisibility';
+import { grupoDesativado, grupoIndisponivel } from '../lib/groupEstado';
 
 /**
  * Status que a listagem do usuário busca.
@@ -291,6 +292,20 @@ export function useAppData() {
         .single();
 
       if (groupError) throw groupError;
+
+      // ── Grupo INDISPONÍVEL: não entra ──────────────────────────────────
+      // "Esgotado" (sem estoque no fornecedor) ou desativado pela
+      // sincronização com a Pulse ("Indisponível" no painel dela): o grupo
+      // existe, mas não aceita mais gente. A trava de verdade está no
+      // `create-payment`; aqui é a primeira barreira, para a pessoa não
+      // criar uma inscrição que não vai virar assinatura.
+      if (grupoIndisponivel(groupData)) {
+        throw new Error(
+          grupoDesativado(groupData)
+            ? 'Este grupo está indisponível no momento e não aceita novos membros.'
+            : 'Este produto está sem estoque no momento.',
+        );
+      }
 
       const maxSize = groupData.max_size || groupData.service?.max_group_size;
       const activeMembers = groupData.members?.filter(m => m.status === 'active').length || 0;

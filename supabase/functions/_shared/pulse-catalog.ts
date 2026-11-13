@@ -31,6 +31,69 @@ import type { PulsePackage } from "./pulse.ts";
 /** Tag que marca os grupos que vêm da Pulse. */
 export const TAG_VIA_PARCEIRO = "Via Parceiro";
 
+/**
+ * Tag de produto ESGOTADO no parceiro.
+ *
+ * Quando o estoque do fornecedor acaba, o grupo continua na vitrine (a
+ * pessoa vê que o produto existe) mas não aceita mais gente: é o mesmo
+ * comportamento de um grupo cheio.
+ */
+export const TAG_ESGOTADO = "Esgotado";
+
+/**
+ * O PARCEIRO APARECE COMO DIVIDEPASS.
+ *
+ * Decisão do dono: o cliente não precisa saber de onde veio o produto — o
+ * parceiro é a DIVIDEPASS. Então, em tudo que o cliente lê, a marca do
+ * fornecedor vira "DividePass".
+ *
+ * O espelho local (`pulse_pacotes`) CONTINUA com o texto cru: quem precisa
+ * saber qual pacote é qual é o painel do ADMIN, não o cliente.
+ */
+const MARCAS_PARCEIRO = [
+  "pulse coding",
+  "pulse codig",
+  "pulse clone",
+  "pulsecoding",
+  "pulse",
+];
+
+/**
+ * Troca a marca do fornecedor por "DividePass" e arruma o texto.
+ *
+ * "ANTIGRAVITY — 1 BILHÃO DE TOKENS | PULSE" → "ANTIGRAVITY — 1 BILHÃO DE TOKENS | DividePass"
+ * "Suporte da PULSE para dúvidas"               → "Suporte da DividePass para dúvidas"
+ * "Extensão Pulse Codig Duração De 1 dia"        → "Extensão DividePass — Duração De 1 dia"
+ */
+export function marcarComoDividePass(texto: string | null | undefined): string {
+  if (texto == null) return "";
+  let s = String(texto);
+
+  // A marca vira DividePass. Quando ela está NO MEIO do nome, entra um
+  // separador ("Extensão DividePass — Duração De 7 dias"); quando está no
+  // começo ou no fim, o texto original já fica bom ("DividePass Clone — 01
+  // Clone", "… | DividePass").
+  s = s.replace(
+    /pulse(?:\s+coding|\s+codig|\s+clone)?/gi,
+    (match: string, offset: number, whole: string) => {
+      const antes = whole.slice(0, offset);
+      const depois = whole.slice(offset + match.length);
+      const noComecoDaLinha = /(^|\n)[ \t]*$/.test(antes);
+      const precisaSeparador =
+        !noComecoDaLinha &&
+        /^\s+[A-ZÀ-Ú]/.test(depois) &&
+        !/[-–—|]$/.test(antes.trimEnd());
+      return precisaSeparador ? "DividePass — " : "DividePass";
+    },
+  );
+
+  // Limpeza final de espaço.
+  s = s.replace(/[ \t]{2,}/g, " ");
+  s = s.replace(/[ \t]+\n/g, "\n");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  return s.trim();
+}
+
 /** Categorias da Pulse que NÃO entram no import automático. */
 export const CATEGORIAS_IGNORADAS = ["serviços", "servicos"];
 
@@ -80,7 +143,7 @@ const REGRAS_PLATAFORMA: RegraPlataforma[] = [
   // "Combo Play — Spotify Premium + YouTube Premium | 3 Meses Cada" contém o
   // nome de outros serviços: se as regras por serviço viessem antes, o combo
   // cairia na plataforma de um deles (Spotify) em vez de ser um produto só.
-  { titulo: "combo", destino: { slug: "combos-pulse", nome: "Combos Pulse", criar: true, icone: "🎁" } },
+  { titulo: "combo", destino: { slug: "combos", nome: "Combos", criar: true, icone: "🎁" } },
 
   // ── Streaming (já existem no DividePass) ────────────────────────────────
   { titulo: "amazon prime video", destino: { slug: "prime-video", nome: "Prime Video", criar: false } },
@@ -121,9 +184,9 @@ const REGRAS_PLATAFORMA: RegraPlataforma[] = [
   { titulo: "antigravity", destino: { slug: "antigravity", nome: "Antigravity", criar: true, icone: "🛰️" } },
   { titulo: "manus", destino: { slug: "manus", nome: "Manus", criar: true, icone: "🤖" } },
   { titulo: "muse ai", destino: { slug: "muse-ai", nome: "Muse AI", criar: true, icone: "🎨" } },
-  { titulo: "clone", destino: { slug: "pulse-clone", nome: "Pulse Clone", criar: true, icone: "🧬" } },
-  { titulo: "extensao", destino: { slug: "pulse-coding", nome: "Pulse Coding", criar: true, icone: "🧩" } },
-  { titulo: "pulse coding", destino: { slug: "pulse-coding", nome: "Pulse Coding", criar: true, icone: "🧩" } },
+  { titulo: "clone", destino: { slug: "clones", nome: "Clones", criar: true, icone: "🧬" } },
+  { titulo: "extensao", destino: { slug: "extensoes", nome: "Extensões", criar: true, icone: "🧩" } },
+  { titulo: "pulse coding", destino: { slug: "extensoes", nome: "Extensões", criar: true, icone: "🧩" } },
 ];
 
 /**
@@ -249,6 +312,94 @@ export function derivarCiclo(titulo: string | null | undefined): CicloDerivado {
   };
 }
 
+/**
+ * Rótulo do período, gravado em `groups.custom_cycle_label`.
+ *
+ * O front usa esse rótulo para não escrever "1 dias" nem "/mês por perfil"
+ * num pacote que vale por 7 dias.
+ */
+export function rotuloCiclo(ciclo: CicloDerivado): string | null {
+  if (ciclo.billing_cycle === "days") {
+    const n = ciclo.custom_cycle_days ?? 0;
+    if (n <= 0) return null;
+    return `${n} ${n === 1 ? "dia" : "dias"}`;
+  }
+  if (ciclo.billing_cycle === "custom") {
+    const n = ciclo.custom_cycle_months ?? 0;
+    if (n <= 0) return null;
+    return `${n} ${n === 1 ? "mês" : "meses"}`;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// NATUREZA DA COBRANÇA
+// ---------------------------------------------------------------------------
+
+export type NaturezaCobranca = "recorrente" | "pagamento_unico";
+
+export interface ClassificacaoProduto {
+  /** A cobrança se repete (assinatura) ou é uma compra só. */
+  natureza: NaturezaCobranca;
+  /** A entrega chega sozinha ou precisa de mão? */
+  entrega: "automatica" | "manual";
+  /** O produto entrega SALDO (créditos/tokens) em vez de acesso contínuo. */
+  ehSaldo: boolean;
+  /** O título traz um período ("1 mês", "12 meses", "7 dias"). */
+  temPeriodo: boolean;
+}
+
+/**
+ * CLASSIFICA A COBRANÇA DO PRODUTO.
+ *
+ * A API de revenda NÃO tem campo "recorrente": nenhum dos 23 campos diz se o
+ * produto é assinatura ou pagamento único. A classificação sai do que a API
+ * devolve de verdade:
+ *
+ *   - `delivery`: "automatica" | "manual" (a entrega chega sozinha ou por mão);
+ *   - `credits` / `credit_amount`: saldo que vem junto;
+ *   - o título: o período ("1 mês", "12 meses", "7 dias") e o tipo de saldo
+ *     ("100 créditos", "1 BILHÃO DE TOKENS").
+ *
+ * Regra:
+ *
+ *   - ASSINATURA (`recorrente`): o produto dá ACESSO CONTÍNUO a um serviço e
+ *     o cliente renova — "Netflix 1 mês", "Canva Pro 12 meses", "VIDEOAPI
+ *     Plano Starter | 1 mês".
+ *   - PAGAMENTO ÚNICO (`pagamento_unico`): o produto dá SALDO (créditos,
+ *     tokens) ou é uma extensão curta — "Extensão 7 dias - 100 créditos",
+ *     "ANTIGRAVITY 1 BILHÃO DE TOKENS", "CloneSupa - 2 Clones". O cliente não
+ *     "renova": ele compra de novo quando o saldo acaba.
+ */
+export function classificarProduto(
+  pkg: {
+    title?: string | null;
+    credits?: number | null;
+    credit_amount?: number | null;
+    delivery?: string | null;
+  } | null | undefined,
+  ciclo?: CicloDerivado | null,
+): ClassificacaoProduto {
+  const titulo = normalizarTexto(pkg?.title);
+  const temPeriodo = /(\d+)\s*(anos?|mes(?:es)?|dias?|m\b)/.test(titulo);
+  const ehSaldo =
+    Number(pkg?.credits ?? 0) > 0 ||
+    Number(pkg?.credit_amount ?? 0) > 0 ||
+    /credito|token|saldo/.test(titulo);
+  const entrega: "automatica" | "manual" =
+    normalizarTexto(pkg?.delivery) === "manual" ? "manual" : "automatica";
+
+  const natureza: NaturezaCobranca =
+    !temPeriodo || ehSaldo || ciclo?.billing_cycle === "days" ? "pagamento_unico" : "recorrente";
+
+  return { natureza, entrega, ehSaldo, temPeriodo };
+}
+
+/** Rótulo curto da natureza, para o painel. */
+export function rotuloNatureza(natureza: NaturezaCobranca | string | null | undefined): string {
+  return natureza === "recorrente" ? "Recorrente" : "Pagamento único";
+}
+
 // ---------------------------------------------------------------------------
 // PREÇO
 // ---------------------------------------------------------------------------
@@ -278,6 +429,74 @@ export function pacoteEhVendavel(pkg: PulsePackage): boolean {
   if (pkg.available === false) return false;
   if (pkg.availability === "unavailable") return false;
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// STATUS DO PRODUTO NA PULSE
+// ---------------------------------------------------------------------------
+
+/**
+ * O status do produto na Pulse, no MESMO vocabulário do painel da Pulse.
+ *
+ *   - "na_vitrine"   → "Na vitrine": o parceiro libera o produto para revenda.
+ *   - "indisponivel" → "Indisponível": o parceiro NÃO libera mais o produto.
+ *
+ * É esse status que manda no estado do grupo no DividePass: um grupo que
+ * estava "Na vitrine" e vira "Indisponível" é DESATIVADO (ninguém paga,
+ * ninguém entra) — e volta a ser reativado quando a Pulse volta a liberar.
+ *
+ * REGRA: status e ESTOQUE são coisas diferentes.
+ *
+ *   - status "Indisponível" → o produto não é oferecido; o grupo é
+ *     desativado e sai da vitrine (não faz sentido anunciar o que o
+ *     fornecedor tirou do cardápio);
+ *   - status "Na vitrine" SEM estoque → o produto continua anunciado, mas
+ *     marcado como "Esgotado" (a pessoa vê que existe, entra na lista de
+ *     espera, mas não consegue comprar).
+ *
+ * Hoje os dois andam juntos no catálogo (os 23 produtos indisponíveis são
+ * exatamente os 23 com estoque zero), mas a API trata os campos separados —
+ * e é por isso que a sincronização olha para os dois.
+ */
+export type StatusPulse = "na_vitrine" | "indisponivel";
+
+export function statusPulseDoPacote(pkg: PulsePackage): StatusPulse {
+  return pacoteEhVendavel(pkg) ? "na_vitrine" : "indisponivel";
+}
+
+/** Rótulo do status no mesmo tom do painel da Pulse. */
+export function rotuloStatusPulse(status: StatusPulse): string {
+  return status === "na_vitrine" ? "Na vitrine" : "Indisponível";
+}
+
+/**
+ * O parceiro TEM estoque deste pacote?
+ *
+ * A API traz cinco campos de estoque e eles NÃO concordam: `stock` é o
+ * estoque automático (fica 0 em tudo que é de entrega manual), enquanto
+ * `available_stock` é o que dá para vender agora. Por isso a resposta usa o
+ * `available_stock` — usar o `stock` apagaria da vitrine 22 produtos que
+ * ainda estão à venda.
+ *
+ * Estoque <= 0 não significa "some da vitrine": o grupo continua visível
+ * com a tag "Esgotado" e o cliente não consegue entrar.
+ */
+export function pacoteTemEstoque(pkg: PulsePackage): boolean {
+  if (pkg.in_stock === false) return false;
+  if (pkg.available === false) return false;
+  const disponivel = Number(pkg.available_stock);
+  if (!Number.isFinite(disponivel)) return true; // sem o dado: não inventa zerado
+  return disponivel > 0;
+}
+
+/**
+ * Calcula as tags do grupo a partir do produto.
+ *
+ * "Esgotado" entra quando o parceiro não tem estoque; "Via Parceiro" sempre
+ * (é o que marca o grupo como vindo da revenda).
+ */
+export function tagsDoGrupo(pkg: PulsePackage, temEstoque: boolean): string[] {
+  return temEstoque ? [TAG_VIA_PARCEIRO] : [TAG_VIA_PARCEIRO, TAG_ESGOTADO];
 }
 
 /** Descrição da Pulse vira texto limpo para o card do grupo. */

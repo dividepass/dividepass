@@ -818,7 +818,7 @@ function AdminDashboard() {
           <div className="stats-grid">
             <div className="stat-row">
               <span className="stat-label">
-                <Activity size={16} /> Abertos
+                <Activity size={16} /> Na vitrine
               </span>
               <span className="stat-value">{stats.groupsByStatus.open || 0}</span>
             </div>
@@ -830,7 +830,7 @@ function AdminDashboard() {
             </div>
             <div className="stat-row">
               <span className="stat-label">
-                <CheckCircle2 size={16} /> Fechados
+                <CheckCircle2 size={16} /> Esgotados
               </span>
               <span className="stat-value">{stats.groupsByStatus.closed || 0}</span>
             </div>

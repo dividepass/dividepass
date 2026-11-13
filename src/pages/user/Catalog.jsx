@@ -5,7 +5,7 @@ import { useAppDataContext } from '../../contexts/AppDataContext';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { visibilityColumnAvailable } from '../../lib/groupVisibility';
-import { grupoEsgotado, grupoDesativado } from '../../lib/groupEstado';
+import { grupoEsgotado, grupoDesativado, grupoIndisponivel, statusGrupoLabel } from '../../lib/groupEstado';
 import GroupTags from '../../components/GroupTags';
 import MemberAvatar from '../../components/MemberAvatar';
 import WatchlistButton from '../../components/WatchlistButton';
@@ -438,7 +438,7 @@ function Catalog() {
             const full = isFull(group, selectedService);
             // Sem estoque no fornecedor: o grupo aparece, mas não entra mais
             // gente (mesma coisa de um grupo cheio).
-            const esgotado = grupoEsgotado(group);
+            const esgotado = grupoIndisponivel(group);
             const desativado = grupoDesativado(group);
             const hasSlotLimit = group.has_slot_limit !== false;
             const maxSize = hasSlotLimit ? (group.max_size || selectedService.max_group_size) : null;
@@ -461,8 +461,14 @@ function Catalog() {
               <div
                 key={group.id}
                 className={`group-card ${full ? 'group-card-full' : ''} ${esgotado ? 'group-card-esgotado' : ''} ${desativado ? 'group-card-desativado' : ''} ${group.verified ? 'is-verified' : ''}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => navigate(`/dashboard/groups/${group.slug || group.id}`)}
+                style={{ cursor: esgotado ? 'not-allowed' : 'pointer' }}
+                onClick={() => {
+                  // "Esgotado" (sem estoque ou desativado pela Pulse) NÃO é
+                  // clicável: não dá para entrar nem comprar. O card fica
+                  // visível para a pessoa saber que o produto existe.
+                  if (esgotado) return;
+                  navigate(`/dashboard/groups/${group.slug || group.id}`);
+                }}
               >
                 {/* Top Section: Photo + Name + Stats */}
                 <div className="gc-top">
@@ -497,8 +503,15 @@ function Catalog() {
                         </span>
                       )}
                       {esgotado && (
-                        <span className="gc-cheio gc-cheio--esgotado" title="Sem estoque no fornecedor">
+                        <span className="gc-cheio gc-cheio--esgotado" title={desativado ? 'Indisponível no fornecedor' : 'Sem estoque no fornecedor'}>
                           ESGOTADO
+                        </span>
+                      )}
+                      {/* Status no mesmo tom do painel da Pulse: "Na vitrine"
+                          é liberado e clicável; "Esgotado" não é. */}
+                      {!esgotado && !full && (
+                        <span className="gc-cheio gc-cheio--vitrine" title="Disponível para compra">
+                          {statusGrupoLabel(group).toUpperCase()}
                         </span>
                       )}
                     </div>

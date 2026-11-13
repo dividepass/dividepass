@@ -262,3 +262,13 @@ entrypoint = "./functions/pulse-entrega/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/pulse-poll/index.ts"
+
+# [functions.pulse-status]
+# Sincroniza o STATUS dos grupos Via Parceiro com a Pulse (cron de 5 em 5
+# horas). "Na vitrine" deixa o grupo liberado; "Indisponível" desativa o grupo
+# (ninguém paga, ninguém entra). Mesmo esquema do pulse-poll: o cron manda o
+# segredo de app_settings e a checagem real acontece dentro do código.
+[functions.pulse-status]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/pulse-status/index.ts"

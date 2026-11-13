@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, Shield, Users, Calendar, ExternalLink } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { statusGrupoLabel } from '../../lib/groupEstado';
 import './UserPublicProfile.css';
 
 function UserPublicProfile() {
@@ -174,7 +175,7 @@ function UserPublicProfile() {
                     <p>{group.service?.full_name || group.service?.name}</p>
                     <div className="up-group-meta">
                       <span className={`up-group-status ${group.status}`}>
-                        {group.status === 'open' ? 'Aberto' : group.status === 'forming' ? 'Formando' : 'Fechado'}
+                        {statusGrupoLabel(group)}
                       </span>
                       <span className="up-group-members">
                         {activeCount}/{maxMembers} membros

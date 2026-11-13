@@ -152,6 +152,27 @@
   font-family: monospace;
 }
 
+/* Status do grupo — o mesmo vocabulário do painel da Pulse Coding:
+   "Na vitrine" (liberado) e "Esgotado" (indisponível). */
+.mg-status-badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.14);
+  color: #4ADE80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  white-space: nowrap;
+}
+
+.mg-status-badge.is-esgotado {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--warning, #F59E0B);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
 /* Rascunho: grupo criado pelo wizard mas ainda nao publicado */
 .mg-draft-badge {
   font-size: 0.62rem;
@@ -173,6 +194,12 @@
 
 .my-group-card.is-draft .mg-photo-placeholder {
   opacity: 0.75;
+}
+
+/* Grupo fechado, sem estoque ou lotado: mais transparente, para o cliente
+   ver na hora o que ainda dá para comprar. */
+.my-group-card.my-group-card-inativo {
+  opacity: 0.6;
 }
 
 .gc-price-value {

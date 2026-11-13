@@ -154,6 +154,11 @@ const FUNCOES = [
     verify_jwt: false,
     nota: 'job de polling dos pedidos pendentes (segredo do cron)',
   },
+  {
+    slug: 'pulse-status',
+    verify_jwt: false,
+    nota: 'job de cron (5 em 5h) - status dos grupos: Na vitrine libera, Indisponivel desativa',
+  },
   // Suporte (rodada de 10/11/2026): o admin entra na conta do cliente SEM a
   // senha dele. `verify_jwt = false` porque a própria função valida o admin
   // no código (papel em `app_metadata` E em `public.users`) — o mesmo padrão

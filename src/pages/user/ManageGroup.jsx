@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Loader2, Save, Trash2, Users, DollarSign, Settings, Key,
-  CheckCircle, X, AlertTriangle, Eye, EyeOff, Link, Hash, Mail, MessageSquare, CreditCard,
+  CheckCircle, X, AlertTriangle, Eye, EyeOff, Link as LinkIcon, Hash, Mail, MessageSquare, CreditCard,
   TrendingUp, ArrowDownRight, Calendar, QrCode, Info, Receipt, Wallet, Tag, Hourglass,
-  ScrollText,
+  ScrollText, ShieldCheck, Hand,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { simulateAmount, simulatePrice, brl, MIN_PRICE_PER_SLOT } from '../../lib/platformFee';
@@ -22,13 +22,27 @@ import {
   PIX_TYPE_OPTIONS, pixTypeLabel, pixTypePlaceholder,
   maskPixKey, unmaskPixKey, remaskPixKey,
 } from '../../lib/pixKeyMask';
+import { statusGrupoLabel } from '../../lib/groupEstado';
 import './ManageGroup.css';
+
+/* Rótulos em pt-BR dos status de saque (vistos pelo admin no histórico). */
+const WITHDRAWAL_STATUS_LABEL = {
+  pending: 'Em análise',
+  processing: 'Em processamento',
+  completed: 'Realizado',
+  rejected: 'Recusado',
+};
 
 
 function ManageGroup() {
   const { groupId } = useParams();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  /* Rota admin (/admin/groups/:id/manage) vs rota do dono
+     (/dashboard/my-groups/:id/manage). */
+  const isAdminRoute = location.pathname.startsWith('/admin/');
 
   const [group, setGroup] = useState(null);
   const [service, setService] = useState(null);
@@ -47,6 +61,8 @@ function ManageGroup() {
   const [withdrawing, setWithdrawing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [pendingWithdrawal, setPendingWithdrawal] = useState(null);
+  const [withdrawals, setWithdrawals] = useState([]);
+  const [ownerInfo, setOwnerInfo] = useState(null);
   const [payments, setPayments] = useState([]);
 
   /* Chave PIX do grupo (o membro paga PARA ela) e as chaves disponiveis para
@@ -107,6 +123,10 @@ function ManageGroup() {
      tentou revender a vaga, ou avisar que o grupo pode mudar as regras. */
   const [rules, setRules] = useState('');
 
+  /* Contato que o dono deixa para o membro pedir o código de confirmação
+     quando ele é repassado na mão (modo manual). */
+  const [ownerContact, setOwnerContact] = useState('');
+
   const PLAN_TYPES = [
     'Conta Individual', 'Conta Padrão', 'Conta Premium', 'Conta VIP',
     'Conta Go', 'Conta Light', 'Conta Enterprise', 'Conta Team',
@@ -126,22 +146,30 @@ function ManageGroup() {
 
   useEffect(() => {
     const fetchGroup = async ({ silent = false } = {}) => {
-      if (!groupId || !user) return;
+      /* Espera o perfil carregar: sem ele não dá para saber se quem está
+         logado é admin (e admin enxerga o grupo de qualquer dono). */
+      if (!groupId || !user || authLoading) return;
       try {
         if (!silent) setLoading(true);
 
-        const { data: groupData, error: groupError } = await supabase
-          .from('groups')
-          .select('*')
-          .eq('id', groupId)
-          .eq('owner_id', user.id)
-          .single();
+        /* O admin abre o grupo de QUALQUER dono (o filtro por owner_id
+           fica só para o dono comum). */
+        let groupQuery = supabase.from('groups').select('*').eq('id', groupId);
+        if (!isAdmin) groupQuery = groupQuery.eq('owner_id', user.id);
+        const { data: groupData, error: groupError } = await groupQuery.single();
 
         if (groupError || !groupData) {
-          setError('Grupo não encontrado ou você não é o proprietário.');
+          setError(isAdmin
+            ? 'Grupo não encontrado.'
+            : 'Grupo não encontrado ou você não é o proprietário.');
           setLoading(false);
           return;
         }
+
+        /* O DONO do grupo é a referência da carteira: no modo admin é o
+           dono real do grupo (não quem está logado). Grupo sem dono
+           (criado pela plataforma) não tem carteira para consultar. */
+        const ownerId = groupData.owner_id || null;
 
         setGroup(groupData);
         setPlanType(groupData.plan_type || '');
@@ -156,6 +184,7 @@ function ManageGroup() {
            catálogo é reconhecido pelo texto, então o que estava marcado
            continua marcado e o que foi escrito à mão volta como texto livre. */
         setRules(groupData.rules || '');
+        setOwnerContact(groupData.owner_contact || '');
         setPixKey(maskPixKey(groupData.pix_key || '', groupData.pix_type || 'cpf'));
         setPixType(groupData.pix_type || 'cpf');
         /* A coluna `has_ads` só existe depois da migration
@@ -166,14 +195,28 @@ function ManageGroup() {
           groupData.has_ads === true ? true : (groupData.has_ads === false ? false : null)
         );
 
-        const [serviceRes, membersRes, credsRes, paymentsRes, subsRes, withdrawalsRes, walletRes] = await Promise.all([
+        /* Carteira e saques são do DONO do grupo — no modo admin é o dono
+           real, não quem está logado. Grupo sem dono (criado pela
+           plataforma) não tem carteira: as consultas viram vazias. */
+        const withdrawalsQuery = ownerId
+          ? supabase.from('wallet_withdrawals').select('id, amount, status, requested_at, processed_at, payment_method, notes').eq('user_id', ownerId).order('requested_at', { ascending: false })
+          : Promise.resolve({ data: [] });
+        const walletQuery = ownerId
+          ? supabase.from('user_wallets').select('balance').eq('user_id', ownerId).maybeSingle()
+          : Promise.resolve({ data: null });
+        const ownerQuery = ownerId
+          ? supabase.from('users').select('id, name, email').eq('id', ownerId).maybeSingle()
+          : Promise.resolve({ data: null });
+
+        const [serviceRes, membersRes, credsRes, paymentsRes, subsRes, withdrawalsRes, walletRes, ownerRes] = await Promise.all([
           supabase.from('streaming_services').select('id, name, full_name, icon, icon_url, color, slug').eq('id', groupData.service_id).single(),
           supabase.from('group_members').select('user_id, created_at, status, user:user_id (id, name, email)').eq('group_id', groupId).order('created_at'),
           supabase.from('group_credentials').select('*').eq('group_id', groupId).maybeSingle(),
           supabase.from('payments').select('id, amount, method, status, payment_type, transaction_code, created_at, paid_at').eq('group_id', groupId).eq('status', 'paid').order('paid_at', { ascending: false }),
           supabase.from('user_subscriptions').select('*, user:user_id (id, name, email)').eq('group_id', groupId).order('created_at', { ascending: false }),
-          supabase.from('wallet_withdrawals').select('id, amount, status, requested_at, processed_at, payment_method, notes').eq('user_id', user.id).order('requested_at', { ascending: false }),
-          supabase.from('user_wallets').select('balance').eq('user_id', user.id).maybeSingle(),
+          withdrawalsQuery,
+          walletQuery,
+          ownerQuery,
         ]);
 
         if (serviceRes.data) setService(serviceRes.data);
@@ -194,6 +237,8 @@ function ManageGroup() {
 
         setPayments(paidPayments);
         setMembers(activeMembers);
+        setWithdrawals(allWithdrawals);
+        setOwnerInfo(ownerRes.data || null);
         setStats({
           activeMembers: activeMembers.length,
           totalRevenue: grossRevenue,
@@ -202,13 +247,16 @@ function ManageGroup() {
         if (subsRes.data) setSubscriptions(subsRes.data);
 
         /* Chaves PIX dos grupos do dono — alimentam o dropdown de saque.
-           Se a coluna `pix_key` ainda não existir no banco, a query falha e a
-           gente segue só com o grupo atual (sem quebrar a tela). */
+           No modo admin a lista é a do DONO do grupo (ownerId). Se a coluna
+           `pix_key` ainda não existir no banco, a query falha e a gente
+           segue só com o grupo atual (sem quebrar a tela). */
         try {
-          const { data: owned, error: pixErr } = await supabase
-            .from('groups')
-            .select('id, name, pix_key, pix_type')
-            .eq('owner_id', user.id);
+          const { data: owned, error: pixErr } = ownerId
+            ? await supabase
+              .from('groups')
+              .select('id, name, pix_key, pix_type')
+              .eq('owner_id', ownerId)
+            : { data: [], error: null };
 
           if (pixErr) {
             // PGRST204 = a coluna `pix_key` não existe no schema cache. Nesse
@@ -283,7 +331,17 @@ function ManageGroup() {
 
     loadGroupRef.current = fetchGroup;
     fetchGroup();
-  }, [groupId, user]);
+  }, [groupId, user, isAdmin, authLoading]);
+
+  /* Modo admin: o admin está olhando o grupo de OUTRO usuário (pelo painel
+     administrativo). Nesse modo a tela vira leitura + ajuste pela equipe:
+     o saque e a exclusão ficam apenas como informação, para o admin não
+     gerar movimentação na carteira de outra pessoa sem querer.
+     O dono (inclusive o admin que tem grupo próprio) continua com a tela
+     normal, com saque e exclusão. */
+  const isOwnerOfGroup = !!group && group.owner_id === user?.id;
+  const isAdminMode = isAdmin && (isAdminRoute || !isOwnerOfGroup);
+  const canActAsOwner = isOwnerOfGroup && !isAdminMode;
 
   const financeGrossRevenue = payments.reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
   // A margem da plataforma segue a regra de faixas (definida pelo preço MENSAL
@@ -489,8 +547,39 @@ function ManageGroup() {
     }
   };
 
-  const handleSavePix = async () => {
-    if (!hasPixColumn) {
+  /* Salva o CONTATO que o dono deixou para o membro pedir o código quando o
+     modo de confirmação é manual. O campo só existe na migration
+     EXECUTAR-2026-11-07-plataforma-codigo-email.sql — por isso a checagem
+     antes de gravar (a tela não pode quebrar por causa de coluna faltando). */
+  const handleSaveOwnerContact = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const contato = ownerContact.trim();
+      const { error } = await supabase
+        .from('groups')
+        .update({ owner_contact: contato || null })
+        .eq('id', groupId);
+      if (error) {
+        /* Coluna ausente no banco: o app segue funcionando, mas o contato
+           não fica gravado até a migration ser aplicada. */
+        if (/owner_contact|column .* does not exist/i.test(error.message || '')) {
+          throw new Error(
+            'A coluna owner_contact ainda não existe no banco. Aplique database/EXECUTAR-2026-11-07-plataforma-codigo-email.sql para gravar o contato.',
+          );
+        }
+        throw error;
+      }
+      setGroup(prev => ({ ...prev, owner_contact: contato || null }));
+      setToast('Contato atualizado!');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSavePix = async () => {    if (!hasPixColumn) {
       setError('A coluna pix_key ainda não existe no banco. Aplique a migration database/add-group-pix.sql para gravar a chave.');
       return;
     }
@@ -723,10 +812,31 @@ function ManageGroup() {
         </div>
       )}
 
-      <button onClick={() => navigate(-1)} className="back-btn">
-        <ArrowLeft size={18} />
-        Voltar
-      </button>
+      {/* Aviso de admin: o grupo pertence a outro usuário. O admin tem a
+          MESMA visão do dono, mas sem os botões que mexem na carteira e
+          na vida do grupo (saque e exclusão). */}
+      {isAdminMode ? (
+        <div className="manage-admin-banner">
+          <ShieldCheck size={18} />
+          <div className="manage-admin-banner-text">
+            <strong>Você está vendo o grupo como administrador</strong>
+            <span>
+              {ownerInfo?.name
+                ? `Este grupo é de ${ownerInfo.name}. Saldo e saques abaixo são do dono do grupo.`
+                : 'Este grupo pertence a outro usuário. Saldo e saques abaixo são do dono do grupo.'}
+            </span>
+          </div>
+          <button type="button" className="manage-admin-banner-back" onClick={() => navigate(-1)}>
+            <ArrowLeft size={14} />
+            Voltar
+          </button>
+        </div>
+      ) : (
+        <button onClick={() => navigate(-1)} className="back-btn">
+          <ArrowLeft size={18} />
+          Voltar
+        </button>
+      )}
 
       <div className="page-header">
         <h1>Gerenciar Grupo</h1>
@@ -779,7 +889,7 @@ function ManageGroup() {
                 </div>
               </div>
               <span className={`manage-status ${group?.status}`}>
-                {group?.status === 'open' ? 'Aberto' : group?.status === 'closed' ? 'Fechado' : 'Formando'}
+                {statusGrupoLabel(group)}
               </span>
               {group?.approval_status === 'approved' && (
                 <span className="manage-approved-badge" title="Aprovado pela equipe">
@@ -845,6 +955,45 @@ function ManageGroup() {
                   className="email-code-search--embedded"
                 />
               </div>
+            </div>
+          )}
+
+          {/* Código de confirmação REPASSADO NA MÃO: a plataforma pede o código
+              no e-mail do DONO (não existe caixa gerenciada para a IA buscar).
+              O membro precisa de um contato para pedir o código — e esse contato
+              é informado a ele depois do pagamento. */}
+          {group?.email_code_delivery === 'manual' && (
+            <div className="manage-card">
+              <div className="manage-card-title">
+                <Hand size={18} />
+                <h3>Código de Confirmação (repassado por você)</h3>
+              </div>
+              <div className="manage-card-body">
+                <p className="section-desc">
+                  A <strong>{service?.full_name || service?.name || 'plataforma'}</strong> pede
+                  confirmação por e-mail quando o membro entra com um dispositivo diferente.
+                  Você olha o e-mail da conta do grupo e passa o código para cada membro.
+                </p>
+                <p className="section-desc">
+                  Deixe abaixo um contato (e-mail ou telefone) para o membro conseguir te pedir o
+                  código. <strong>Seus dados de contato são informados aos membros do grupo
+                  depois que eles pagarem.</strong>
+                </p>
+              </div>
+
+              <div className="manage-form-group">
+                <label>Contato informado aos membros</label>
+                <input
+                  value={ownerContact}
+                  onChange={(e) => setOwnerContact(e.target.value)}
+                  placeholder="seu@email.com ou (11) 99999-9999"
+                />
+              </div>
+
+              <button className="manage-save-btn" onClick={handleSaveOwnerContact} disabled={saving}>
+                {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+                Salvar contato
+              </button>
             </div>
           )}
 
@@ -918,60 +1067,99 @@ function ManageGroup() {
                   <span>Saldo Disponível (Grupo)</span>
                   <strong className="finance-balance-value">R$ {groupBalance.toFixed(2)}</strong>
                 </div>
-                {pendingWithdrawal ? (
-                  <div className="finance-withdrawal-pending">
-                    <span className="finance-withdrawal-badge pending">Saque em análise</span>
-                    <span className="finance-withdrawal-amount">R$ {parseFloat(pendingWithdrawal.amount).toFixed(2)}</span>
-                  </div>
-                ) : (
-                  <div className="finance-withdrawal-form">
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="10"
-                      max={groupBalance}
-                      placeholder="Valor do saque"
-                      value={withdrawAmount}
-                      onChange={e => setWithdrawAmount(e.target.value)}
-                      className="finance-withdrawal-input"
-                    />
-                    <div className="finance-pix-field">
-                      <label htmlFor="withdraw-pix-key">Chave PIX para receber</label>
-                      <select
-                        id="withdraw-pix-key"
-                        value={withdrawPixKey}
-                        onChange={e => {
-                          setWithdrawPixKey(e.target.value);
-                          const opt = pixOptions.find(o => o.key === e.target.value);
-                          setWithdrawPixType(opt?.type || 'cpf');
-                        }}
-                        className="finance-withdrawal-input finance-pix-select"
-                        disabled={pixOptions.length === 0}
-                      >
-                        {pixOptions.length === 0 ? (
-                          <option value="">Nenhuma chave PIX cadastrada</option>
-                        ) : (
-                          pixOptions.map(o => (
-                            <option key={`${o.group}-${o.key}`} value={o.key}>
-                              {maskPixKey(o.key, o.type)} · {pixTypeLabel(o.type)}{o.current ? ' · este grupo' : ''}
-                            </option>
-                          ))
-                        )}
-                      </select>
-                      {pixOptions.length === 0 && (
-                        <span className="finance-pix-hint">
-                          Cadastre a chave em <strong>Gestão do Grupo</strong>.
-                        </span>
-                      )}
+                {canActAsOwner ? (
+                  pendingWithdrawal ? (
+                    <div className="finance-withdrawal-pending">
+                      <span className="finance-withdrawal-badge pending">Saque em análise</span>
+                      <span className="finance-withdrawal-amount">R$ {parseFloat(pendingWithdrawal.amount).toFixed(2)}</span>
                     </div>
-                    <button
-                      className="finance-withdrawal-btn"
-                      onClick={handleRequestWithdrawal}
-                      disabled={withdrawing || !withdrawAmount || parseFloat(withdrawAmount) <= 0}
-                    >
-                      {withdrawing ? <Loader2 size={14} className="spin" /> : <ArrowDownRight size={14} />}
-                      Solicitar Saque
-                    </button>
+                  ) : (
+                    <div className="finance-withdrawal-form">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="10"
+                        max={groupBalance}
+                        placeholder="Valor do saque"
+                        value={withdrawAmount}
+                        onChange={e => setWithdrawAmount(e.target.value)}
+                        className="finance-withdrawal-input"
+                      />
+                      <div className="finance-pix-field">
+                        <label htmlFor="withdraw-pix-key">Chave PIX para receber</label>
+                        <select
+                          id="withdraw-pix-key"
+                          value={withdrawPixKey}
+                          onChange={e => {
+                            setWithdrawPixKey(e.target.value);
+                            const opt = pixOptions.find(o => o.key === e.target.value);
+                            setWithdrawPixType(opt?.type || 'cpf');
+                          }}
+                          className="finance-withdrawal-input finance-pix-select"
+                          disabled={pixOptions.length === 0}
+                        >
+                          {pixOptions.length === 0 ? (
+                            <option value="">Nenhuma chave PIX cadastrada</option>
+                          ) : (
+                            pixOptions.map(o => (
+                              <option key={`${o.group}-${o.key}`} value={o.key}>
+                                {maskPixKey(o.key, o.type)} · {pixTypeLabel(o.type)}{o.current ? ' · este grupo' : ''}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                        {pixOptions.length === 0 && (
+                          <span className="finance-pix-hint">
+                            Cadastre a chave em <strong>Gestão do Grupo</strong>.
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        className="finance-withdrawal-btn"
+                        onClick={handleRequestWithdrawal}
+                        disabled={withdrawing || !withdrawAmount || parseFloat(withdrawAmount) <= 0}
+                      >
+                        {withdrawing ? <Loader2 size={14} className="spin" /> : <ArrowDownRight size={14} />}
+                        Solicitar Saque
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  /* Fora do dono (modo admin) o saque é SÓ INFORMAÇÃO: quem
+                     pede saque é o dono do grupo, para o admin não gerar
+                     movimentação na carteira de outra pessoa sem querer. */
+                  <div className="finance-withdrawal-info">
+                    {pendingWithdrawal ? (
+                      <div className="finance-withdrawal-pending">
+                        <span className="finance-withdrawal-badge pending">Saque em análise</span>
+                        <span className="finance-withdrawal-amount">
+                          R$ {parseFloat(pendingWithdrawal.amount).toFixed(2)}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="finance-withdrawal-info-text">
+                        Nenhum saque pendente. Quem solicita o saque é o dono do grupo.
+                      </p>
+                    )}
+
+                    {withdrawals.length > 0 && (
+                      <div className="finance-withdrawal-history">
+                        <span className="finance-withdrawal-history-title">Saques do dono</span>
+                        <ul>
+                          {withdrawals.map(w => (
+                            <li key={w.id}>
+                              <span className={`finance-withdrawal-status ${w.status}`}>
+                                {WITHDRAWAL_STATUS_LABEL[w.status] || w.status}
+                              </span>
+                              <strong>R$ {parseFloat(w.amount || 0).toFixed(2)}</strong>
+                              <span className="finance-withdrawal-date">
+                                {w.requested_at ? new Date(w.requested_at).toLocaleDateString('pt-BR') : '—'}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1178,14 +1366,27 @@ function ManageGroup() {
                     <p>Deletar o grupo remove todos os membros e cancela as assinaturas ativas.</p>
                   </div>
                 </div>
-                <button
-                  className="btn btn-danger btn-full"
-                  onClick={() => { setShowDeleteModal(true); setDeleteConfirmText(''); }}
-                  disabled={deleting}
-                >
-                  {deleting ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
-                  Deletar Grupo
-                </button>
+                {canActAsOwner ? (
+                  <button
+                    className="btn btn-danger btn-full"
+                    onClick={() => { setShowDeleteModal(true); setDeleteConfirmText(''); }}
+                    disabled={deleting}
+                  >
+                    {deleting ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
+                    Deletar Grupo
+                  </button>
+                ) : (
+                  /* Fora do dono (modo admin) a exclusão fica só como
+                     informação: quem exclui o grupo é o dono (ou a equipe,
+                     pelo painel administrativo). */
+                  <div className="manage-danger-note">
+                    <Info size={15} />
+                    <span>
+                      A exclusão é feita pelo dono do grupo ou pela equipe DividePass
+                      no painel administrativo. Por aqui o admin apenas acompanha.
+                    </span>
+                  </div>
+                )}
               </section>
             </div>
           </div>
@@ -1395,7 +1596,7 @@ function ManageGroup() {
               <div className="cred-type-grid">
                 {[
                   { value: 'email_password', label: 'E-mail / Senha', icon: <Mail size={14} /> },
-                  { value: 'link', label: 'Link de Acesso', icon: <Link size={14} /> },
+                  { value: 'link', label: 'Link de Acesso', icon: <LinkIcon size={14} /> },
                   { value: 'code', label: 'Código', icon: <Hash size={14} /> },
                   { value: 'invite', label: 'Convite', icon: <MessageSquare size={14} /> },
                   { value: 'custom', label: 'Personalizado', icon: <Settings size={14} /> },

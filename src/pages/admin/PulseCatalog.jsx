@@ -36,7 +36,19 @@ async function chamarAdmin(acao, corpo = {}) {
     body: { action: acao, ...corpo },
   });
 
-  if (resposta.error) throw new Error(resposta.error.message || 'Falha na chamada.');
+  if (resposta.error) {
+    const msg = resposta.error.message || '';
+    // "Failed to send a request to the Edge Function" é o erro do SUPABASE
+    // quando a função não existe no projeto (não foi publicada) — não é
+    // problema de chave. A mensagem certaina evita caçar o segredo errado.
+    if (/Failed to send a request/i.test(msg) || /Edge Function/i.test(msg)) {
+      throw new Error(
+        'A função "pulse-admin" não está publicada no Supabase. ' +
+        'Publique com: node scripts/publicar-functions.mjs --only=pulse-admin,pulse-entrega,pulse-webhook,pulse-poll --real',
+      );
+    }
+    throw new Error(msg || 'Falha na chamada.');
+  }
   const dados = resposta.data;
   if (dados && dados.ok === false) {
     throw new Error(dados.erro || dados.error || 'A operação não deu certo.');
@@ -123,6 +135,35 @@ function PulseCatalog() {
     }
   };
 
+  /**
+   * Sincroniza SÓ o STATUS dos grupos (é o que o cron de 5 em 5 horas faz).
+   *
+   * A sincronização completa ("Sincronizar") importa catálogo, preço e
+   * plataforma; esta aqui é a de sempre: "Na vitrine" libera o grupo,
+   * "Indisponível" desativa. Serve para não esperar o cron quando o
+   * parceiro muda o cardápio.
+   */
+  const sincronizarStatus = async () => {
+    try {
+      setSincronizando(true);
+      const { data, error } = await supabase.functions.invoke('pulse-status', {
+        body: {},
+      });
+      if (error) throw error;
+      const rel = data?.relatorio || {};
+      toast.success(
+        `Status sincronizado: ${rel.na_vitrine || 0} na vitrine · ` +
+        `${rel.indisponiveis || 0} indisponíveis · ${rel.desativados || 0} desativados · ` +
+        `${rel.reativados || 0} reativados.`,
+      );
+      await carregar();
+    } catch (e) {
+      toast.error(e.message || String(e));
+    } finally {
+      setSincronizando(false);
+    }
+  };
+
   const pacotesFiltrados = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     return pacotes.filter((p) => {
@@ -170,6 +211,15 @@ function PulseCatalog() {
             Simular sync
           </button>
           <button
+            className="btn btn-secondary"
+            onClick={sincronizarStatus}
+            disabled={sincronizando}
+            title="Sincroniza só o status dos grupos (o que o cron de 5 em 5 horas faz): Na vitrine libera, Indisponível desativa."
+          >
+            {sincronizando ? <Loader2 size={16} className="spin" /> : <Zap size={16} />}
+            Sincronizar status
+          </button>
+          <button
             className="btn btn-primary"
             onClick={() => sincronizar(false)}
             disabled={sincronizando}
@@ -187,8 +237,10 @@ function PulseCatalog() {
             <strong>Não consegui falar com o painel da Pulse.</strong>
             <p>{erro}</p>
             <p className="pulse-alert-hint">
-              O segredo <code>PULSE_API_KEY</code> precisa estar cadastrado no Supabase
-              (Secretos da Edge Function). Sem ele, nenhuma ação da Pulse funciona.
+              Se a mensagem for <code>Failed to send a request to the Edge Function</code>,
+              a função não está publicada no Supabase. Se for sobre o segredo, o
+              <code> PULSE_API_KEY </code> precisa estar cadastrado em
+              Secretos da Edge Function (<code>node scripts/configurar-pulse.mjs --aplicar</code>).
             </p>
           </div>
         </div>
@@ -307,8 +359,10 @@ function PulseCatalog() {
                       <th>Venda</th>
                       <th>Custo</th>
                       <th>Margem</th>
+                      <th>Cobrança</th>
                       <th>Estoque</th>
                       <th>Status</th>
+                      <th>Grupo</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -331,6 +385,18 @@ function PulseCatalog() {
                               {moeda(p.margem)}
                             </span>
                           </td>
+                          <td data-label="Cobrança">
+                            <span className={
+                              p.natureza === 'recorrente' ? 'pulse-tag pulse-tag-ok' : 'pulse-tag pulse-tag-muted'
+                            }>
+                              {p.natureza === 'recorrente' ? 'Recorrente' : 'Pagamento único'}
+                            </span>
+                            {p.entrega_tipo === 'manual' && (
+                              <span className="pulse-tag pulse-tag-warn" title="A entrega deste produto é feita a mao">
+                                Entrega manual
+                              </span>
+                            )}
+                          </td>
                           <td data-label="Estoque">{p.stock ?? '—'}</td>
                           <td data-label="Status">
                             {p.status === 'ignorado' ? (
@@ -339,6 +405,30 @@ function PulseCatalog() {
                               <span className="pulse-tag pulse-tag-ok">Na vitrine</span>
                             ) : (
                               <span className="pulse-tag pulse-tag-off">Indisponível</span>
+                            )}
+                          </td>
+                          {/* O estado do GRUPO no DividePass (o que o cliente
+                              vê). "Na vitrine" = liberado e clicável;
+                              "Esgotado" = indisponível (ninguém paga, ninguém
+                              entra). A sincronização de 5 em 5 horas é quem
+                              mantém os dois em pé. */}
+                          <td data-label="Grupo">
+                            {!p.group_id ? (
+                              <span className="pulse-muted">—</span>
+                            ) : (
+                              <span className={
+                                p.grupo_status === 'closed'
+                                  ? 'pulse-tag pulse-tag-off'
+                                  : p.grupo_status === 'forming'
+                                    ? 'pulse-tag pulse-tag-warn'
+                                    : 'pulse-tag pulse-tag-ok'
+                              }>
+                                {p.grupo_status === 'closed'
+                                  ? 'Esgotado'
+                                  : p.grupo_status === 'forming'
+                                    ? 'Formando'
+                                    : 'Na vitrine'}
+                              </span>
                             )}
                           </td>
                           <td className="ad-actions">
