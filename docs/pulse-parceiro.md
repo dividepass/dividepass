@@ -839,3 +839,35 @@ create-payment num grupo desativado:
 
 Testes: node scripts/pulse-teste.mjs → 107 passaram · 0 falharam
 ```
+
+### 19.8 Aviso quando um grupo COM gente pagante é desativado
+
+Desativar o grupo **não tira o acesso de quem já pagou**:
+
+- a assinatura continua renovando (a cobrança recorrente é feita pelo
+  `process-recurring-billing` direto no gateway — ela **não** passa pelo
+  `create-payment`, então o guard do `grupo_desativado` nem a alcança);
+- a renovação manual (o clique do cliente) passa porque vai com
+  `renewal: true`;
+- a credencial continua valendo (`confirm-payment` não filtra por status do
+  grupo — só lê nome, preço e serviço);
+- a entrada pendente de um grupo desativado continua sendo estornada pelo
+  `check-entrance-deadline` (ele trabalha em `group_members`, sem olhar o
+  status do grupo).
+
+O **efeito real** é um só: ninguém mais entra nem compra naquele grupo — que
+é exatamente o que o dono pediu.
+
+Para o dono não ficar no escuro, a sincronização agora conta quanta gente
+viva o grupo tinha **na hora em que o desativou** e escreve isso no evento do
+painel (`platform_events`, aba "Eventos" do admin):
+
+```
+Status dos grupos sincronizado com a Pulse
+Sincronização de 5 em 5 horas: 1 desativado(s). Atenção — desativado com
+gente pagante: Antigravity 1B (2 assinatura(s) ativa(s), 1 membro(s)).
+Essas assinaturas continuam renovando.
+```
+
+O relatório da função (`desativados_com_gente`) também traz a lista, e o
+botão "Sincronizar status" mostra o mesmo número no toast.

@@ -5066,3 +5066,25 @@ node scripts/pulse-teste.mjs → 107 passaram · 0 falharam
 
 Detalhes e arquivos: `docs/pulse-parceiro.md`, seção 19.
 
+### 32.6 Grupo desativado COM gente pagante (sinalização)
+
+Perguntado pelo outro agente da rodada: "um grupo que ainda tem gente pagante
+pode cair em 'closed' sem querer?". Resposta medida em produção:
+
+| Onde | Verificação | Resultado |
+|---|---|---|
+| Grupos Via Pareiro fechados | `user_subscriptions` ativas | **0** — nenhum grupo da Pulse fechado tem assinatura ativa |
+| Grupo fechado com assinatura ativa | único caso | "Plano Spotify" — grupo de **usuário** (não é Via Parceiro), fechado antes |
+| Renovação **automática** | `process-recurring-billing` | cobra o gateway **direto** (`gateway_subscription_id`) — não passa pelo `create-payment`, então o guard não a alcança |
+| Renovação **manual** | `create-payment` com `renewal: true` | passa (fora do guard) — QA de renovação em produção: 28/28 OK |
+| Quem pagou antes | `confirm-payment` | não filtra por status do grupo — libera assinatura e credencial normalmente |
+| Entrada pendente | `check-entrance-deadline` | trabalha em `group_members` (sem status do grupo) — o estorno de 12h continua |
+
+O único efeito é: **ninguém mais entra nem compra** naquele grupo — o que é
+exatamente o pedido do dono.
+
+Para o dono não ficar no escuro, o sync passou a contar a gente viva **na
+hora da desativação** e a escrever no evento do painel
+(`desativados_com_gente`), com nome do grupo, assinaturas ativas e membros.
+
+

@@ -630,21 +630,28 @@ console.log(`\n${C.bold}TESTES DA INTEGRAÇÃO PULSE CODING${C.fim} ${C.dim}(sem
   };
 
   // Um banco falso: só o que o módulo usa.
-  function bancoFalso(grupos, pacotes) {
-    const estado = { grupos, pacotes };
+  function bancoFalso(grupos, pacotes, extras = {}) {
+    const estado = { grupos, pacotes, ...extras };
+    const tabelas = {
+      groups: estado.grupos,
+      pulse_pacotes: estado.pacotes,
+      user_subscriptions: estado.user_subscriptions || [],
+      group_members: estado.group_members || [],
+    };
     return {
       estado,
       from(nome) {
-        const tabela = nome === "groups" ? estado.grupos : estado.pacotes;
-        let filtroCol = null;
-        let filtroVal = null;
+        const tabela = tabelas[nome] || [];
+        const filtros = [];
         let excluirNulos = false;
         let tagsExigidas = null;
         const api = {
           select: () => api,
-          not: (col) => { excluirNulos = true; return api; },
+          not: () => { excluirNulos = true; return api; },
           contains: (col, val) => { tagsExigidas = val; return api; },
-          eq: (col, val) => { filtroCol = col; filtroVal = val; return api; },
+          // Vários `.eq()` são E (AND), não o último vencendo: é o que o
+          // PostgREST faz e o que o código do sync depende.
+          eq: (col, val) => { filtros.push([col, val]); return api; },
           update: (patch) => ({
             eq: async (col, val) => {
               for (const linha of tabela) if (linha[col] === val) Object.assign(linha, patch);
@@ -661,7 +668,7 @@ console.log(`\n${C.bold}TESTES DA INTEGRAÇÃO PULSE CODING${C.fim} ${C.dim}(sem
             if (tagsExigidas) {
               linhas = linhas.filter((l) => (l.tags || []).some((t) => tagsExigidas.includes(t)));
             }
-            if (filtroCol) linhas = linhas.filter((l) => l[filtroCol] === filtroVal);
+            for (const [col, val] of filtros) linhas = linhas.filter((l) => l[col] === val);
             return linhas;
           },
           then: (resolve, reject) => Promise.resolve({ data: api._linhas() }).then(resolve, reject),
@@ -689,7 +696,18 @@ console.log(`\n${C.bold}TESTES DA INTEGRAÇÃO PULSE CODING${C.fim} ${C.dim}(sem
       { package_id: "pkg-3", group_id: "g3", status: "indisponivel", visible: false, stock: 0 },
       { package_id: "pkg-4", group_id: "g4", status: "importado", visible: true, stock: 3 },
     ];
-    const db = bancoFalso(grupos, pacotes);
+    const db = bancoFalso(grupos, pacotes, {
+      // g2 tem gente pagante: é o caso que o dono precisa ser avisado.
+      user_subscriptions: [
+        { id: "s1", group_id: "g2", status: "active" },
+        { id: "s2", group_id: "g2", status: "active" },
+        { id: "s3", group_id: "g1", status: "active" },
+      ],
+      group_members: [
+        { id: "m1", group_id: "g2", status: "active" },
+        { id: "m2", group_id: "g1", status: "active" },
+      ],
+    });
 
     mockFetch([
       {
@@ -714,6 +732,11 @@ console.log(`\n${C.bold}TESTES DA INTEGRAÇÃO PULSE CODING${C.fim} ${C.dim}(sem
     igual("1 grupo Indisponível", rel.indisponiveis, 1);
     igual("1 grupo esgotado (sem estoque)", rel.esgotados, 1);
     igual("o espelho do painel segue o status da Pulse", db.estado.pacotes[1].visible, false);
+    igual(
+      "desativado COM gente pagante entra no aviso do dono",
+      rel.desativados_com_gente,
+      [{ nome: "Antigravity 1B", assinaturas: 2, membros: 1 }],
+    );
   }
 
   // ── Cenário 2: a API falha → NADA é tocado ───────────────────────────────

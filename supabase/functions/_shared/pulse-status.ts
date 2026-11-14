@@ -53,6 +53,15 @@ import {
   type StatusPulse,
 } from "./pulse-catalog.ts";
 
+export interface GrupoDesativadoComGente {
+  /** Nome do grupo. */
+  nome: string;
+  /** Assinaturas ATIVAS que continuam renovando naquele grupo. */
+  assinaturas: number;
+  /** Membros com o pagamento em dia. */
+  membros: number;
+}
+
 export interface RelatorioStatusParceiro {
   /** Grupos Via Parceiro que foram analisados. */
   total: number;
@@ -70,6 +79,15 @@ export interface RelatorioStatusParceiro {
   atualizados: number;
   /** Grupos Via Parceiro sem pacote correspondente no catálogo. */
   sem_pacote: number;
+  /**
+   * Grupos desativados que JÁ TINHAM gente pagante.
+   *
+   * Desativar não tira o acesso de quem pagou (a assinatura continua
+   * renovando e a credencial continua valendo) — mas ninguém mais entra
+   * nesse grupo. O dono precisa saber QUANDO isso acontece, e com quantas
+   * assinaturas vivas, para poder avisar o cliente se quiser.
+   */
+  desativados_com_gente: GrupoDesativadoComGente[];
   /** A chamada na API falhou? */
   erro?: string;
 }
@@ -92,6 +110,38 @@ function temTag(tags: unknown, tag: string): boolean {
 }
 
 /**
+ * Quantas assinaturas e membros VIVOS o grupo tem.
+ *
+ * Serve para o aviso do dono: desativar o grupo não tira o acesso de quem
+ * já pagou (a renovação segue e a credencial continua valendo) — mas o dono
+ * precisa saber que aquele grupo tinha gente quando foi desativado.
+ */
+async function contarGenteViva(
+  supabaseAdmin: any,
+  groupId: string,
+): Promise<{ assinaturas: number; membros: number }> {
+  try {
+    const { data: subs } = await supabaseAdmin
+      .from("user_subscriptions")
+      .select("id")
+      .eq("group_id", groupId)
+      .eq("status", "active");
+    const { data: membros } = await supabaseAdmin
+      .from("group_members")
+      .select("id")
+      .eq("group_id", groupId)
+      .eq("status", "active");
+    return {
+      assinaturas: (subs ?? []).length,
+      membros: (membros ?? []).length,
+    };
+  } catch (e: any) {
+    console.error("[pulse-status] erro ao contar a gente do grupo:", e?.message ?? e);
+    return { assinaturas: 0, membros: 0 };
+  }
+}
+
+/**
  * Sincroniza o STATUS (e a disponibilidade) dos grupos Via Parceiro com a
  * Pulse.
  *
@@ -108,6 +158,7 @@ export async function sincronizarStatusParceiro(supabaseAdmin: any): Promise<Rel
     reativados: 0,
     atualizados: 0,
     sem_pacote: 0,
+    desativados_com_gente: [],
   };
 
   let pacotes: PulsePackage[] = [];
@@ -152,6 +203,7 @@ export async function sincronizarStatusParceiro(supabaseAdmin: any): Promise<Rel
   let desativados = 0;
   let reativados = 0;
   let atualizados = 0;
+  const desativadosComGente: GrupoDesativadoComGente[] = [];
 
   for (const pkg of pacotes) {
     const groupId = grupoPorPacote.get(pkg.id);
@@ -208,6 +260,21 @@ export async function sincronizarStatusParceiro(supabaseAdmin: any): Promise<Rel
         if (desejado.status === "closed") {
           desativados++;
           console.log(`[pulse-status] desativado: ${grupo.name ?? groupId} (Pulse: Indisponível)`);
+          // O dono precisa saber quando um grupo COM gente pagante é
+          // desativado: as assinaturas continuam renovando e a credencial
+          // continua valendo, mas ninguém mais entra. Uma query por
+          // desativação (é raro) resolve.
+          const vivos = await contarGenteViva(supabaseAdmin, groupId);
+          if (vivos.assinaturas > 0 || vivos.membros > 0) {
+            desativadosComGente.push({
+              nome: String(grupo.name ?? groupId),
+              assinaturas: vivos.assinaturas,
+              membros: vivos.membros,
+            });
+            console.log(
+              `[pulse-status] ATENÇÃO: "${grupo.name ?? groupId}" foi desativado com ${vivos.assinaturas} assinatura(s) ativa(s) e ${vivos.membros} membro(s) — elas continuam renovando.`,
+            );
+          }
         } else {
           reativados++;
           console.log(`[pulse-status] reativado: ${grupo.name ?? groupId} (Pulse: Na vitrine)`);
@@ -265,5 +332,6 @@ export async function sincronizarStatusParceiro(supabaseAdmin: any): Promise<Rel
     reativados,
     atualizados,
     sem_pacote: semPacote,
+    desativados_com_gente: desativadosComGente,
   };
 }

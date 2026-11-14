@@ -90,16 +90,28 @@ export default {
         const partes: string[] = [];
         if (relatorio.desativados > 0) partes.push(`${relatorio.desativados} desativado(s)`);
         if (relatorio.reativados > 0) partes.push(`${relatorio.reativados} reativado(s)`);
+
+        // Grupo desativado COM gente pagante: as assinaturas continuam
+        // renovando e a credencial continua valendo, mas ninguém mais entra.
+        // O dono precisa ver o nome e o tamanho para poder avisar o cliente.
+        const comGente = relatorio.desativados_com_gente || [];
+        const detalhe = comGente.length
+          ? ` Atenção — desativado com gente pagante: ${comGente
+              .map((g) => `${g.nome} (${g.assinaturas} assinatura(s) ativa(s), ${g.membros} membro(s))`)
+              .join("; ")}. Essas assinaturas continuam renovando.`
+          : "";
+
         try {
           await supabaseAdmin.from("platform_events").insert({
             event_type: "pulse",
             title: "Status dos grupos sincronizado com a Pulse",
-            message: `Sincronização de 5 em 5 horas: ${partes.join(" e ")}.`,
+            message: `Sincronização de 5 em 5 horas: ${partes.join(" e ")}.${detalhe}`,
             metadata: JSON.stringify({
               desativados: relatorio.desativados,
               reativados: relatorio.reativados,
               na_vitrine: relatorio.na_vitrine,
               indisponiveis: relatorio.indisponiveis,
+              desativados_com_gente: comGente,
             }),
             created_by: null,
           });

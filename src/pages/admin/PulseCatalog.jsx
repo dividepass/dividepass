@@ -151,11 +151,22 @@ function PulseCatalog() {
       });
       if (error) throw error;
       const rel = data?.relatorio || {};
+      const comGente = rel.desativados_com_gente || [];
       toast.success(
         `Status sincronizado: ${rel.na_vitrine || 0} na vitrine · ` +
         `${rel.indisponiveis || 0} indisponíveis · ${rel.desativados || 0} desativados · ` +
         `${rel.reativados || 0} reativados.`,
       );
+      // Grupo desativado que ainda tinha gente pagante: as assinaturas
+      // continuam renovando, mas ninguém mais entra. O dono precisa ver.
+      if (comGente.length) {
+        toast.warning(
+          `Desativado com gente pagante: ${comGente
+            .map((g) => `${g.nome} (${g.assinaturas} assinatura(s), ${g.membros} membro(s))`)
+            .join(' · ')}. As assinaturas continuam renovando.`,
+          { duration: 12000 },
+        );
+      }
       await carregar();
     } catch (e) {
       toast.error(e.message || String(e));
