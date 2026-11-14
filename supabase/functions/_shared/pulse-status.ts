@@ -219,12 +219,18 @@ export async function sincronizarStatusParceiro(supabaseAdmin: any): Promise<Rel
     const desejado =
       statusPulse === "indisponivel"
         ? {
-            // Partner tirou do cardápio → desativa e some da vitrine.
-            // (sem a tag "Esgotado": o grupo não está na vitrine, a tag só
-            // sujaria o dado — é o mesmo que o importador faz)
+            // O parceiro tirou o produto do cardápio: o grupo é DESATIVADO
+            // (ninguém entra, ninguém paga) — mas CONTINUA ANUNCIADO na
+            // vitrine, igual a Pulse mostra o produto como "Indisponível".
+            // O cliente vê o card transparente, com "GRUPO CHEIO", e não
+            // consegue clicar.
+            //
+            // A tag "Esgotado" é a trava: é ela que o `create-payment` e o
+            // `joinGroup` leem. O `status = 'closed'` deixa o estado
+            // explícito para o admin ("Esgotado") e para a página do grupo.
             status: "closed",
-            visibility: "private",
-            tags: [TAG_VIA_PARCEIRO],
+            visibility: "public",
+            tags: [TAG_VIA_PARCEIRO, TAG_ESGOTADO],
           }
         : {
             // Na vitrine → continua anunciado; sem estoque leva a tag.

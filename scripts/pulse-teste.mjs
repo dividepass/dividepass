@@ -719,7 +719,16 @@ console.log(`\n${C.bold}TESTES DA INTEGRAÇÃO PULSE CODING${C.fim} ${C.dim}(sem
     const rel = await statusParceiro.sincronizarStatusParceiro(db);
 
     igual("g1 (Na vitrine) continua aberto e público", [db.estado.grupos[0].status, db.estado.grupos[0].visibility], ["open", "public"]);
-    igual("g2 (Indisponível na Pulse) é desativado", [db.estado.grupos[1].status, db.estado.grupos[1].visibility], ["closed", "private"]);
+    igual(
+      "g2 (Indisponível na Pulse) é desativado, mas continua anunciado",
+      [db.estado.grupos[1].status, db.estado.grupos[1].visibility],
+      ["closed", "public"],
+    );
+    igual(
+      "g2 leva a tag Esgotado (é a trava de pagamento e entrada)",
+      db.estado.grupos[1].tags,
+      ["Via Parceiro", "Esgotado"],
+    );
     igual("g3 (voltou a ser liberado) é reativado", [db.estado.grupos[2].status, db.estado.grupos[2].visibility], ["open", "public"]);
     igual(
       "g4 (Na vitrine sem estoque) continua anunciado e ganha a tag Esgotado",
@@ -730,7 +739,11 @@ console.log(`\n${C.bold}TESTES DA INTEGRAÇÃO PULSE CODING${C.fim} ${C.dim}(sem
     igual("1 grupo reativado na rodada", rel.reativados, 1);
     igual("3 grupos Na vitrine", rel.na_vitrine, 3);
     igual("1 grupo Indisponível", rel.indisponiveis, 1);
-    igual("1 grupo esgotado (sem estoque)", rel.esgotados, 1);
+    igual(
+      "2 grupos travados (sem estoque + indisponível na Pulse)",
+      rel.esgotados,
+      2,
+    );
     igual("o espelho do painel segue o status da Pulse", db.estado.pacotes[1].visible, false);
     igual(
       "desativado COM gente pagante entra no aviso do dono",

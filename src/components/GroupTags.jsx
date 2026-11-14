@@ -19,7 +19,7 @@ import './GroupTags.css';
  * - "Esgotado": o fornecedor está sem estoque. O grupo continua visível
  *   (a pessoa vê que o produto existe) mas não aceita mais gente.
  */
-export default function GroupTags({ group, size = 'md', showPlanType = true, showVerified = true, className = '' }) {
+export default function GroupTags({ group, size = 'md', showPlanType = true, showVerified = true, hideEsgotado = false, className = '' }) {
   if (!group) return null;
 
   const tags = [];
@@ -33,7 +33,10 @@ export default function GroupTags({ group, size = 'md', showPlanType = true, sho
   const ehViaParceiro = temTag('Via Parceiro');
   const ehEsgotado = temTag('Esgotado');
 
-  if (ehEsgotado) {
+  // No card da vitrine o selo "Esgotado" é omitido: ali a informação já
+  // está no badge "GRUPO CHEIO" (o card fica transparente e sem clique) e
+  // dois selos dizendo a mesma coisa só poluem.
+  if (ehEsgotado && !hideEsgotado) {
     tags.push({
       key: 'esgotado',
       label: 'Esgotado',

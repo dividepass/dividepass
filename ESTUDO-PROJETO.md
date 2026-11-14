@@ -5044,11 +5044,17 @@ painel da Pulse** — "Na vitrine" (liberado e clicável) e "Esgotado"
 
 | Na Pulse | No grupo | Cliente |
 |---|---|---|
-| "Na vitrine" | `open` + `public` | liberado, clicável |
-| "Indisponível" | `closed` + `private` | **desativado**: fora da vitrine, sem pagamento, sem entrada |
-| "Na vitrine" **sem estoque** | `open` + `public` + tag **"Esgotado"** | continua anunciado, mas **não clicável** e sem compra |
+| "Na vitrine" | `open` + `public` | liberado, clicável, **sem selo** |
+| "Indisponível" | `closed` + `public` + tag **"Esgotado"** | **desativado**: transparente, **sem clique**, selo **"GRUPO CHEIO"** — e ninguém paga nem entra |
+| "Na vitrine" **sem estoque** | `open` + `public` + tag **"Esgotado"** | idem: "GRUPO CHEIO", transparente, sem clique |
 
-E volta: quando a Pulse volta a liberar, o grupo é **reativado**.
+E volta: quando a Pulse volta a liberar, o grupo é **reativado** e o selo some.
+
+> Ajuste pedido pelo dono na noite de 13/11: a primeira versão fechava o
+> grupo indisponível **em privado**, e ele sumia da vitrine. A regra final é
+> "continua anunciado, mas travado" — igual um grupo cheio. O selo
+> "NA VITRINE" dos grupos disponíveis foi removido: disponível é o estado
+> normal e não precisa de etiqueta.
 
 ### 32.4 A regra de ouro
 

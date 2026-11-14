@@ -3,7 +3,21 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from './useAuth';
 import { isSubscriptionVisible } from '../lib/subscriptionAccess';
 import { visibilityColumnAvailable } from '../lib/groupVisibility';
-import { grupoDesativado, grupoIndisponivel } from '../lib/groupEstado';
+import { grupoDesativado, grupoEsgotado, grupoIndisponivel } from '../lib/groupEstado';
+
+/**
+ * Grupos que aparecem na VITRINE.
+ *
+ * `status = 'closed'` não significa "fora da vitrine" — significa
+ * "desativado". Um grupo desativado que continua ANUNCIADO (produto sem
+ * estoque ou indisponível no fornecedor) leva a tag "Esgotado" e aparece
+ * no catálogo como "GRUPO CHEIO": transparente e sem clique.
+ *
+ * Grupo fechado pelo dono ou pelo admin (sem a tag) continua fora da
+ * vitrine, como sempre foi.
+ */
+const gruposDaVitrine = (linhas) =>
+  (linhas || []).filter((g) => g.status !== 'closed' || grupoEsgotado(g));
 
 /**
  * Status que a listagem do usuário busca.
@@ -73,7 +87,7 @@ export function useAppData() {
           service:service_id (*),
           members:group_members (*, user:user_id (id, name, avatar_url)),
           credential:group_credentials (*)
-        `).in('status', ['open', 'forming']);
+        `).in('status', ['open', 'forming', 'closed']);
         return hasVisibility ? q.eq('visibility', 'public') : q;
       };
 
@@ -97,7 +111,7 @@ export function useAppData() {
       }
 
       setStreamingServices(servicesRes.data || []);
-      setGroups(groupsRes.data || []);
+      setGroups(gruposDaVitrine(groupsRes.data));
       setActiveSubscriptions(subscriptionsRes.data || []);
       setServicePlans(plansRes.error ? [] : (plansRes.data || []));
     } catch (err) {
@@ -129,7 +143,7 @@ export function useAppData() {
             members:group_members (*, user:user_id (id, name, avatar_url)),
             credential:group_credentials (*),
             owner:owner_id (id, name, email, avatar_url, role)
-          `).in('status', ['open', 'forming']);
+          `).in('status', ['open', 'forming', 'closed']);
           return hasVisibility ? q.eq('visibility', 'public') : q;
         };
 
@@ -155,7 +169,7 @@ export function useAppData() {
 
         if (!cancelled) {
           setStreamingServices(servicesRes.data || []);
-          setGroups(groupsRes.data || []);
+          setGroups(gruposDaVitrine(groupsRes.data));
           setActiveSubscriptions(subscriptionsRes.data || []);
           setServicePlans(plansRes.error ? [] : (plansRes.data || []));
           setAnnouncements(announcementsRes.data || []);

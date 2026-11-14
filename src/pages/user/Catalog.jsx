@@ -5,7 +5,7 @@ import { useAppDataContext } from '../../contexts/AppDataContext';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 import { visibilityColumnAvailable } from '../../lib/groupVisibility';
-import { grupoEsgotado, grupoDesativado, grupoIndisponivel, statusGrupoLabel } from '../../lib/groupEstado';
+import { grupoEsgotado, grupoDesativado, grupoIndisponivel } from '../../lib/groupEstado';
 import GroupTags from '../../components/GroupTags';
 import MemberAvatar from '../../components/MemberAvatar';
 import WatchlistButton from '../../components/WatchlistButton';
@@ -107,10 +107,16 @@ function Catalog() {
           owner:owner_id (id, name, email, avatar_url, role)
         `)
         .eq('service_id', selectedService.id)
-        .in('status', ['open', 'forming']);
+        .in('status', ['open', 'forming', 'closed']);
       if (hasVisibility) query = query.eq('visibility', 'public');
       const { data } = await query;
-      if (!cancelled && data) setExtraGroups(data);
+      // Grupo fechado só fica na vitrine se continuar ANUNCIADO (produto sem
+      // estoque ou indisponível no fornecedor): ele aparece como
+      // "GRUPO CHEIO", transparente e sem clique. Grupo fechado pelo dono
+      // continua fora do catálogo.
+      if (!cancelled && data) {
+        setExtraGroups(data.filter((g) => g.status !== 'closed' || grupoEsgotado(g)));
+      }
     };
     fetchGroups();
     return () => { cancelled = true; };
@@ -502,16 +508,15 @@ function Catalog() {
                           CHEIO
                         </span>
                       )}
+                      {/* Indisponível (sem estoque ou o fornecedor tirou do
+                          cardápio): o card fica transparente e NÃO é clicável
+                          — a pessoa vê que o produto existe e que não dá
+                          para entrar agora. O rótulo é o mesmo do grupo
+                          lotado, de propósito: a vitrine não mostra
+                          "Na vitrine" (não há selo nos grupos disponíveis). */}
                       {esgotado && (
-                        <span className="gc-cheio gc-cheio--esgotado" title={desativado ? 'Indisponível no fornecedor' : 'Sem estoque no fornecedor'}>
-                          ESGOTADO
-                        </span>
-                      )}
-                      {/* Status no mesmo tom do painel da Pulse: "Na vitrine"
-                          é liberado e clicável; "Esgotado" não é. */}
-                      {!esgotado && !full && (
-                        <span className="gc-cheio gc-cheio--vitrine" title="Disponível para compra">
-                          {statusGrupoLabel(group).toUpperCase()}
+                        <span className="gc-cheio" title={desativado ? 'Indisponível no fornecedor' : 'Sem estoque no fornecedor'}>
+                          GRUPO CHEIO
                         </span>
                       )}
                     </div>
@@ -521,7 +526,7 @@ function Catalog() {
                       </span>
                       <span className="gc-ref">#{group.slug || group.id.slice(0, 6).toUpperCase()}</span>
                     </div>
-                    <GroupTags group={group} size="sm" className="gc-tags" />
+                    <GroupTags group={group} size="sm" hideEsgotado className="gc-tags" />
                   </div>
                 </div>
 

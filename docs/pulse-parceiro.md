@@ -750,17 +750,38 @@ O status do produto na Pulse é o **mesmo vocabulário** do painel dela:
 | Na Pulse | No grupo (DividePass) | O que acontece |
 |---|---|---|
 | **Na vitrine** | `status = 'open'`, `visibility = 'public'` | liberado, clicável, à venda |
-| **Indisponível** | `status = 'closed'`, `visibility = 'private'` | **DESATIVADO**: sai da vitrine, ninguém paga, ninguém entra |
+| **Indisponível** | `status = 'closed'`, `visibility = 'public'`, tag **"Esgotado"** | **DESATIVADO** (ninguém paga, ninguém entra) **mas continua anunciado** na vitrine, como "GRUPO CHEIO" |
 
 E o estado volta: quando a Pulse volta a liberar o produto, a sincronização
-**reativa** o grupo (`open` + `public`) e ele volta para a vitrine.
+**reativa** o grupo (`open` + `public`, sem a tag) e ele volta a ficar
+clicável.
+
+> **Revisão de 13/11/2026 (noite).** Na primeira versão, o grupo "Indisponível"
+> era fechado **e privado** — saía da vitrine. O dono pediu para o produto
+> **continuar listado** e aparecer travado, como um grupo cheio:
+> "não precisa colocar um tag 'Na vitrine' se estiver disponível; quando não
+> tiver disponível pode deixar mais transparente o card, não deixa clicar,
+> fala grupo cheio". Hoje o grupo indisponível fica **fechado + público + tag
+> "Esgotado"**: aparece na vitrine, transparente, sem clique, com o selo
+> **"GRUPO CHEIO"**.
+>
+> O que continua igual: a trava de verdade (pagamento e entrada) e o
+> `status = 'closed'`, que deixa o estado explícito para o admin e para a
+> página do grupo.
 
 ### 19.2 Status e ESTOQUE são coisas diferentes
 
 | Situação | O que o cliente vê |
 |---|---|
-| Pulse "Indisponível" (o parceiro tirou do cardápio) | o produto **sai da vitrine** — não faz sentido anunciar o que o fornecedor tirou |
-| Pulse "Na vitrine" **sem estoque** | o produto **continua anunciado**, com o selo **"Esgotado"**: a pessoa vê que existe e entra na lista de espera, mas não consegue comprar |
+| Pulse "Indisponível" (o parceiro tirou do cardápio) | o produto **continua na vitrine**, com o selo **"GRUPO CHEIO"**, transparente e sem clique |
+| Pulse "Na vitrine" **sem estoque** | idem: **"GRUPO CHEIO"**, transparente e sem clique |
+
+Nos dois casos o grupo leva a tag **"Esgotado"** — que é a trava real (o
+`create-payment` recusa com 403 `grupo_esgotado` e o `joinGroup` recusa).
+
+O grupo **continua na vitrine** porque o cliente precisa ver que o produto
+existe (e entrar na lista de espera). O que ele **não** pode é comprar nem
+entrar.
 
 No catálogo de 13/11/2026 os dois casos ainda andam juntos (os produtos
 indisponíveis são exatamente os que estão com estoque zero), mas a API trata
@@ -770,11 +791,11 @@ os campos separados — e é por isso que a sincronização olha para os dois.
 
 | Onde | O que acontece |
 |---|---|
-| Vitrine (card) | o card aparece **sem clique** (cursor `not-allowed`) e com o selo "Esgotado" |
+| Vitrine (card) | o card fica **transparente**, **sem clique** (cursor `not-allowed`) e com o selo **"GRUPO CHEIO"** |
 | Página do grupo | o CTA vira **"Esgotado — indisponível"**, desativado |
 | Checkout | mostra a tela **"Esgotado"** em vez de cobrar |
 | `joinGroup` (entrar no grupo) | **recusa** ("Este grupo está indisponível no momento…") |
-| `create-payment` (servidor) | **403 `grupo_desativado`** — a trava que importa (o front pode ser contornado) |
+| `create-payment` (servidor) | **403 `grupo_esgotado` / `grupo_desativado`** — a trava que importa (o front pode ser contornado) |
 | Painel do admin | coluna "Grupo" com o estado do grupo (Na vitrine / Formando / Esgotado) |
 
 A **renovação** nunca é bloqueada: quem pagou antes precisa do período pago.
