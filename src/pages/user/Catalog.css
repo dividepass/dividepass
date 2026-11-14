@@ -523,14 +523,20 @@
   box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05);
 }
 
-/* Grupo CHEIO, ESGOTADO ou DESATIVADO: o card fica um pouco mais
-   transparente, para o olho ir direto ao que dá para comprar. O aviso
-   ("CHEIO", no topo do card) continua legível — é o que o cliente
-   precisa ler. */
-.group-card-full,
+/* Grupo CHEIO: o card fica um pouco mais transparente, para o olho ir
+   direto ao que dá para comprar. O aviso ("CHEIO", no topo do card)
+   continua legível — é o que o cliente precisa ler. */
+.group-card-full {
+  opacity: 0.75;
+}
+
+/* Grupo TRAVADO (sem estoque ou indisponível no fornecedor): o card fica
+   bem mais apagado, porque ali não dá para comprar — o cliente só passa
+   para saber que o produto existe. O selo "GRUPO CHEIO" continua
+   legível. */
 .group-card-esgotado,
 .group-card-desativado {
-  opacity: 0.75;
+  opacity: 0.55;
 }
 
 .group-card-full:hover,
