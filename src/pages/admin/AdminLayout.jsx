@@ -2,7 +2,6 @@ import { useMemo, useState, useEffect } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
-  ChartLine,
   ChevronRight,
   ClipboardList,
   CreditCard,
@@ -74,7 +73,6 @@ const NAV_SECTIONS = [
       { to: '/admin/sponsored-offers', label: 'Ofertas patrocinadas', icon: Crown },
       { to: '/admin/coupons', label: 'Cupons', icon: Ticket },
       { to: '/admin/subscriptions', label: 'Assinaturas', icon: CreditCard },
-      { to: '/admin/evolution', label: 'Evolução', icon: ChartLine },
       { to: '/admin/pulse', label: 'Pulse Coding', icon: Plug },
     ],
   },

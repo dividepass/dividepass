@@ -488,3 +488,133 @@
     font-size: 1.3rem;
   }
 }
+
+/* ============================================================ *
+ * Seção embutida no Painel (/admin) — EvolutionSection.jsx
+ * ============================================================ */
+
+.evo-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+/* Cabeçalho compacto: sem o bloco de ícone grande da página antiga. */
+.evo-head--embedded {
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.evo-head--embedded h2 {
+  font-family: var(--font-title);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.evo-head--embedded p {
+  font-size: 0.74rem;
+  color: var(--text-soft);
+  margin-top: 0.15rem;
+}
+
+/* Banners: antes dependiam de `.admin-error-banner`, definido no CSS de
+   OUTRA página (SavingsStats) — aqui a seção carrega os próprios. */
+.evo-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.evo-banner--error {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error, #ef4444);
+}
+
+.evo-banner--warn {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--warning, #b45309);
+}
+
+.evo-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 2.5rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.evo-loading-spin {
+  animation: evoSpin 0.8s linear infinite;
+}
+
+@keyframes evoSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Tabela de detalhe: fechada por padrão, o botão declara o conteúdo. */
+.evo-table-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  align-self: flex-start;
+  padding: 0.5rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease;
+}
+
+.evo-table-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.evo-table-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.evo-table-toggle svg.is-open {
+  transform: rotate(180deg);
+}
+
+.evo-table-card {
+  padding: 0.5rem 0.5rem 0.75rem;
+}
+
+.evo-table-card .evo-note {
+  margin: 0.5rem 1rem 0;
+}
+
+@media (max-width: 640px) {
+  .evo-section {
+    gap: 0.9rem;
+    padding-top: 0.9rem;
+  }
+
+  .evo-head--embedded h2 {
+    font-size: 0.68rem;
+  }
+}

@@ -2,16 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ChartColumn,
-  ChartLine,
-  RefreshCw,
-  TrendingUp,
-  Users,
-  UserPlus,
+  ChevronDown,
   CreditCard,
   DollarSign,
-  Wallet,
-  Percent,
   Layers,
+  Loader2,
+  RefreshCw,
+  UserPlus,
+  Wallet,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import AdminChart from '../../components/AdminChart';
@@ -34,32 +32,25 @@ import {
 import './Evolution.css';
 
 /**
- * EVOLUÇÃO DA PLATAFORMA (admin)
- * ------------------------------
- * A tela é lida como um painel deindicadores:
+ * EVOLUÇÃO DA PLATAFORMA — seção embutida no Painel (/admin).
  *
- *  1. cards de resumo (KPIs);
- *  2. UM gráfico por métrica de crescimento — novos registros, novas
- *     assinaturas, novos grupos. Cada métrica no seu próprio gráfico:
- *     misturar contagens diferentes no mesmo eixo deixa as barras
- *     pequenas ilegíveis e o gráfico não responde nada;
- *  3. o gráfico financeiro — receita em BARRAS (o que entrou, mês a mês),
- *     com custos e lucro em linha por cima;
- *  4. a tabela com o detalhe por período.
+ * Era uma página própria (/admin/evolution); agora mora dentro do painel.
+ * A página de resumo e a de evolução respondiam perguntas do mesmo
+ * operador, separadas por um clique de menu — unificadas, o número e a
+ * curva dele ficam na mesma tela.
  *
- * Toda a agregação mora em `lib/evolutionMetrics.js` (módulo puro): a página
- * só busca, monta e desenha. Se a regra de receita mudar, muda num lugar só.
+ * A seção é AUTOSSUFICIENTE: busca os próprios dados (histórico completo,
+ * 7 tabelas, até 5.000 linhas) com o PRÓPRIO carregamento. O painel
+ * renderiza rápido com as contagens do dia; a evolução preenche embaixo
+ * quando chega. Toda a agregação mora em `lib/evolutionMetrics.js`
+ * (módulo puro) — a mesma regra de receita/custo do painel financeiro.
  *
- * DADOS
- * -----
- * - `users`          -> registros (contas criadas)
- * - `user_subscriptions` -> assinaturas
- * - `groups`         -> grupos criados
- * - `payments` + `payment_attempts` -> receita
- * - `master_accounts` + `expenses` -> custos
- *
- * Linhas de seed (UUID placeholder do setup) são descartadas: elas inflariam
- * a evolução com registros que ninguém criou.
+ * Layout:
+ *  1. KPIs do período (novos registros, assinaturas, grupos, conversão);
+ *  2. UM gráfico por métrica de crescimento — cada métrica na sua escala;
+ *  3. o gráfico financeiro — receita em barras, custos e lucro em linha;
+ *  4. a tabela de detalhe por período (fechada por padrão: quem quer o
+ *     número exato abre; quem quer a tendência só olha o gráfico).
  */
 
 /** Teto de buckets exibidos — acima disso o eixo X fica ilegível. */
@@ -113,9 +104,8 @@ function earliestDate(raw) {
 /**
  * Cartão de gráfico de uma métrica só.
  *
- * O cabeçalho carrega o número do período (o que o admin quer saber de
- * relance), o gráfico carrega a série, e o rodapé carrega o acumulado — sem
- * precisar sobrepor duas escalas no mesmo desenho.
+ * O cabeçalho carrega o número do período, o gráfico carrega a série, e o
+ * rodapé carrega o acumulado — sem sobrepor duas escalas no mesmo desenho.
  */
 function MetricChartCard({
   title,
@@ -177,19 +167,18 @@ function MetricChartCard({
   );
 }
 
-function Evolution() {
+function EvolutionSection() {
   const [period, setPeriod] = useState(DEFAULT_PERIOD);
   const [raw, setRaw] = useState(EMPTY_RAW);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [warning, setWarning] = useState('');
   const [truncated, setTruncated] = useState(false);
+  const [tableOpen, setTableOpen] = useState(false);
 
   /**
    * Busca os dados. NÃO mexe em estado: devolve o resultado e deixa quem
-   * chamou aplicar. Isso mantém o `useEffect` livre de `setState`
-   * síncrono (o React renderiza duas vezes à toa) e permite reusar a mesma
-   * busca no carregamento inicial e no botão "Atualizar".
+   * chamou aplicar — o mesmo contrato do antigo botão "Atualizar".
    */
   const loadData = useCallback(async () => {
     const [
@@ -218,14 +207,9 @@ function Evolution() {
         .limit(ROW_LIMIT),
     ]);
 
-    // Uma tabela indisponível não pode derrubar a página inteira: cada
-    // série é independente e o gráfico mostra o que conseguiu ler.
-    //
-    // `payment_attempts` é OPCIONAL: ela só serve de reserva para a
-    // receita (tentativa que o gateway aprovou mas que não virou linha em
-    // `payments`). Se ela falhar, os gráficos continuam certos — só pode
-    // faltar alguma cobrança. Falhar uma tabela que é a BASE do gráfico já
-    // é motivo para avisar com força.
+    // Uma tabela indisponível não pode derrubar o painel inteiro: cada série
+    // é independente e o gráfico mostra o que conseguiu ler.
+    // `payment_attempts` é OPCIONAL: só serve de reserva para a receita.
     const failures = [
       ['usuários', usersRes.error, false],
       ['assinaturas', subsRes.error, false],
@@ -234,10 +218,10 @@ function Evolution() {
       ['grupos', groupsRes.error, false],
       ['contas matriz', masterRes.error, false],
       ['despesas', expensesRes.error, false],
-    ].filter(([, error]) => error);
+    ].filter(([, err]) => err);
 
     if (failures.length) {
-      console.error('Evolution fetch errors:', failures);
+      console.error('EvolutionSection fetch errors:', failures);
     }
 
     const sizes = [
@@ -271,7 +255,6 @@ function Evolution() {
     };
   }, []);
 
-  /** Aplica o resultado da busca ao estado da tela. */
   const applyResult = useCallback((result) => {
     setRaw(result.payload);
     setError(result.errorMessage);
@@ -279,7 +262,7 @@ function Evolution() {
     setTruncated(result.truncated);
   }, []);
 
-  /** Carregamento inicial. */
+  /** Carregamento inicial — independente do carregamento do painel. */
   useEffect(() => {
     let alive = true;
 
@@ -288,7 +271,7 @@ function Evolution() {
         const result = await loadData();
         if (alive) applyResult(result);
       } catch (err) {
-        console.error('Evolution fetch error:', err);
+        console.error('EvolutionSection fetch error:', err);
         if (alive) setError(err.message || 'Falha ao carregar os dados da evolução.');
       } finally {
         if (alive) setLoading(false);
@@ -300,7 +283,6 @@ function Evolution() {
     };
   }, [loadData, applyResult]);
 
-  /** Botão "Atualizar". */
   const refresh = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -310,7 +292,7 @@ function Evolution() {
       const result = await loadData();
       applyResult(result);
     } catch (err) {
-      console.error('Evolution refresh error:', err);
+      console.error('EvolutionSection refresh error:', err);
       setError(err.message || 'Falha ao carregar os dados da evolução.');
     } finally {
       setLoading(false);
@@ -465,77 +447,56 @@ function Evolution() {
    * Render
    * --------------------------------------------------------------- */
 
-  // "12 novos hoje" / "12 novos na semana" / "12 novos no mês"
   const periodPhrase = { day: 'hoje', week: 'na semana', month: 'no mês' }[period] || 'no mês';
   const periodWord = PERIODS.find((item) => item.key === period)?.label.toLowerCase() || 'mês';
-  const lastPeriodLabel = period === 'day' ? 'ontem' : period === 'week' ? 'semana passada' : 'mês passado';
 
   // Plural: "1 novo" / "12 novos"; "1 nova" / "6 novas".
   const plural = (count, singular, pluralForm) => `${formatCount(count)} ${count === 1 ? singular : pluralForm}`;
 
+  // KPIs de CRESCIMENTO (receita/custos/lucro já estão nos cards financeiros
+  // do painel — repeti-los aqui seria eco, não informação).
   const kpis = [
     {
-      icon: <Users size={17} />,
+      icon: <UserPlus size={17} />,
       tone: 'primary',
-      label: 'Registros na plataforma',
-      value: formatCount(evolution.summary.totalUsers),
-      sub: `${plural(evolution.summary.newUsers, 'novo', 'novos')} ${periodPhrase}`,
+      label: 'Novos registros',
+      value: formatCount(evolution.summary.newUsers),
+      sub: periodPhrase,
       delta: deltas.users,
-      deltaLabel: lastPeriodLabel,
     },
     {
       icon: <CreditCard size={17} />,
       tone: 'tech',
-      label: 'Assinaturas ativas',
-      value: formatCount(evolution.summary.activeSubscriptions),
-      sub: `${plural(evolution.summary.newSubscriptions, 'nova', 'novas')} ${periodPhrase}`,
+      label: 'Novas assinaturas',
+      value: formatCount(evolution.summary.newSubscriptions),
+      sub: periodPhrase,
       delta: deltas.subscriptions,
-      deltaLabel: lastPeriodLabel,
     },
     {
-      icon: <Percent size={17} />,
+      icon: <Layers size={17} />,
+      tone: 'action',
+      label: 'Novos grupos',
+      value: formatCount(evolution.chartData[evolution.chartData.length - 1]?.newGroups || 0),
+      sub: periodPhrase,
+      delta: deltas.groups,
+    },
+    {
+      icon: <ChartColumn size={17} />,
       tone: 'economy',
       label: 'Conversão em assinatura',
       value: formatPercent(evolution.summary.conversionRate),
       sub: `${formatCount(evolution.summary.converted)} de ${formatCount(evolution.summary.newUsers)} registros ${periodPhrase}`,
-    },
-    {
-      icon: <DollarSign size={17} />,
-      tone: 'economy',
-      label: 'Receita no mês',
-      value: formatCurrencyFull(financial.summary.lastMonthRevenue),
-      sub: `${formatCurrencyFull(financial.summary.totalRevenue)} acumulados`,
-      delta: deltas.revenue,
-      // O gráfico financeiro é SEMPRE mensal — a comparação também é.
-      deltaLabel: 'mês passado',
-    },
-    {
-      icon: <Wallet size={17} />,
-      tone: 'action',
-      label: 'Custos no mês',
-      value: formatCurrencyFull(financial.summary.lastMonthCost),
-      sub: 'contas matriz + despesas',
-    },
-    {
-      icon: <TrendingUp size={17} />,
-      tone: financial.summary.lastMonthProfit >= 0 ? 'economy' : 'action',
-      label: 'Lucro no mês',
-      value: formatCurrencyFull(financial.summary.lastMonthProfit),
-      sub: `${formatCurrencyFull(financial.summary.totalProfit)} acumulados`,
     },
   ];
 
   const lastRow = evolution.chartData[evolution.chartData.length - 1] || {};
 
   return (
-    <div className="evolution-page fade-in">
-      <header className="evo-head">
+    <section className="evo-section" aria-labelledby="evo-section-title">
+      <header className="evo-head evo-head--embedded">
         <div className="evo-head-title">
-          <span className="evo-head-icon">
-            <ChartLine size={20} />
-          </span>
           <div>
-            <h1>Evolução da Plataforma</h1>
+            <h2 id="evo-section-title">Evolução</h2>
             <p>Novos usuários, assinaturas e a linha de receita e lucro</p>
           </div>
         </div>
@@ -563,37 +524,37 @@ function Evolution() {
       </header>
 
       {error && (
-        <div className="admin-error-banner">
+        <div className="evo-banner evo-banner--error">
           <AlertCircle size={16} />
           <span>{error}</span>
         </div>
       )}
 
       {warning && (
-        <div className="admin-error-banner evo-warning">
+        <div className="evo-banner evo-banner--warn">
           <AlertCircle size={16} />
           <span>{warning}</span>
         </div>
       )}
 
       {truncated && (
-        <div className="admin-error-banner evo-warning">
+        <div className="evo-banner evo-banner--warn">
           <AlertCircle size={16} />
           <span>
-            O histórico passou de {formatCount(ROW_LIMIT)} linhas em alguma tabela — os gráficos mostram os registros mais
-            recentes.
+            O histórico passou de {formatCount(ROW_LIMIT)} linhas em alguma tabela — os gráficos mostram os
+            registros mais recentes.
           </span>
         </div>
       )}
 
       {loading ? (
-        <div className="admin-loading">
-          <RefreshCw size={22} className="spin" />
+        <div className="evo-loading">
+          <Loader2 size={22} className="evo-loading-spin" />
           <span>Carregando evolução...</span>
         </div>
       ) : (
         <>
-          {/* ---------------- Cards de resumo ---------------- */}
+          {/* ---------------- KPIs do período ---------------- */}
           <div className="evo-kpis">
             {kpis.map((kpi) => (
               <div className="evo-kpi" key={kpi.label}>
@@ -606,7 +567,7 @@ function Evolution() {
                     {kpi.delta !== null && kpi.delta !== undefined && (
                       <em className={kpi.delta >= 0 ? 'up' : 'down'}>
                         {kpi.delta >= 0 ? '+' : ''}
-                        {kpi.delta.toFixed(0).replace('.', ',')}% vs {kpi.deltaLabel}
+                        {kpi.delta.toFixed(0).replace('.', ',')}% vs período anterior
                       </em>
                     )}
                   </span>
@@ -672,11 +633,8 @@ function Evolution() {
 
           {/* ---------------- Gráfico financeiro ----------------
                * Receita e custos vivem em cartões separados de propósito: na
-               * mesma escala, a barra de receita (R$ 167) ficava espremida
-               * contra a linha de custos (R$ 550) e não se via nada. Cada
-               * gráfico usa a escala que combina com o que ele mede — e a
-               * comparação entre custo e lucro continua válida porque os
-               * dois dividem o MESMO eixo. */}
+               * mesma escala, a barra de receita ficaria espremida contra a
+               * linha de custos e não se veria nada. */}
           <div className="evo-grid evo-grid--finance">
             <section className="evo-card evo-card--economy">
               <header className="evo-card-head">
@@ -693,6 +651,12 @@ function Evolution() {
                 <div className="evo-card-figure">
                   <strong>{formatCurrencyFull(financial.summary.lastMonthRevenue)}</strong>
                   <span>no mês</span>
+                  {deltas.revenue !== null && deltas.revenue !== undefined && (
+                    <em className={`evo-delta ${deltas.revenue >= 0 ? 'up' : 'down'}`}>
+                      {deltas.revenue >= 0 ? '+' : ''}
+                      {deltas.revenue.toFixed(0).replace('.', ',')}% vs mês passado
+                    </em>
+                  )}
                 </div>
               </header>
 
@@ -777,62 +741,66 @@ function Evolution() {
             </section>
           </div>
 
-          {/* ---------------- Tabela por período ---------------- */}
-          <section className="evo-card evo-card--wide">
-            <header className="evo-card-head">
-              <div className="evo-card-title">
-                <span className="evo-card-icon muted">
-                  <ChartColumn size={16} />
-                </span>
-                <div>
-                  <h3>Registros por período</h3>
-                  <p>Como a plataforma cresceu, período a período.</p>
-                </div>
+          {/* ---------------- Tabela de detalhe (fechada por padrão) ----------------
+              * O gráfico responde "qual a tendência"; a tabela responde "qual
+              * o número exato de cada período". Quem quer exatidão abre. */}
+          <button
+            type="button"
+            className="evo-table-toggle"
+            onClick={() => setTableOpen((v) => !v)}
+            aria-expanded={tableOpen}
+          >
+            <ChartColumn size={15} />
+            Detalhe por período
+            <ChevronDown size={15} className={tableOpen ? 'is-open' : ''} />
+          </button>
+
+          {tableOpen && (
+            <section className="evo-card evo-card--wide evo-table-card">
+              <div className="table-responsive">
+                <table className="evo-table">
+                  <thead>
+                    <tr>
+                      <th>Período</th>
+                      <th>Novos registros</th>
+                      <th>Novas assinaturas</th>
+                      <th>Novos grupos</th>
+                      <th>Total acumulado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evolution.chartData
+                      .slice()
+                      .reverse()
+                      .slice(0, TABLE_MAX_ROWS)
+                      .map((row, index) => {
+                        const bucket = evolution.buckets[evolution.buckets.length - 1 - index];
+                        return (
+                          <tr key={bucket}>
+                            <td>{evolution.longLabels[evolution.buckets.length - 1 - index]}</td>
+                            <td>{formatCount(row.newUsers)}</td>
+                            <td>{formatCount(row.newSubscriptions)}</td>
+                            <td>{formatCount(row.newGroups)}</td>
+                            <td className="evo-table-total">{formatCount(row.totalUsers)}</td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
               </div>
-            </header>
 
-            <div className="table-responsive">
-              <table className="evo-table">
-                <thead>
-                  <tr>
-                    <th>Período</th>
-                    <th>Novos registros</th>
-                    <th>Novas assinaturas</th>
-                    <th>Novos grupos</th>
-                    <th>Total acumulado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {evolution.chartData
-                    .slice()
-                    .reverse()
-                    .slice(0, TABLE_MAX_ROWS)
-                    .map((row, index) => {
-                      const bucket = evolution.buckets[evolution.buckets.length - 1 - index];
-                      return (
-                        <tr key={bucket}>
-                          <td>{evolution.longLabels[evolution.buckets.length - 1 - index]}</td>
-                          <td>{formatCount(row.newUsers)}</td>
-                          <td>{formatCount(row.newSubscriptions)}</td>
-                          <td>{formatCount(row.newGroups)}</td>
-                          <td className="evo-table-total">{formatCount(row.totalUsers)}</td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
-
-            {evolution.chartData.length > TABLE_MAX_ROWS && (
-              <p className="evo-note">
-                Mostrando os {TABLE_MAX_ROWS} períodos mais recentes da tabela — o gráfico acima traz a série completa.
-              </p>
-            )}
-          </section>
+              {evolution.chartData.length > TABLE_MAX_ROWS && (
+                <p className="evo-note">
+                  Mostrando os {TABLE_MAX_ROWS} períodos mais recentes da tabela — o gráfico acima traz
+                  a série completa.
+                </p>
+              )}
+            </section>
+          )}
         </>
       )}
-    </div>
+    </section>
   );
 }
 
-export default Evolution;
+export default EvolutionSection;

@@ -79,7 +79,6 @@ import FeedbackAdmin from './pages/admin/FeedbackAdmin';
 import SavingsStats from './pages/admin/SavingsStats';
 import ServicePlans from './pages/admin/ServicePlans';
 import Expenses from './pages/admin/Expenses';
-import Evolution from './pages/admin/Evolution';
 import EmailManagement from './pages/admin/EmailManagement';
 // Pulse Coding (revenda): catálogo importado + pedidos
 import PulseCatalog from './pages/admin/PulseCatalog';
@@ -178,6 +177,9 @@ function App() {
             <Route path="groups" element={<Navigate to="/admin/platforms" replace />} />
             <Route path="groups/new" element={<GroupForm />} />
             <Route path="groups/:groupId/edit" element={<GroupForm />} />
+            {/* O admin abre o MESMO "Gerenciar Grupo" do usuário, mas vendo o
+                grupo de qualquer dono (a tela ajusta o que é do dono). */}
+            <Route path="groups/:groupId/manage" element={<ManageGroup />} />
             <Route path="support" element={<Support />} />
             <Route path="support/:ticketId" element={<AdminTicketDetail />} />
             <Route path="announcements" element={<Announcements />} />
@@ -200,7 +202,9 @@ function App() {
             <Route path="savings" element={<SavingsStats />} />
             <Route path="service-plans" element={<ServicePlans />} />
             <Route path="expenses" element={<Expenses />} />
-            <Route path="evolution" element={<Evolution />} />
+            {/* Evolução virou SEÇÃO do Painel (/admin): a rota antiga
+                redireciona para não quebrar favoritos e links salvos. */}
+            <Route path="evolution" element={<Navigate to="/admin" replace />} />
             <Route path="emails" element={<EmailManagement />} />
             {/* Pulse Coding: o detalhe do pedido é PÁGINA com id na URL
                 (nunca drawer), para o operador saber onde está. */}
