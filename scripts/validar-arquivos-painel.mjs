@@ -2,14 +2,30 @@
  * Confere os arquivos empacotados para o painel do Supabase.
  *
  * O empacotador embute cada módulo num namespace e reescreve os imports.
- * O risco real não é sintaxe (o `node --check` pega), é SEMÂNTICA:
+ * O risco real não é só semântica:
  *
  *  1. um nome tirado do namespace que não existe no objeto retornado
  *     -> `const { foo } = m_x` com foo indefinido -> erro em runtime;
  *  2. um módulo que não expõe `default` sendo chamado como `mod.default(...)`;
- *  3. o entrypoint sem `export default` (a função não sobe).
+ *  3. o entrypoint sem `export default` (a função não sobe);
+ *  4. SINTAXE QUEBRADA — o caso mais caro, porque a função não sobe e o
+ *     Supabase responde 503 BOOT_ERROR (sem header de CORS: o navegador
+ *     mostra "Failed to fetch" e o cliente não sabe o que houve).
  *
- * Este script confere os três.
+ * O item 4 NÃO é hypothético: em 09/11/2026 o `create-payment` foi
+ * publicado com dois erros de sintaxe que derrubaram a cobrança de PIX:
+ *
+ *   - `return { default, handleWoovi };` — `default` é palavra reservada,
+ *     então o atalho de propriedade é SyntaxError;
+ *   - seis `const mod = ...` no mesmo escopo — "Identifier 'mod' has
+ *     already been declared" — que ainda faz o `switch` de gateway usar
+ *     sempre o ÚLTIMO handler.
+ *
+ * Por isso a checagem de sintaxe é feita pelo DENO — o mesmo runtime que
+ * executa a edge function. O teste de BOOT (o módulo carrega ou não?) está
+ * em `scripts/verificar-boot-painel.mjs`, que é quem reprova de fato.
+ *
+ * Este script confere os quatro.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -26,8 +42,7 @@ const relatar = (ok, msg) => {
   console.log(`${ok ? "OK   " : "FALHA"} ${msg}`);
 };
 
-for (const nome of fs.readdirSync(DIR).filter((f) => f.endsWith(".ts"))) {
-  const src = fs.readFileSync(path.join(DIR, nome), "utf8");
+for await (const nome of fs.readdirSync(DIR).filter((f) => f.endsWith(".ts"))) {  const src = fs.readFileSync(path.join(DIR, nome), "utf8");
   const base = nome.replace(/\.ts$/, "");
   console.log(`\n── ${base} (${src.length} bytes)`);
 
@@ -54,9 +69,14 @@ for (const nome of fs.readdirSync(DIR).filter((f) => f.endsWith(".ts"))) {
         continue;
       }
       for (const nomeUsado of usados) {
+        // `import { x as y }` vira `{ x: y }` no empacotado: o que precisa
+        // existir no namespace é o NOME DE ORIGEM (`x`), não o apelido (`y`).
+        const origem = nomeUsado.includes(":")
+          ? nomeUsado.split(":")[0].trim()
+          : nomeUsado;
         relatar(
-          destino.includes(nomeUsado),
-          `  ${nomeNs} usa { ${nomeUsado} } de ${u[2]}${destino.includes(nomeUsado) ? "" : ` -> NÃO EXPORTA (tem: ${destino.join(", ")})`}`
+          destino.includes(origem),
+          `  ${nomeNs} usa { ${nomeUsado} } de ${u[2]}${destino.includes(origem) ? "" : ` -> NÃO EXPORTA (tem: ${destino.join(", ")})`}`
         );
       }
     }
@@ -115,6 +135,13 @@ for (const nome of fs.readdirSync(DIR).filter((f) => f.endsWith(".ts"))) {
   relatar(
     !/billing_cycles[\s\S]{0,400}?["']retrying["']/.test(semComentario),
     "  nenhum 'retrying' em billing_cycles (enum inválido)"
+  );
+
+  // --- 7. nenhum marcador de importação sobrou -----------------------------
+  const marcadores = src.match(/__IMPORT_DINAMICO_\d+__/g) || [];
+  relatar(
+    marcadores.length === 0,
+    `  nenhum marcador de import dinâmico sobrando${marcadores.length ? ` -> ${marcadores.slice(0, 3).join(", ")}` : ""}`
   );
 }
 

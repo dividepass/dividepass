@@ -22,6 +22,7 @@ import {
   Sparkles,
   KeyRound,
   ArrowRight,
+  Plug,
 } from 'lucide-react';
 import {
   WHATSAPP_VIP_SETTING_KEY,
@@ -113,6 +114,7 @@ const SECOES = [
   { id: 'comunicacao', label: 'Grupo VIP', icon: MessageCircle },
   { id: 'email', label: 'E-mail (SMTP)', icon: Mail },
   { id: 'ia', label: 'IA (Groq)', icon: Sparkles },
+  { id: 'pulse', label: 'Pulse Coding', icon: Plug },
 ];
 
 function Settings() {
@@ -130,6 +132,15 @@ function Settings() {
   const [smtpConfigs, setSmtpConfigs] = useState({});
   const [groqApiKey, setGroqApiKey] = useState('');
   const [whatsappVipUrl, setWhatsappVipUrl] = useState('');
+
+  // ── REVENDA PULSE CODING ───────────────────────────────────────────────
+  // A URL que a Pulse chama para avisar que o pedido está pronto, e a
+  // margem (em %) aplicada sobre o preço de venda ao consumidor.
+  //
+  // A CHAVE DA API NÃO FICA AQUI: ela é segredo do Supabase (ver o bloco
+  // da seção). Campo de texto para a chave no painel seria uma brecha.
+  const [pulseWebhookUrl, setPulseWebhookUrl] = useState('');
+  const [pulseMarkup, setPulseMarkup] = useState('20');
 
   // Gateway cujas credenciais estão sendo editadas.
   //
@@ -211,6 +222,11 @@ function Settings() {
 
       setWhatsappVipUrl(map[WHATSAPP_VIP_SETTING_KEY] ?? '');
 
+      // Revenda Pulse Coding: a URL do webhook (chamada pela Pulse) e a
+      // margem aplicada sobre o preço de venda ao consumidor.
+      setPulseWebhookUrl(map.pulse_webhook_url ?? '');
+      setPulseMarkup(map.pulse_markup ?? '20');
+
       setLoading(false);
     }
 
@@ -291,10 +307,13 @@ function Settings() {
     smtpConfigs,
     groqApiKey,
     whatsappVipUrl,
+    pulseWebhookUrl,
+    pulseMarkup,
   }), [
     gatewayFee, platformFee, entranceFee, activeGateway, ambiente,
     splitAtivo, splitGatewayPix, splitGatewayCard, splitEscopo,
     gatewayConfigs, smtpConfigs, groqApiKey, whatsappVipUrl,
+    pulseWebhookUrl, pulseMarkup,
   ]);
 
   const [retratoOriginal, setRetratoOriginal] = useState(null);
@@ -367,6 +386,10 @@ function Settings() {
         throw new Error('Link do grupo WhatsApp inválido. Cole o link do convite (https://chat.whatsapp.com/...) ou apenas o código.');
       }
       updates.push({ key: WHATSAPP_VIP_SETTING_KEY, value: vipLink });
+
+      // Revenda Pulse Coding: URL do webhook e margem.
+      updates.push({ key: 'pulse_webhook_url', value: pulseWebhookUrl.trim() });
+      updates.push({ key: 'pulse_markup', value: String(pulseMarkup).trim() || '20' });
 
       const { error: err } = await supabase
         .from('app_settings')
@@ -1116,6 +1139,79 @@ function Settings() {
                 <small className="field-hint">
                   Chave necessária para habilitar IA nos grupos. Cada grupo pode ativar/desativar individualmente.
                 </small>
+              </div>
+            </div>
+          </section>
+
+          {/* ── Revenda Pulse Coding ── */}
+          <section className="settings-card" id="pulse">
+            <div className="settings-section-header">
+              <h2><Plug size={18} /> Revenda — Pulse Coding</h2>
+              <span className="settings-section-hint">
+                Compra automática de produtos para os grupos "Via Parceiro"
+              </span>
+            </div>
+
+            <div className="settings-section-body">
+              <div className="settings-info-block">
+                <Info size={16} />
+                <p>
+                  Os produtos da Pulse Coding aparecem na vitrine como grupos com a
+                  tag <strong>"Via Parceiro"</strong>. Quando o cliente paga, o
+                  DividePass compra na Pulse e entrega a conta (ou link/licença)
+                  em <strong>Minhas Entregas</strong>.
+                  {' '}
+                  <a href="/admin/pulse" style={{ color: 'var(--primary)', fontWeight: 600 }}>
+                    Abrir o painel da revenda <ArrowRight size={12} style={{ verticalAlign: 'middle' }} />
+                  </a>
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label>URL do webhook</label>
+                <input
+                  type="url"
+                  value={pulseWebhookUrl}
+                  onChange={(e) => setPulseWebhookUrl(e.target.value)}
+                  placeholder="https://<projeto>.supabase.co/functions/v1/pulse-webhook"
+                  spellCheck={false}
+                />
+                <small className="field-hint">
+                  É esta URL que a Pulse Coding chama para avisar que o pedido
+                  ficou pronto. Cadastre a mesma no painel da Pulse.
+                </small>
+              </div>
+
+              <div className="form-group">
+                <label>Margem sobre o preço de venda</label>
+                <div className="field-with-action">
+                  <input
+                    type="number"
+                    min="0"
+                    max="500"
+                    step="1"
+                    value={pulseMarkup}
+                    onChange={(e) => setPulseMarkup(e.target.value)}
+                    placeholder="20"
+                  />
+                  <span className="field-action" style={{ cursor: 'default' }}>%</span>
+                </div>
+                <small className="field-hint">
+                  Aplicada sobre o preço de venda ao consumidor final que a Pulse
+                  informa. Com 20%, um produto de R$ 9,90 sai por R$ 11,88 — e a
+                  diferença é a sua margem. Vale na próxima sincronização do
+                  catálogo.
+                </small>
+              </div>
+
+              <div className="settings-info-block warning">
+                <AlertTriangle size={16} />
+                <p>
+                  A <strong>chave da API da Pulse</strong> é segredo do Supabase e
+                  <strong> não é editável aqui</strong> (campo de texto no painel
+                  seria uma brecha). Ela é configurada por:
+                  <code> node scripts/configurar-pulse.mjs --aplicar</code>
+                </p>
               </div>
             </div>
           </section>

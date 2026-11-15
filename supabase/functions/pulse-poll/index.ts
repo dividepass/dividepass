@@ -24,6 +24,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { reprocessarPendentes } from "../_shared/pulse-orders.ts";
+import { atualizarEstoque } from "../_shared/pulse-estoque.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -83,11 +84,16 @@ export default {
 
       const resultado = await reprocessarPendentes(supabaseAdmin, limite);
 
+      // ── Estoque do parceiro (1 chamada de list_packages por rodada) ──────
+      // Atualiza a tag "Esgotado" dos grupos: sem estoque, o grupo continua
+      // na vitrine mas ninguém entra e o `create-payment` recusa a venda.
+      const estoque = await atualizarEstoque(supabaseAdmin);
+
       console.log(
-        `[pulse-poll] processados=${resultado.processados} entregues=${resultado.entregues} erros=${resultado.erros}`,
+        `[pulse-poll] processados=${resultado.processados} entregues=${resultado.entregues} erros=${resultado.erros} | estoque: atualizados=${estoque.atualizados} esgotados=${estoque.esgotados}${estoque.erro ? ` erro=${estoque.erro}` : ""}`,
       );
 
-      return json({ ok: true, ...resultado });
+      return json({ ok: true, ...resultado, estoque });
     } catch (e: any) {
       console.error("[pulse-poll] erro:", e?.message ?? e);
       return json({ ok: false, erro: String(e?.message ?? e) }, 500);

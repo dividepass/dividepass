@@ -22,6 +22,9 @@ import {
 // Gravar o que veio do gateway estourava o limite e a liberacao do grupo
 // falhava DEPOIS do dinheiro cair. Aqui sempre grava-se o metodo normalizado.
 import { limitarTexto, metodoPagamentoSeguro } from "../_shared/metodo-pagamento.ts";
+// Guarda de assinatura em vigor: um pagamento RECUSADO não pode encerrar o
+// vinculo de quem tem assinatura paga (ver o branch "rejected" mais abaixo).
+import { buscarAssinaturaVigente } from "../_shared/subscription-guard.ts";
 
 interface ConfirmParams {
   gateway: string;
@@ -1389,11 +1392,29 @@ async function confirmarPagamento(params: ConfirmParams) {
 
   } else if (status === "rejected") {
     // Payment failed
-    await supabaseAdmin
-      .from("group_members")
-      .update({ payment_status: "expired", status: "cancelled" })
-      .eq("group_id", group_id)
-      .eq("user_id", user_id);
+    //
+    // REGRA: a ASSINATURA é a fonte da verdade do acesso (ver
+    // `src/pages/user/ServiceCredentials.jsx`). Um pagamento RECUSADO pelo
+    // gateway NÃO encerra o vínculo de quem tem assinatura em vigor: a
+    // inadimplência é controlada pelo job `update-subscription-statuses`,
+    // pela DATA (carência de 7 dias — `src/lib/subscriptionAccess.js`).
+    //
+    // Antes desta correção, qualquer recusa cancelava o membro na hora. Foi
+    // assim que um teste de pagamento recusado de R$0,01 tirou do grupo uma
+    // pessoa com assinatura paga até dez/2026 (o grupo sumiu da tela dela).
+    const assinaturaVigente = await buscarAssinaturaVigente(supabaseAdmin, user_id, group_id);
+    if (assinaturaVigente) {
+      console.log(
+        `[confirm-payment] pagamento recusado (${gateway_payment_id}) mas a assinatura ${assinaturaVigente.id} esta em vigor ` +
+          `(venc. ${assinaturaVigente.renewal_due_at || assinaturaVigente.next_charge_at || "-"}) — vinculo com o grupo mantido`,
+      );
+    } else {
+      await supabaseAdmin
+        .from("group_members")
+        .update({ payment_status: "expired", status: "cancelled" })
+        .eq("group_id", group_id)
+        .eq("user_id", user_id);
+    }
 
     await registrarPagamento(supabaseAdmin, {
       user_id,

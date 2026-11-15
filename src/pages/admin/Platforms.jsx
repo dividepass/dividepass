@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Plus, Loader2, ChevronLeft, Pencil, Trash2, Heart, Search, X,
   AlertCircle, CheckCircle, Clock, Ban, MessageSquare,
-  DollarSign, Users, TrendingUp, CreditCard, Activity, BarChart3
+  DollarSign, Users, TrendingUp, CreditCard, Activity, BarChart3, Gauge
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import GroupRules from '../../components/GroupRules';
@@ -504,6 +504,11 @@ function GroupsTab() {
                   <div className="gc-divider" />
 
                   <div className="group-card-actions">
+                    {/* "Controlar" abre a MESMA tela que o dono do grupo usa em
+                        /manage — no admin, o grupo de qualquer dono. */}
+                    <Link to={`/admin/groups/${group.id}/manage`} className="group-btn manage">
+                      <Gauge size={14} /> Controlar
+                    </Link>
                     <Link to={`/admin/groups/${group.id}/edit`} className="group-btn edit">
                       <Pencil size={14} /> Editar
                     </Link>

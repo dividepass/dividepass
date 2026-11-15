@@ -117,6 +117,47 @@ export async function restoreMandatePointer(
  * compartilhada), `entrance` (taxa de adesão) e `combined` (adesão + 1ª
  * mensalidade na mesma transação).
  */
+/**
+ * Marca a TENTATIVA de pagamento como aprovada.
+ *
+ * POR QUE ISSO EXISTE
+ * -------------------
+ * A tentativa (`payment_attempts`) é o que o admin vê na lista de
+ * pagamentos. Sem esta marcação, uma cobrança da Woovi confirmada ficava
+ * com o status `created` — o painel mostrava "Pendente" para um pagamento
+ * já aprovado, e ainda oferecia o botão "Verificar no Gateway".
+ *
+ * O status `approved` é o que a UI do admin entende como "Aprovado" (ela
+ * também aceita `webhook_approved` e `confirmed`).
+ *
+ * A linha MAIS ANTIGA é a alvo: é a que carrega `external_reference` e
+ * `coupon_id` (as demais são duplicatas do polling).
+ */
+async function marcarTentativaAprovada(
+  supabaseAdmin: any,
+  gatewayTransactionId: string | null | undefined,
+): Promise<void> {
+  if (!gatewayTransactionId) return;
+  try {
+    const { data: linhas } = await supabaseAdmin
+      .from("payment_attempts")
+      .select("id")
+      .eq("gateway_transaction_id", gatewayTransactionId)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    const tentativa = (linhas && linhas[0]) || null;
+    if (!tentativa) return;
+    await supabaseAdmin
+      .from("payment_attempts")
+      .update({ status: "approved", updated_at: new Date().toISOString() })
+      .eq("id", tentativa.id);
+  } catch (e: any) {
+    // Não derruba a confirmação: o dinheiro já entrou e o acesso já foi
+    // liberado. A marcação é só para o painel.
+    console.warn("[woovi] não consegui marcar a tentativa como aprovada:", e?.message || e);
+  }
+}
+
 export async function confirmWooviCharge(
   supabaseAdmin: any,
   body: any,
@@ -198,6 +239,7 @@ export async function confirmWooviCharge(
   }
 
   await restoreMandatePointer(supabaseAdmin, userId, groupId, charge.identifier);
+  await marcarTentativaAprovada(supabaseAdmin, charge.identifier);
   return { ok: true, userId, groupId, amount };
 }
 
@@ -228,16 +270,36 @@ export async function confirmWooviInstallment(
   const value = fromCents(body?.value || body?.cobr?.value || 0);
   const installmentNumber = Number(body?.installmentNumber || 0);
 
-  // A assinatura que ainda NÃO está ativa está esperando o PRIMEIRO
-  // pagamento.
-  const isInitial = sub.status !== "active";
-  const gatewayPaymentId = isInitial
+  // A IDENTIDADE do pagamento (o `transaction_code` em `payments`).
+  //
+  // POR QUE NÃO PODE DEPENDER DO STATUS DA ASSINATURA
+  // ---------------------------------------------------
+  // A trava de idempotência do `confirmPayment` é por `transaction_code`. Se
+  // o mesmo pagamento for confirmado com DOIS ids diferentes, ele entra
+  // DUAS vezes em `payments` (o painel mostra o cliente pagando duas vezes,
+  // e a receita do período fica inflada).
+  //
+  // A 1ª confirmação (assinatura ainda "pending") usava o id do MANDATE —
+  // que é o id com que o `payment_attempts` foi gravado. A 2ª confirmação
+  // da MESMA parcela (assinatura já "active") usava o id da PARCELA — e a
+  // trava não reconheceu, criando a linha duplicada.
+  //
+  // A regra estável é o NÚMERO DA PARCELA:
+  //   parcela 1  -> id do MANDATE (é com ele que o cupom e a tentativa
+  //                 foram gravados);
+  //   parcela 2+ -> id da própria parcela (cada renovação tem o seu).
+  //
+  // Sem o número da parcela (evento sem o campo), cai no comportamento
+  // antigo: mandate enquanto a assinatura não estiver ativa.
+  const ehPrimeiraParcela =
+    installmentNumber > 0 ? installmentNumber === 1 : sub.status !== "active";
+  const gatewayPaymentId = ehPrimeiraParcela
     ? sub.woovi_subscription_id || body?.paymentSubscriptionGlobalID || installmentId
     : installmentId || body?.paymentSubscriptionGlobalID;
 
   console.log(
     `[woovi] COBR_COMPLETED sub=${sub.id} parcela=${installmentNumber} ` +
-      `inicial=${isInitial} tx=${gatewayPaymentId} valor=${value}`,
+      `primeira=${ehPrimeiraParcela} tx=${gatewayPaymentId} valor=${value}`,
   );
 
   if (!gatewayPaymentId) {
@@ -275,6 +337,8 @@ export async function confirmWooviInstallment(
     .from("user_subscriptions")
     .update({ woovi_recurrence_status: "APPROVED" })
     .eq("id", sub.id);
+
+  await marcarTentativaAprovada(supabaseAdmin, gatewayPaymentId);
 
   return { ok: true, already: !!result.already_confirmed };
 }

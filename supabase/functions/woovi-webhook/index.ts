@@ -17,6 +17,7 @@
 //   PIX_AUTOMATIC_APPROVED            → pagador AUTORIZOU o mandato
 //   PIX_AUTOMATIC_REJECTED            → pagador RECUSOU o mandato
 //   PIX_AUTOMATIC_COBR_CREATED        → Woovi gerou a cobrança do ciclo
+//   PIX_AUTOMATIC_COBR_APPROVED       → pagador aprovou a cobrança do ciclo
 //   PIX_AUTOMATIC_COBR_COMPLETED      → pagamento da recorrência CONFIRMADO
 //   PIX_AUTOMATIC_COBR_REJECTED       → recusado na 1ª tentativa
 //   PIX_AUTOMATIC_COBR_TRY_REJECTED   → recusado na retentativa
@@ -277,6 +278,20 @@ export default {
           break;
 
         case "PIX_AUTOMATIC_COBR_COMPLETED": {
+          const res = await confirmWooviInstallment(supabaseAdmin, body);
+          if (!res.ok) throw new Error(res.error || "falha ao confirmar parcela");
+          break;
+        }
+
+        // A Woovi avisa em DOIS momentos: quando o pagador APROVA a
+        // cobrança do ciclo e quando ela CONCLUI. Tratar só o "completed"
+        // deixava o cliente esperando (e sem acesso) quando o evento
+        // "approved" chegava antes — ou sozinho.
+        //
+        // A confirmação é idempotente: quando o "completed" chega depois, o
+        // `confirmPayment` encontra o pagamento já confirmado e não cobra
+        // duas vezes.
+        case "PIX_AUTOMATIC_COBR_APPROVED": {
           const res = await confirmWooviInstallment(supabaseAdmin, body);
           if (!res.ok) throw new Error(res.error || "falha ao confirmar parcela");
           break;

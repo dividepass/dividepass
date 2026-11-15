@@ -19,6 +19,7 @@
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { marcarComoDividePass } from "../_shared/pulse-catalog.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -113,7 +114,11 @@ export default {
         grupo_nome: grupoPorId.get(e.group_id)?.name ?? null,
         grupo_slug: grupoPorId.get(e.group_id)?.slug ?? null,
         package_id: e.package_id,
-        produto: pacotePorId.get(e.package_id)?.title ?? e.package_title ?? null,
+        // O nome do produto vai sem a marca do parceiro (decisão do dono):
+        // o espelho `pulse_pacotes` guarda o título cru, que é do painel admin.
+        produto: marcarComoDividePass(
+          pacotePorId.get(e.package_id)?.title ?? e.package_title ?? null,
+        ),
         categoria: pacotePorId.get(e.package_id)?.category ?? null,
         credential_type: e.credential_type,
         login_email: e.login_email,

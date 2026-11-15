@@ -16,8 +16,12 @@
  *        node scripts/configurar-webhook-woovi.mjs            # lista os webhooks
  *        node scripts/configurar-webhook-woovi.mjs --criar     # cadastra o nosso
  *
- * O AppID é lido do AppID salvo no Admin (app_settings.woovi_app_id) ou da
- * variável de ambiente WOOVI_APP_ID.
+ * O AppID é lido do AppID do AMBIENTE em `app_settings`
+ * (`woovi_app_id_production` em produção; `woovi_app_id_sandbox` no sandbox) —
+ * a mesma regra que a edge function usa (`_shared/woovi.ts`).
+ *
+ * A SCRIPT É IDEMPOTENTE POR EVENTO: ele cadastra só o que falta, então
+ * rodar de novo não cria duplicata e não precisa apagar nada no painel.
  *
  * AUTENTICAÇÃO
  * ------------
@@ -28,6 +32,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizarAmbiente, getAmbiente } from "../supabase/functions/_shared/ambiente.ts";
+// A MESMA regra de escolha do AppID que a edge function usa
+// (`_shared/woovi.ts` -> `appIdDoAmbiente`). Importar de lá, em vez de
+// reescrever a regra aqui, é o que impede o script de falar com a conta
+// errada.
+import { appIdDoAmbiente } from "../supabase/functions/_shared/woovi.ts";
 import { consultarSql } from "./supabase-sql.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -65,16 +74,38 @@ const EVENTOS = [
   "PIX_AUTOMATIC_COBR_TRY_REJECTED",
 ];
 
-async function lerAppIdDoBanco() {
+/**
+ * Lê os AppIDs do banco.
+ *
+ * POR QUE TODOS E NÃO SÓ UM
+ * -------------------------
+ * A Woovi tem DUAS contas (sandbox e produção) e cada uma tem o seu AppID.
+ * Este script lia SEMPRE `woovi_app_id` — que, no banco atual, é o AppID do
+ * SANDBOX. Resultado: em 10/11/2026 os 9 webhooks foram cadastrados na conta
+ * de TESTE, e a conta de PRODUÇÃO ficou com UM webhook só (criado à mão no
+ * painel). Como o evento que confirma o pagamento do ciclo
+ * (`PIX_AUTOMATIC_COBR_COMPLETED`) nunca chegou, o cliente pagou e o
+ * sistema não confirmou.
+ *
+ * Agora o AppID é escolhido pelo AMBIENTE, com a mesma regra do app.
+ */
+async function lerAppIdDoBanco(ambiente) {
+  const chaves = ["woovi_app_id_production", "woovi_app_id_sandbox", "woovi_app_id"];
+  // As chaves entram entre aspas: `key in (a,b,c)` sem aspas é SQL inválido.
+  const listaSql = chaves.map((k) => `'${k}'`).join(",");
+
   const url = (process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SERVICE_ROLE_KEY || "";
   if (url && key) {
-    const resp = await fetch(`${url}/rest/v1/app_settings?key=eq.woovi_app_id&select=value`, {
+    const resp = await fetch(`${url}/rest/v1/app_settings?key=in.(${chaves.join(",")})&select=key,value`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
     });
     if (resp.ok) {
       const dados = await resp.json();
-      if (dados?.[0]?.value) return dados[0].value;
+      const mapa = {};
+      for (const linha of dados || []) mapa[linha.key] = linha.value;
+      const escolhido = appIdDoAmbiente(mapa, ambiente);
+      if (escolhido) return escolhido;
     }
   }
 
@@ -83,9 +114,12 @@ async function lerAppIdDoBanco() {
   // FORA do git — pode ser lido sem pedir nada ao usuario.
   try {
     const linhas = await consultarSql(
-      "select value from app_settings where key = 'woovi_app_id' limit 1",
+      `select key, value from app_settings where key in (${listaSql})`,
     );
-    if (linhas?.[0]?.value) return linhas[0].value;
+    const mapa = {};
+    for (const linha of linhas || []) mapa[linha.key] = linha.value;
+    const escolhido = appIdDoAmbiente(mapa, ambiente);
+    if (escolhido) return escolhido;
   } catch {
     /* sem token da CLI — tenta o proximo caminho */
   }
@@ -142,9 +176,9 @@ async function resolverAmbiente() {
   return normalizarAmbiente(null);
 }
 
-async function lerAppId() {
+async function lerAppId(ambiente) {
   if (process.env.WOOVI_APP_ID) return process.env.WOOVI_APP_ID.trim();
-  const doBanco = await lerAppIdDoBanco();
+  const doBanco = await lerAppIdDoBanco(ambiente);
   if (doBanco) return doBanco.trim();
   return null;
 }
@@ -171,19 +205,22 @@ async function woovi(appId, baseUrl, method, caminho, body) {
 }
 
 async function main() {
-  const appId = await lerAppId();
+  // O ambiente vem PRIMEIRO: é ele que decide de qual conta lemos o AppID.
+  const ambiente = await resolverAmbiente();
+  const baseUrl = ambiente === "sandbox" ? API_SANDBOX : API_PROD;
+
+  const appId = await lerAppId(ambiente);
   if (!appId) {
     console.error(
-      "\nNao encontrei o AppID da Woovi.\n" +
-        "  Opcao 1: cadastre em Admin > Configuracoes > Woovi > AppID.\n" +
+      "\nNao encontrei o AppID da Woovi para o ambiente " +
+        ambiente +
+        ".\n" +
+        "  Opcao 1: cadastre em Admin > Configuracoes > Woovi > AppID do ambiente.\n" +
         "  Opcao 2: exporta WOOVI_APP_ID=... antes de rodar este script.\n",
     );
     process.exitCode = 1;
     return;
   }
-
-  const ambiente = await resolverAmbiente();
-  const baseUrl = ambiente === "sandbox" ? API_SANDBOX : API_PROD;
 
   console.log(`AppID:    ${appId.slice(0, 6)}...${appId.slice(-4)}`);
   console.log(`Ambiente: ${ambiente} (${baseUrl})`);
@@ -212,25 +249,41 @@ async function main() {
   }
   const urlWebhook = `${urlBase}/functions/v1/woovi-webhook`;
 
-  const jaExiste = existentes.find((w) => String(w.url || "").startsWith(urlWebhook));
-  if (jaExiste) {
-    console.log(`\nJa existe um webhook para ${urlWebhook} (evento: ${jaExiste.event}).`);
-    console.log("Nada a fazer. Para refazer, apague o antigo no painel da Woovi.");
+  // ── O QUE FALTA ──────────────────────────────────────────────────────────
+  // Compara por EVENTO (e não por URL): em 10/11/2026 a conta de producao
+  // tinha UM webhook nosso (PIX_AUTOMATIC_APPROVED) e o script dizia "ja
+  // existe, nada a fazer" — e os outros 8 eventos ficavam de fora. O evento
+  // que CONFIRMA o pagamento do ciclo e' justamente um deles.
+  const jaTem = new Set(
+    existentes
+      .filter((w) => String(w.url || "").startsWith(urlWebhook))
+      .map((w) => String(w.event || "").trim()),
+  );
+  const faltando = EVENTOS.filter((e) => !jaTem.has(e));
+
+  console.log(`\nEventos que ja apontam para ${urlWebhook}: ${jaTem.size}`);
+  console.log(`Eventos que faltam: ${faltando.length}`);
+  if (faltando.length) {
+    for (const e of faltando) console.log(`  - ${e}`);
+  }
+
+  if (faltando.length === 0) {
+    console.log("\nTodos os eventos ja estao cadastrados. Nada a fazer.");
     return;
   }
 
   if (!process.argv.includes("--criar")) {
     console.log(`\nPara cadastrar, rode com --criar:`);
     console.log(`  node scripts/configurar-webhook-woovi.mjs --criar`);
-    console.log(`\nEle criara ${EVENTOS.length} webhooks em ${urlWebhook}.`);
+    console.log(`\nEle criara ${faltando.length} webhook(s) em ${urlWebhook}.`);
     return;
   }
 
-  console.log(`\nCriando ${EVENTOS.length} webhooks em ${urlWebhook} ...`);
+  console.log(`\nCriando ${faltando.length} webhooks em ${urlWebhook} ...`);
   let criados = 0;
   let falhos = 0;
 
-  for (const evento of EVENTOS) {
+  for (const evento of faltando) {
     const res = await woovi(appId, baseUrl, "POST", "/api/v1/webhook", {
       webhook: {
         name: `DividePass - ${evento}`,

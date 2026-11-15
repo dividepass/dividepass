@@ -1,5 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { simulateAmount } from "../_shared/platformFee.ts";
+// Guarda de assinatura em vigor: o cancelamento do preapproval no gateway
+// não pode encerrar o acesso de quem tem período PAGO pela frente.
+import { buscarAssinaturaVigente } from "../_shared/subscription-guard.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -307,6 +310,29 @@ export default {
 
         // Tratar status que cancelam/pausam a assinatura
         if (["cancelled", "paused", "expired"].includes(preapproval.status)) {
+          // O gateway parou a COBRANCA automática, mas o período já pago
+          // continua valendo até o vencimento (regra: a assinatura é ativa
+          // enquanto `renewal_due_at` não passa, com carência de 7 dias).
+          //
+          // Cancelar aqui tirava o grupo de quem estava em dia — o acesso
+          // precisa durar até o fim do período pago. Quem encerra o acesso
+          // depois é o job de status, pela data.
+          const assinatura = await buscarAssinaturaVigente(supabaseAdmin, user_id, group_id);
+          if (assinatura) {
+            console.log(
+              `Preapproval ${preapproval.status} — assinatura ${assinatura.id} ainda em vigor (venc. ${assinatura.renewal_due_at || assinatura.next_charge_at || "-"}); acesso mantido`,
+            );
+            await supabaseAdmin
+              .from("user_subscriptions")
+              .update({
+                mercado_pago_status: preapproval.status,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", assinatura.id);
+
+            return new Response("OK", { status: 200, headers: corsHeaders });
+          }
+
           console.log(`Preapproval ${preapproval.status} — cancelling subscription locally`);
           await supabaseAdmin
             .from("user_subscriptions")

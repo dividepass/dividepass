@@ -4,6 +4,9 @@
 
 import { getGatewaySettings } from "./settings.ts";
 import { getInitialPaymentStatus } from "./status-helpers.ts";
+// Guarda de assinatura em vigor: o prazo de 12h da entrada NÃO pode encerrar
+// o vínculo de quem já tem assinatura paga (ver o bloco "Prazo de 12h expirou").
+import { buscarAssinaturaVigente } from "../../_shared/subscription-guard.ts";
 import { resolveCoupon } from "./coupon.ts";
 
 interface HandlerContext {
@@ -18,6 +21,15 @@ interface HandlerContext {
   payment_type: string;
   corsHeaders: Record<string, string>;
   body: any;
+  /**
+   * Cupom escolhido no checkout. NÃO é confiável: o desconto é sempre
+   * recalculado no servidor a partir da tabela `coupons`
+   * (ver `handlers/coupon.ts`). Estes campos existem no ctx porque o
+   * `create-payment` os repassa — mas o valor Cobrado NUNCA vem daqui.
+   */
+  coupon_id: string | null;
+  discount_amount: number | null;
+  final_amount: number | null;
 }
 
 const IOPAY_PROD = "https://api.iopay.com.br/api/";
@@ -989,7 +1001,17 @@ export default async function handleIOPay(req: Request, ctx: HandlerContext) {
         return new Response(JSON.stringify({ error: "Taxa de entrada ainda não foi paga." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       if (member?.subscription_deadline && new Date(member.subscription_deadline) < new Date()) {
-        await supabaseAdmin.from("group_members").update({ payment_status: "expired", status: "cancelled", left_at: new Date().toISOString() }).eq("group_id", group_id).eq("user_id", user_id);
+        // O prazo de 12h é o prazo para ASSINATAR depois de pagar a entrada.
+        // Se a pessoa já tem assinatura paga e em vigor, o acesso é dela e
+        // este caminho NÃO pode encerrar o vínculo — era aqui que o grupo
+        // sumia da tela de quem estava em dia. Quem cancela assinatura
+        // vencida é o job de status, pela data e com a carência de 7 dias.
+        const assinatura = await buscarAssinaturaVigente(supabaseAdmin, user_id, group_id);
+        if (!assinatura) {
+          await supabaseAdmin.from("group_members").update({ payment_status: "expired", status: "cancelled", left_at: new Date().toISOString() }).eq("group_id", group_id).eq("user_id", user_id);
+        } else {
+          console.log(`[iopay] prazo de 12h expirou, mas a assinatura ${assinatura.id} esta em vigor — vinculo mantido`);
+        }
         return new Response(JSON.stringify({ error: "Prazo de 12h expirou." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }

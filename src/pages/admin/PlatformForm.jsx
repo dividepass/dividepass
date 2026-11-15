@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Loader2, Check, ImageIcon, Upload, Pin, Star, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Check, ImageIcon, Upload, Pin, Star, Trash2, MailCheck } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { optimizeImage } from '../../lib/imageOptimizer';
 import { fetchPlansForService, saveServicePlans } from '../../lib/platformPlans';
@@ -89,6 +89,7 @@ function PlatformForm() {
   const [saving, setSaving] = useState(false);
   const [savingPlans, setSavingPlans] = useState(false);
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [plansError, setPlansError] = useState('');
   const [plansOk, setPlansOk] = useState('');
   const [iconFile, setIconFile] = useState(null);
@@ -111,6 +112,10 @@ function PlatformForm() {
     status: 'active',
     featured: false,
     pinned: false,
+    /* Plataforma pede confirmacao por e-mail ao entrar com um dispositivo
+       diferente? Quando ligado, o wizard de criacao de grupo faz a pergunta
+       extra de COMO o codigo chega ao membro (manual x DividePass com IA). */
+    requires_email_code: false,
   });
 
   /* Sem id na URL (/admin/platforms/new): cria o rascunho e abre a URL com
@@ -184,6 +189,7 @@ function PlatformForm() {
         status: isDraft ? 'active' : (data.status || 'active'),
         featured: !!data.featured,
         pinned: !!data.pinned,
+        requires_email_code: data.requires_email_code === true,
       });
       setIconPreview(data.icon_url || '');
       setLoading(false);
@@ -274,15 +280,48 @@ function PlatformForm() {
         status: formData.status,
         featured: formData.featured,
         pinned: formData.pinned,
+        requires_email_code: formData.requires_email_code === true,
       };
 
-      const { error: updateError } = await supabase
+      let updateError = null;
+      const { error: err } = await supabase
         .from('streaming_services')
         .update(payload)
         .eq('id', platform.id);
-      if (updateError) throw updateError;
+      updateError = err;
 
-      setPlatform(prev => ({ ...prev, ...payload }));
+      /* A coluna `requires_email_code` entra por migration. Se o banco ainda
+         nao a conhece, o update inteiro falha — e o admin perderia TODAS as
+         outras alteracoes por causa de um toggle. Melhor: salva o resto e
+         avisa o que ficou de fora.
+         IMPORTANTE: o teste só entra neste caminho se o erro citar
+         `requires_email_code`. Antes, qualquer "column ... does not exist"
+         caia aqui e o admin via um aviso MENTIROSO, culpando a coluna nova
+         quando o problema era outro. */
+      const faltaAColunaNova = updateError
+        && /requires_email_code/i.test(updateError.message || '')
+        && /(does not exist|nao existe|não existe|unknown column|PGRST204|42703)/i.test(updateError.message || '');
+
+      if (faltaAColunaNova) {
+        /* Sem o campo novo: o resto da plataforma é salvo normalmente. */
+        const rest = { ...payload };
+        delete rest.requires_email_code;
+        const retry = await supabase
+          .from('streaming_services')
+          .update(rest)
+          .eq('id', platform.id);
+        if (retry.error) throw retry.error;
+        setWarning(
+          'A opção "confirmação por e-mail" não foi salva: a coluna requires_email_code ainda não existe no banco. Aplique database/EXECUTAR-2026-11-07-plataforma-codigo-email.sql.',
+        );
+        setPlatform(prev => ({ ...prev, ...rest }));
+      } else if (updateError) {
+        /* Erro de verdade (RLS, outra coluna, etc.): mostra a causa real. */
+        throw updateError;
+      } else {
+        setPlatform(prev => ({ ...prev, ...payload }));
+        setWarning('');
+      }
 
       // A plataforma existia (inclusive o rascunho): a URL agora é a de edição
       // e mostra o slug.
@@ -371,6 +410,14 @@ function PlatformForm() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {warning && (
+        <div
+          className="error-banner"
+          style={{ background: 'rgba(245, 158, 11, 0.1)', color: '#F59E0B', borderColor: 'rgba(245, 158, 11, 0.25)' }}
+        >
+          {warning}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="platform-form-wrap">
         <div className="platform-form-card">
@@ -492,7 +539,34 @@ function PlatformForm() {
             </div>
           </section>
 
-          {/* ------------------------------------------- PLANOS DA PLATAFORMA */}
+          {/* ------------------------------------ ACESSO POR CÓDIGO DE E-MAIL */}
+          <section className="pf-section">
+            <h2>Acesso por código de e-mail</h2>
+            <p className="section-desc">
+              Algumas plataformas pedem uma confirmação por e-mail toda vez que alguém entra
+              com um dispositivo diferente. Ligando isso aqui, o dono do grupo é obrigado a
+              decidir como o código chega ao membro.
+            </p>
+
+            <label className="toggle-option">
+              <input
+                type="checkbox"
+                checked={formData.requires_email_code === true}
+                onChange={e => setFormData({ ...formData, requires_email_code: e.target.checked })}
+              />
+              <div className="toggle-content">
+                <MailCheck size={16} />
+                <div>
+                  <strong>Exige confirmação por e-mail em dispositivo diferente</strong>
+                  <span>
+                    Ligado, a criação de grupo pergunta se o dono repassa o código na mão ou
+                    deixa a DividePass buscar com IA.
+                  </span>
+                </div>
+              </div>
+            </label>
+          </section>
+
           <PlatformPlansEditor
             plans={plans}
             onChange={setPlans}

@@ -111,11 +111,14 @@ export default async function handlePagarMe(req: Request, ctx: HandlerContext) {
 
   const body = ctx.body || {};
   const type = payment_type || "subscription";
-  const cycle = billing_cycle || group.billing_cycle || "monthly";
   const { card_number, card_holder_name, card_exp_month, card_exp_year, card_cvv, payment_method } = body;
   const isPix = payment_method === "pix";
 
   // Get group
+  //
+  // O grupo vem ANTES do cálculo do ciclo: `group.billing_cycle` é o ciclo
+  // padrão do grupo. Usar `group` antes da declaração é TDZ (ReferenceError
+  // em runtime) — o `billing_cycle` do body pode não vir.
   const { data: group, error: groupError } = await supabaseAdmin
     .from("groups")
     .select("*, service:service_id(*)")
@@ -125,6 +128,8 @@ export default async function handlePagarMe(req: Request, ctx: HandlerContext) {
   if (groupError || !group) {
     return new Response(JSON.stringify({ error: "Grupo não encontrado" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
+
+  const cycle = billing_cycle || group.billing_cycle || "monthly";
 
   // Ensure customer exists
   const { data: userProfile } = await supabaseAdmin
@@ -172,6 +177,11 @@ export default async function handlePagarMe(req: Request, ctx: HandlerContext) {
   }
 
   // Record gateway
+  //
+  // `initialStatus` vem ANTES: usá-lo aqui antes da declaração é TDZ
+  // (ReferenceError em runtime). O status inicial do membro no grupo é o
+  // mesmo para entrada e assinatura — por isso é calculado uma vez, aqui.
+  const initialStatus = await getInitialPaymentStatus(supabaseAdmin, group_id, user_id, true);
   await supabaseAdmin.from("group_members").update({ payment_status: initialStatus }).eq("group_id", group_id).eq("user_id", user_id);
 
   const webhookUrl = `${supabaseUrl}/functions/v1/pagarme-webhook`;
@@ -182,8 +192,6 @@ export default async function handlePagarMe(req: Request, ctx: HandlerContext) {
     if (entranceAmount <= 0) {
       return new Response(JSON.stringify({ error: "Este grupo não possui taxa de adesão" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
-
-    const initialStatus = await getInitialPaymentStatus(supabaseAdmin, group_id, user_id, true);
 
     const orderBody: any = {
       code,

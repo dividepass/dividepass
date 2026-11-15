@@ -220,7 +220,6 @@ Deno.serve(async (req) => {
     const candidateList = [...(withDueAt.data || []), ...legacyInWindow];
 
     // Resolve nome do grupo, do serviço e do dono em lote (sem N+1).
-    const candidateList = candidates || [];
     const userIds = Array.from(
       new Set(candidateList.map((s: any) => s.user_id).filter(Boolean)),
     );

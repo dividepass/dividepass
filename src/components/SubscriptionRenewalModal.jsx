@@ -271,22 +271,35 @@ export default function SubscriptionRenewalModal({
         const token = sessionData?.session?.access_token;
         if (!token || !txId) return;
 
-        const resp = await fetch(`${SUPABASE_URL}/functions/v1/check-iopay-tx`, {
+        /* Cada gateway tem a sua função de consulta.
+         *
+         * A Woovi é o gateway do PIX RECORRENTE: a cobrança do ciclo é feita
+         * por ela e o id da transação é o do MANDATE, não o de uma cobrança
+         * avulsa. Consultar o `check-iopay-tx` com esse id não encontra
+         * nada — e a renovação ficava "pendente" mesmo com o PIX pago.
+         */
+        const ehWoovi = gateway === 'woovi';
+        const endpoint = ehWoovi ? 'check-woovi-tx' : 'check-iopay-tx';
+        const payload = ehWoovi
+          ? { transaction_id: txId }
+          : {
+              transaction_id: txId,
+              group_id: subscription.group_id,
+              user_id: user.id,
+              payment_type: 'subscription',
+              billing_cycle: subscription.billing_cycle || null,
+              custom_cycle_days: subscription.custom_cycle_days || null,
+              custom_cycle_months: subscription.custom_cycle_months || null,
+            };
+
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/${endpoint}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
             'apikey': SUPABASE_ANON_KEY,
           },
-          body: JSON.stringify({
-            transaction_id: txId,
-            group_id: subscription.group_id,
-            user_id: user.id,
-            payment_type: 'subscription',
-            billing_cycle: subscription.billing_cycle || null,
-            custom_cycle_days: subscription.custom_cycle_days || null,
-            custom_cycle_months: subscription.custom_cycle_months || null,
-          }),
+          body: JSON.stringify(payload),
         });
 
         let txResult;
@@ -319,7 +332,7 @@ export default function SubscriptionRenewalModal({
         console.error('[Renovação] Erro no polling:', e);
       }
     }, POLL_INTERVAL);
-  }, [subscription, user, stopPolling, handleSuccess]);
+  }, [subscription, user, stopPolling, handleSuccess, gateway]);
 
   const handlePay = async () => {
     if (!subscription || !user) return;

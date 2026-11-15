@@ -21,6 +21,13 @@
   margin-bottom: 1rem;
 }
 
+/* Grupo esgotado, fechado ou lotado: o cabeçalho (logo, nome, preço) fica
+   mais transparente — é a vitrine do grupo, e a vitrine mostra o que dá
+   para comprar. O aviso ("Esgotado", "Fechado") continua legível. */
+.gd-header.gd-header-indisponivel {
+  opacity: 0.65;
+}
+
 .gd-header-service {
   width: 64px;
   height: 64px;

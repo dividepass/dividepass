@@ -93,11 +93,17 @@ export async function resolveCoupon(params: {
       };
     }
     if (reward.expires_at && new Date(reward.expires_at) < new Date()) {
-      await supabaseAdmin
+      // Sem `.catch()`: o builder do Supabase é "thenable" (tem `.then`) mas
+      // NÃO tem `.catch` — usá-lo estourava TypeError em runtime ("b.catch
+      // is not a function"). O `await` no builder já resolve a promise e o
+      // `error` volta no resultado.
+      const { error: expireErr } = await supabaseAdmin
         .from("campaign_rewards")
         .update({ status: "expired" })
-        .eq("id", reward.id)
-        .catch(() => {});
+        .eq("id", reward.id);
+      if (expireErr) {
+        console.warn("[coupon] nao consegui expirar o beneficio:", expireErr.message);
+      }
       return { ok: false, error: "Este benefício expirou." };
     }
   }

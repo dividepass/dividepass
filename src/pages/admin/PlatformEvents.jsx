@@ -71,6 +71,102 @@ function PlatformEvents() {
   const [stats, setStats] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
 
+  /**
+   * "Verificar no Gateway" — consulta o status REAL no gateway da tentativa
+   * e tenta confirmar o pagamento.
+   *
+   * POR QUE UM CAMINHO POR GATEWAY
+   * ------------------------------------
+   * O botão apontava SEMPRE para o IO Pay (`force-confirm-payment`). Mas o
+   * gateway do Pix Automático é a Woovi: para ela, o botão consultava o IO Pay
+   * com o id de uma transação da Woovi, não achava nada e o admin via
+   * "verificar no gateway" sem entender por que o pagamento aprovado
+   * continuava fora da lista.
+   *
+   * Cada gateway tem a sua função de consulta:
+   *   woovi  -> `check-woovi-tx` (consulta a Woovi e confirma a parcela)
+   *   outros -> `force-confirm-payment` (fluxo do IO Pay)
+   */
+  const verificarNoGateway = async (pagamento) => {
+    if (!pagamento) return;
+    const gateway = String(pagamento.gateway || '').toLowerCase();
+    setPaymentsActionLoading(true);
+    setModalSuccess('');
+    setModalError('');
+    setModalInfo('');
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setModalError('Sessão expirada. Entre novamente no painel.');
+        return;
+      }
+      const base = import.meta.env.VITE_SUPABASE_URL;
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      };
+
+      if (gateway === 'woovi') {
+        const resp = await fetch(`${base}/functions/v1/check-woovi-tx`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ transaction_id: pagamento.gateway_transaction_id }),
+        });
+        const result = await resp.json();
+        if (result.confirmed) {
+          setModalSuccess('Pagamento confirmado com sucesso!');
+          setSelectedPayment({ ...pagamento, status: 'approved' });
+        } else {
+          setModalError(
+            result.confirm_error ||
+            result.error ||
+            `Status na Woovi: ${result.status || 'desconhecido'}`,
+          );
+        }
+        const status = result.mandate_status || result.status;
+        if (status) setModalInfo(`Status Woovi: ${status}`);
+        return;
+      }
+
+      const resp = await fetch(`${base}/functions/v1/force-confirm-payment`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          payment_id: pagamento.id,
+          transaction_id: pagamento.gateway_transaction_id,
+          group_id: pagamento.group?.id,
+          user_id: pagamento.user?.id,
+          payment_type: pagamento.payment_type,
+        }),
+      });
+      const result = await resp.json();
+      if (result.confirmed) {
+        setModalSuccess('Pagamento confirmado com sucesso!');
+        setSelectedPayment({ ...pagamento, status: 'approved' });
+      } else {
+        setModalError(result.error || `Status no gateway: ${result.iopay_status || 'desconhecido'}`);
+      }
+      if (result.iopay_status) setModalInfo(`Status IO Pay: ${result.iopay_status}`);
+    } catch (err) {
+      setModalError(err.message);
+    } finally {
+      setPaymentsActionLoading(false);
+    }
+  };
+
+  /** Nome do gateway como o admin conhece ("Woovi", "IO Pay"...). */
+  const nomeDoGateway = (gateway) => {
+    const g = String(gateway || '').toLowerCase();
+    if (g === 'woovi') return 'Woovi';
+    if (g === 'iopay') return 'IO Pay';
+    if (g === 'mercadopago') return 'Mercado Pago';
+    if (g === 'stripe') return 'Stripe';
+    if (g === 'asaas') return 'Asaas';
+    if (g === 'pagarme') return 'Pagar.me';
+    return gateway || 'gateway';
+  };
+
   const isLogView = LOG_FILTER_VALUES.includes(filter);
   const isGroupsList = filter === 'group_approved';
   const isUsersList = filter === 'user_registered';
@@ -1455,55 +1551,24 @@ function PlatformEvents() {
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <button
                       className="pe-btn"
-                      onClick={async () => {
-                        if (!selectedPayment.gateway_transaction_id && !selectedPayment.id) return;
-                        setPaymentsActionLoading(true);
-                        setModalSuccess('');
-                        setModalError('');
-                        setModalInfo('');
-                        try {
-                          const { data: { session } } = await supabase.auth.getSession();
-                          const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/force-confirm-payment`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-                            body: JSON.stringify({
-                              payment_id: selectedPayment.id,
-                              transaction_id: selectedPayment.gateway_transaction_id,
-                              group_id: selectedPayment.group?.id,
-                              user_id: selectedPayment.user?.id,
-                              payment_type: selectedPayment.payment_type,
-                            }),
-                          });
-                          const result = await resp.json();
-                          if (result.confirmed) {
-                            setModalSuccess('Pagamento confirmado com sucesso!');
-                            setSelectedPayment({ ...selectedPayment, status: 'approved' });
-                          } else {
-                            setModalError(result.error || `Status no gateway: ${result.iopay_status || 'desconhecido'}`);
-                          }
-                          if (result.iopay_status) {
-                            setModalInfo(`Status IOPay: ${result.iopay_status}`);
-                          }
-                        } catch (err) {
-                          setModalError(err.message);
-                        } finally {
-                          setPaymentsActionLoading(false);
-                        }
-                      }}
+                      onClick={() => verificarNoGateway(selectedPayment)}
                       disabled={paymentsActionLoading}
                     >
                       {paymentsActionLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                       Verificar no Gateway
                     </button>
                     <span style={{ fontSize: 12, color: '#6b7280' }}>
-                      Consulta o status real no IOPay e tenta confirmar o pagamento.
+                      Consulta o status real no {nomeDoGateway(selectedPayment.gateway)} e tenta confirmar o pagamento.
                     </span>
                   </div>
-                  {modalSuccess && <div className="pe-success-banner" style={{ marginTop: 10 }}>{modalSuccess}</div>}
-                  {modalError && <div className="pe-error-banner" style={{ marginTop: 10 }}>{modalError}</div>}
-                  {modalInfo && <div style={{ marginTop: 10, padding: '6px 10px', background: '#f1f5f9', borderRadius: 6, fontSize: 12, color: '#475569', border: '1px solid #e2e8f0' }}>{modalInfo}</div>}
                 </div>
               )}
+              {/* O aviso fica FORA do bloco acima: ao confirmar, o status da
+                  tentativa passa a "Aprovado" e o botão some — se o aviso
+                  morasse junto, o admin nunca veria a confirmação. */}
+              {modalSuccess && <div className="pe-success-banner" style={{ marginTop: 10 }}>{modalSuccess}</div>}
+              {modalError && <div className="pe-error-banner" style={{ marginTop: 10 }}>{modalError}</div>}
+              {modalInfo && <div style={{ marginTop: 10, padding: '6px 10px', background: '#f1f5f9', borderRadius: 6, fontSize: 12, color: '#475569', border: '1px solid #e2e8f0' }}>{modalInfo}</div>}
             </div>
           </div>
         </div>

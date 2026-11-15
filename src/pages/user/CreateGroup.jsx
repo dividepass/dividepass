@@ -33,6 +33,7 @@ import CredentialsStep from '../../components/group-creation/CredentialsStep';
 import PaymentStep from '../../components/group-creation/PaymentStep';
 import SummaryStep from '../../components/group-creation/SummaryStep';
 import ManagedEmailOption from '../../components/group-creation/ManagedEmailOption';
+import EmailCodeDeliveryStep from '../../components/group-creation/EmailCodeDeliveryStep';
 import { provisionarEmailGerenciado, isMissingEmailCodeColumn } from '../../lib/managedGroupEmail';
 
 import './CreateGroup.css';
@@ -101,6 +102,15 @@ const EMPTY_DRAFT = {
   // E-mail do grupo gerenciado pela DividePass com IA (busca automatica do
   // codigo de verificacao). Vira a caixa de e-mail do grupo no fim do wizard.
   managed_email: false,
+  // Como o codigo de confirmacao por e-mail chega ao membro:
+  //   'managed' = a DividePass busca o codigo com IA e entrega com 1 clique;
+  //   'manual'  = o dono repassa o codigo na mao, a cada membro.
+  // As colunas `email_code_delivery` e `owner_contact` entram por migration —
+  // sem elas no banco a escolha e salva, mas nao gravada (ver optionalFields).
+  email_code_delivery: 'managed',
+  // Contato do dono que o membro usa para pedir o codigo quando ele e repassado
+  // na mao. Os dados sao informados ao membro depois do pagamento.
+  owner_contact: '',
   available_cycles: ['monthly'],
   custom_cycle_enabled: false,
   custom_cycle_months: 2,
@@ -183,6 +193,11 @@ function stripMissingColumns(payload, error) {
     { field: 'email_code_enabled', test: isMissingEmailCodeColumn },
     { field: 'email_code_method', test: isMissingEmailCodeColumn },
     { field: 'managed_email', test: isMissingEmailCodeColumn },
+    /* As duas colunas da pergunta "quem entrega o codigo" entram na mesma
+       migration do e-mail gerenciado — se o banco nao as conhece, a escolha
+       do dono continua valendo na tela, so nao e gravada. */
+    { field: 'email_code_delivery', test: isMissingEmailCodeColumn },
+    { field: 'owner_contact', test: isMissingEmailCodeColumn },
   ];
 
   optional.forEach(({ field, test }) => {
@@ -233,7 +248,7 @@ function CreateGroup() {
     (async () => {
       try {
         setLoading(true);
-        const [servicesRes, settingsRes, usageRes] = await Promise.all([
+        const [servicesRes, settingsRes, usageRes, codeFlagRes] = await Promise.all([
           supabase.from('streaming_services')
             .select('id, name, full_name, icon, icon_url, color, slug, pinned, featured, max_group_size')
             .eq('status', 'active')
@@ -242,11 +257,27 @@ function CreateGroup() {
           // Quantos grupos cada plataforma tem: as mais usadas ficam no topo
           // da lista de plataformas (só os ids, é o que alimenta a ordem).
           supabase.from('groups').select('service_id').limit(2000),
+          /* A coluna `requires_email_code` (plataforma pede confirmação por
+             e-mail) entra por migration. A query de cima lista as colunas uma
+             a uma: se ela tivesse o campo novo e o banco ainda nao conhecesse,
+             o wizard INTEIRO quebraria. Por isso o flag vem numa consulta
+             separada — e, se ela falhar, segue como "nenhuma plataforma exige
+             codigo" (o comportamento antigo). */
+          supabase.from('streaming_services').select('id, requires_email_code'),
         ]);
         if (cancelled) return;
 
         if (servicesRes.error) throw servicesRes.error;
-        setServices(servicesRes.data || []);
+        const exigeCodigo = {};
+        if (!codeFlagRes.error) {
+          (codeFlagRes.data || []).forEach((s) => {
+            exigeCodigo[s.id] = s.requires_email_code === true;
+          });
+        }
+        setServices((servicesRes.data || []).map((s) => ({
+          ...s,
+          requires_email_code: exigeCodigo[s.id] === true,
+        })));
 
         const counts = {};
         (usageRes.data || []).forEach((g) => {
@@ -299,6 +330,10 @@ function CreateGroup() {
               subscription_status: g.subscription_status || SUBSCRIPTION_ACTIVE,
               chat_enabled: g.chat_enabled === false ? false : true,
               managed_email: g.managed_email === true || g.email_code_enabled === true,
+              // Quem entrega o codigo de confirmacao. Grupo antigo (sem a
+              // coluna) cai no modo gerenciado, que e o padrao do produto.
+              email_code_delivery: g.email_code_delivery === 'manual' ? 'manual' : 'managed',
+              owner_contact: g.owner_contact || '',
               available_cycles: cycles.filter(c => c !== 'custom' && c !== 'days'),
               custom_cycle_enabled: cycles.includes('custom'),
               custom_cycle_months: g.custom_cycle_months || 2,
@@ -451,11 +486,25 @@ function CreateGroup() {
     // faz o botao "Buscar Codigo" aparecer para o membro. A CAIXA em si e
     // criada no servidor no fim do wizard (edge function), por isso aqui so
     // vai a intencao.
-    payload.email_code_enabled = draft.managed_email === true;
-    payload.email_code_method = draft.managed_email === true ? 'imap' : null;
+    //
+    // Quem entrega o codigo de confirmacao depende da plataforma:
+    //  - plataforma que EXIGE confirmacao por e-mail: o dono escolheu na
+    //    etapa de credenciais (manual x gerenciado com IA);
+    //  - plataforma que NAO exige: vale o toggle de e-mail gerenciado.
+    const exigeCodigo = platform?.requires_email_code === true;
+    const entregaGerenciada = exigeCodigo
+      ? draft.email_code_delivery !== 'manual'
+      : draft.managed_email === true;
+    payload.email_code_enabled = entregaGerenciada;
+    payload.email_code_method = entregaGerenciada ? 'imap' : null;
     // A intencao do dono fica gravada mesmo se a criacao da caixa falhar
     // (a tela "Gerenciar Grupo" usa isso para oferecer a criacao de novo).
-    payload.managed_email = draft.managed_email === true;
+    payload.managed_email = entregaGerenciada;
+    // Como o codigo chega ao membro e o contato do dono para o caso manual.
+    payload.email_code_delivery = entregaGerenciada ? 'managed' : 'manual';
+    payload.owner_contact = entregaGerenciada
+      ? null
+      : (draft.owner_contact || null);
     return payload;
   };
 
@@ -465,6 +514,18 @@ function CreateGroup() {
   const saveDraft = useCallback(async () => {
     if (!user?.id) throw new Error('Usuário não autenticado');
     const payload = buildGroupPayload();
+
+    /* O banco acusa UMA coluna por vez. Como o grupo tem varias colunas que
+       dependem de migration (email_code_enabled, email_code_delivery,
+       owner_contact...), um unico retry nao resolve: o segundo erro volta a
+       derrubar a gravacao. O laco tira a coluna citada e tenta de novo ate
+       sobrar nada para tirar. */
+    const marcarColunaAusente = (field) => {
+      if (field === 'has_ads') setHasAdsColumn(false);
+      if (field === 'visibility') setHasVisibilityColumn(false);
+      if (field === 'subscription_status') setHasSubscriptionColumn(false);
+      if (field === 'chat_enabled') setHasChatColumn(false);
+    };
 
     if (!draft.groupId) {
       const insertRow = {
@@ -476,28 +537,28 @@ function CreateGroup() {
         approval_status: null,
       };
 
-      let { data, error: insErr } = await supabase
-        .from('groups')
-        .insert(insertRow)
-        .select('id')
-        .single();
+      let row = insertRow;
+      let data = null;
+      let insErr = null;
 
-      if (insErr) {
-        // o banco ainda nao tem alguma das colunas novas: refaz sem o campo
-        const retry = stripMissingColumns(insertRow, insErr);
-        if (retry) {
-          retry.missing.forEach((field) => {
-            if (field === 'has_ads') setHasAdsColumn(false);
-            if (field === 'visibility') setHasVisibilityColumn(false);
-            if (field === 'subscription_status') setHasSubscriptionColumn(false);
-            if (field === 'chat_enabled') setHasChatColumn(false);
-          });
-          const again = await supabase.from('groups').insert(retry.payload).select('id').single();
-          data = again.data;
-          insErr = again.error;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const res = await supabase.from('groups').insert(row).select('id').single();
+        if (!res.error) {
+          data = res.data;
+          insErr = null;
+          break;
         }
+        const retry = stripMissingColumns(row, res.error);
+        if (!retry) {
+          insErr = res.error;
+          break;
+        }
+        retry.missing.forEach(marcarColunaAusente);
+        row = retry.payload;
       }
+
       if (insErr) throw insErr;
+      if (!data) throw new Error('Não foi possível criar o grupo.');
 
       const updates = { slug: data.id.slice(0, 6).toUpperCase() };
       // Refeza o nome agora que o id existe: sem plano, o nome usa o id curto.
@@ -517,20 +578,21 @@ function CreateGroup() {
       return data.id;
     }
 
-    let { error: updErr } = await supabase.from('groups').update(payload).eq('id', draft.groupId);
-    if (updErr) {
-      const retry = stripMissingColumns(payload, updErr);
-      if (retry) {
-        retry.missing.forEach((field) => {
-          if (field === 'has_ads') setHasAdsColumn(false);
-          if (field === 'visibility') setHasVisibilityColumn(false);
-          if (field === 'subscription_status') setHasSubscriptionColumn(false);
-          if (field === 'chat_enabled') setHasChatColumn(false);
-        });
-        const again = await supabase.from('groups').update(retry.payload).eq('id', draft.groupId);
-        if (again.error) throw again.error;
-        return draft.groupId;
+    let row = payload;
+    let updErr = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const res = await supabase.from('groups').update(row).eq('id', draft.groupId);
+      if (!res.error) {
+        updErr = null;
+        break;
       }
+      const retry = stripMissingColumns(row, res.error);
+      if (!retry) {
+        updErr = res.error;
+        break;
+      }
+      retry.missing.forEach(marcarColunaAusente);
+      row = retry.payload;
     }
     if (updErr) throw updErr;
     return draft.groupId;
@@ -607,6 +669,17 @@ function CreateGroup() {
       case 3:
         if (draft.credential_type === 'email_password' && !draft.login_email.trim()) return 'Informe o e-mail de acesso.';
         if (draft.credential_type !== 'email_password' && !draft.credential_extra.trim()) return 'Informe a credencial de acesso.';
+        // Plataforma que exige confirmacao por e-mail: o dono precisa ter
+        // escolhido COMO o codigo chega ao membro e, se for na mao, deixar um
+        // contato para o membro conseguir falar com ele.
+        if (platform?.requires_email_code === true) {
+          if (draft.email_code_delivery !== 'manual' && draft.email_code_delivery !== 'managed') {
+            return 'Escolha como o código de confirmação chega ao membro.';
+          }
+          if (draft.email_code_delivery === 'manual' && !draft.owner_contact.trim()) {
+            return 'Deixe um contato (e-mail ou telefone) para o membro pedir o código.';
+          }
+        }
         return '';
 
       /* 5. PAGAMENTOS — ciclos + valor do grupo */
@@ -847,8 +920,12 @@ function CreateGroup() {
     },
     { label: 'Chat do grupo', value: draft.chat_enabled === false ? 'Desligado' : 'Ligado' },
     {
-      label: 'E-mail gerenciado com IA',
-      value: draft.managed_email === true ? 'Ligado' : 'Desligado',
+      label: platform?.requires_email_code === true ? 'Código de confirmação' : 'E-mail gerenciado com IA',
+      value: platform?.requires_email_code === true
+        ? (draft.email_code_delivery === 'manual'
+          ? 'Repassado por você (contato informado aos membros)'
+          : 'DividePass busca com IA')
+        : (draft.managed_email === true ? 'Ligado' : 'Desligado'),
     },
     { label: 'Visibilidade', value: draft.visibility === 'private' ? 'Privado (só convite/link)' : 'Público' },
     { label: 'Ciclos', value: [...draft.available_cycles, ...(draft.custom_cycle_enabled ? ['personalizado'] : []), ...(draft.days_cycle_enabled ? ['dias'] : [])].join(', ') || '—' },
@@ -1017,12 +1094,39 @@ function CreateGroup() {
               />
 
               {/* O e-mail gerenciado com IA e uma escolha do DONO do grupo:
-                  ele cria a caixa e troca o e-mail da conta da plataforma. */}
-              <ManagedEmailOption
-                value={{ managed_email: draft.managed_email }}
-                onChange={(patch) => setDraft(prev => ({ ...prev, ...patch }))}
-                serviceName={platformName}
-              />
+                  ele cria a caixa e troca o e-mail da conta da plataforma.
+
+                  Quando a PLATAFORMA exige confirmacao por e-mail ao entrar
+                  com um dispositivo diferente, essa pergunta e obrigatoria:
+                  o dono tem que dizer como o codigo chega ao membro (repassando
+                  na mao ou deixando a DividePass buscar com IA). O toggle
+                  antigo e escondido nesse caso para nao ter duas respostas
+                  conflitantes na mesma tela. */}
+              {platform?.requires_email_code === true ? (
+                <EmailCodeDeliveryStep
+                  value={{
+                    email_code_delivery: draft.email_code_delivery,
+                    owner_contact: draft.owner_contact,
+                  }}
+                  onChange={(patch) => setDraft(prev => ({
+                    ...prev,
+                    ...patch,
+                    // A escolha do modo ja define se existe caixa gerenciada:
+                    // 'managed' liga, 'manual' desliga.
+                    ...(patch.email_code_delivery
+                      ? { managed_email: patch.email_code_delivery !== 'manual' }
+                      : {}),
+                  }))}
+                  serviceName={platformName}
+                  ownerEmail={user?.email || ''}
+                />
+              ) : (
+                <ManagedEmailOption
+                  value={{ managed_email: draft.managed_email }}
+                  onChange={(patch) => setDraft(prev => ({ ...prev, ...patch }))}
+                  serviceName={platformName}
+                />
+              )}
             </>
           )}
 

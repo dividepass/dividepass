@@ -1,15 +1,58 @@
+/* =============================================================
+   PERFIL DO USUÁRIO — /dashboard/profile
+   =============================================================
+   Aviso importante sobre este arquivo: o Vite junta TODOS os CSS
+   do app em um único arquivo. Isso faz regras genéricas de outras
+   páginas vazarem para cá (`.page-header`, `.form-group`, `.btn`,
+   `.btn-outline`...). Por isso os blocos deste arquivo são
+   escopados em `.profile-page`: assim a tela de perfil não depende
+   da ordem de import nem de regra de outra página.
+
+   A base (sem media query) é o DESKTOP e não deve mudar de
+   aparência. As media queries no fim do arquivo cuidam de
+   tablet (≤900px) e celular (≤640px).
+   ============================================================= */
+
 .profile-page {
   max-width: 640px;
   margin: 0 auto;
+  width: 100%;
 }
 
+/* ── Cabeçalho ─────────────────────────────────────────────── */
+/* O `.page-header` global (vazado de outras telas) deixa esta
+   linha empilhada e justificada no mobile. Aqui o cabeçalho
+   volta a ser UMA LINHA: seta à esquerda + título ao lado —
+   é isso que mantém o contexto de "onde eu estou" no celular. */
 .profile-page .page-header {
   display: flex;
+  flex-direction: row;
   align-items: center;
+  justify-content: flex-start;
   gap: 1rem;
   margin-bottom: 2rem;
+  text-align: left;
 }
 
+.profile-page .page-header > div {
+  min-width: 0;
+}
+
+/* Mesmos valores do `.page-header` global: no desktop a tipografia
+   desta tela não muda. O corte para telas menores vem nas media
+   queries do fim do arquivo. */
+.profile-page .page-header h1 {
+  font-size: clamp(1.55rem, 2vw, 2.15rem);
+  margin-bottom: 0.5rem;
+}
+
+.profile-page .page-header p {
+  font-size: 0.94rem;
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* ── Cartão principal ──────────────────────────────────────── */
 .profile-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -18,6 +61,7 @@
   box-shadow: var(--shadow-sm);
 }
 
+/* ── Notificações push ─────────────────────────────────────── */
 .profile-notifications-card {
   border: 1px solid rgba(79, 70, 229, 0.2);
   border-radius: var(--radius-lg);
@@ -53,6 +97,7 @@
   font-size: 0.72rem;
   font-weight: 700;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .profile-notifications-status.on {
@@ -76,6 +121,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-width: 0;
 }
 
 .profile-notifications-text strong {
@@ -88,7 +134,7 @@
   line-height: 1.4;
 }
 
-/* Avatar */
+/* ── Avatar ────────────────────────────────────────────────── */
 .profile-avatar-section {
   display: flex;
   flex-direction: column;
@@ -100,6 +146,7 @@
   position: relative;
   width: 110px;
   height: 110px;
+  max-width: 100%;
   border-radius: 50%;
   border: 3px solid var(--primary);
   overflow: hidden;
@@ -111,14 +158,11 @@
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.profile-avatar-btn:hover {
-  transform: scale(1.05);
-  box-shadow: 0 0 0 4px var(--ring);
-}
-
 .profile-avatar-img {
   width: 100%;
   height: 100%;
+  /* Sem isto, uma foto larga estoura o cartão no celular. */
+  max-width: 100%;
   object-fit: cover;
 }
 
@@ -141,20 +185,38 @@
   transition: opacity 0.2s ease;
 }
 
-.profile-avatar-btn:hover .profile-avatar-overlay {
-  opacity: 1;
+/* Sem mouse não existe hover: no toque acamera ficaria invisível
+   e ninguém entenderia que a foto é clicável. */
+@media (hover: none) {
+  .profile-avatar-overlay {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.25);
+  }
+}
+
+@media (hover: hover) {
+  .profile-avatar-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 4px var(--ring);
+  }
+
+  .profile-avatar-btn:hover .profile-avatar-overlay {
+    opacity: 1;
+  }
 }
 
 .profile-avatar-hint {
   margin-top: 0.5rem;
   font-size: 0.8rem;
   color: var(--text-muted);
+  text-align: center;
 }
 
 .profile-avatar-presets-btn {
   margin-top: 0.6rem;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.4rem;
   padding: 0.5rem 0.85rem;
   border-radius: 999px;
@@ -173,7 +235,7 @@
   background: var(--primary-soft);
 }
 
-/* Modal de avatares prontos */
+/* ── Modal de avatares prontos ─────────────────────────────── */
 .profile-avatars-modal {
   position: fixed;
   inset: 0;
@@ -244,7 +306,7 @@
   font-weight: 700;
 }
 
-/* Message */
+/* ── Mensagem de retorno ───────────────────────────────────── */
 .profile-message {
   padding: 0.75rem 1rem;
   border-radius: var(--radius-xs);
@@ -265,7 +327,7 @@
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
-/* Fields */
+/* ── Campos ────────────────────────────────────────────────── */
 .profile-fields {
   display: flex;
   flex-direction: column;
@@ -281,6 +343,7 @@
 
 .profile-fields .form-group input {
   width: 100%;
+  max-width: 100%;
   padding: 0.75rem 1rem;
   border-radius: var(--radius-xs);
   border: 1px solid var(--border);
@@ -304,6 +367,9 @@
 
 .profile-name-copy-row input {
   flex: 1;
+  /* Sem isto, o input "empurra" o botão de copiar para fora da
+     linha em telas estreitas. */
+  min-width: 0;
 }
 
 .profile-copy-btn {
@@ -352,6 +418,7 @@
   display: flex;
   gap: 0.5rem;
   margin-top: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .profile-fields .profile-cpf-erro {
@@ -367,7 +434,7 @@
   gap: 1rem;
 }
 
-/* Actions */
+/* ── Ações ─────────────────────────────────────────────────── */
 .profile-actions {
   display: flex;
   justify-content: flex-end;
@@ -377,30 +444,25 @@
   border-top: 1px solid var(--border);
 }
 
-@media (max-width: 600px) {
-  .profile-card {
-    padding: 1.5rem;
-  }
-
-  .profile-notifications-header,
-  .profile-notifications-body {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .profile-fields .form-row {
-    grid-template-columns: 1fr;
-  }
-
-  .profile-actions {
-    flex-direction: column-reverse;
-  }
-
-  .profile-actions .btn {
-    width: 100%;
-  }
+/* ── Botões outline ────────────────────────────────────────── */
+/* O `.btn-outline` global está sendo vencido pela regra da Home
+   (`color: var(--home-text)` = branco). No tema claro isso deixava
+   "Cancelar", "Trocar CPF", "Remover" e "Abrir Chamado ao Suporte"
+   brancos sobre cartão branco — sumidos na tela. Escopando aqui,
+   o botão volta ao contraste do tema sem tocar em outras telas. */
+.profile-page .btn-outline {
+  background: var(--surface);
+  color: var(--text-main);
+  border-color: var(--border-strong);
 }
 
+.profile-page .btn-outline:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* ── Zona de perigo ────────────────────────────────────────── */
 .danger-zone {
   margin-top: 2rem;
   padding: 1.5rem;
@@ -489,4 +551,340 @@
 .pending-payments-list li {
   font-size: 0.82rem;
   color: var(--text-muted);
+}
+
+/* =============================================================
+   TABLET — até 900px
+   A navegação já vira gaveta antes disso (850px), então a página
+   precisa se adaptar junto: uma coluna, respiro menor, texto
+   menor. O DESKTOP acima não muda.
+   ============================================================= */
+@media (max-width: 900px) {
+  .profile-page {
+    padding-bottom: 1.5rem;
+  }
+
+  .profile-page .page-header {
+    margin-bottom: 1.1rem;
+    gap: 0.6rem;
+  }
+
+  /* O `h1 { font-size: ... !important }` global do app vence
+     qualquer regra de página; o `!important` aqui é necessário
+     para o título desta tela voltar ao tamanho do bloco. */
+  .profile-page .page-header h1 {
+    font-size: clamp(1.15rem, 1rem + 0.7vw, 1.4rem) !important;
+    margin-bottom: 0.15rem;
+  }
+
+  .profile-page .page-header p {
+    font-size: 0.8rem;
+  }
+
+  /* Mesma luta com o `h3 { font-size: ... !important }` global. */
+  .profile-notifications-header h3 {
+    font-size: 0.95rem !important;
+  }
+
+  .danger-zone h3 {
+    font-size: 1rem !important;
+  }
+
+  .profile-card {
+    padding: 1.25rem;
+  }
+
+  .profile-notifications-card {
+    padding: 0.85rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .profile-avatar-btn {
+    width: 96px;
+    height: 96px;
+  }
+
+  .profile-avatar-initials {
+    font-size: 2.1rem;
+  }
+
+  .profile-avatar-section {
+    margin-bottom: 1.5rem;
+  }
+
+  /* O `.form-group` global traz `margin-bottom` próprio: somado ao
+     `gap` do container o formulário fica com blocos gigantes. */
+  .profile-fields .form-group {
+    margin-bottom: 0;
+    gap: 0.35rem;
+  }
+
+  .profile-fields {
+    gap: 1rem;
+  }
+
+  .profile-fields .form-group label {
+    font-size: 0.8rem;
+    margin-bottom: 0.2rem;
+  }
+
+  .profile-fields .form-group input {
+    font-size: 0.9rem;
+    padding: 0.65rem 0.85rem;
+    /* Alvo de toque confortável para o dedo. */
+    min-height: 44px;
+  }
+
+  .profile-fields .form-row {
+    gap: 0.75rem;
+  }
+
+  .profile-copy-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* A seta de voltar e o atalho de avatares precisam ter alvo de
+     toque de verdade no tablet também. */
+  .profile-page .back-btn {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .profile-avatar-presets-btn {
+    min-height: 44px;
+  }
+
+  .profile-actions {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+  }
+
+  .profile-actions .btn,
+  .profile-notifications-body .btn,
+  .profile-cpf-acoes .btn,
+  .danger-actions .btn {
+    min-height: 44px;
+  }
+
+  .danger-zone {
+    margin-top: 1.5rem;
+    padding: 1.25rem;
+  }
+
+  .delete-error {
+    padding: 0.85rem;
+  }
+}
+
+/* =============================================================
+   CELULAR — até 640px
+   Uma coluna só, tudo cabe na largura da tela e nenhum bloco
+   estoura. Nada de scroll horizontal.
+   ============================================================= */
+@media (max-width: 640px) {
+  .profile-page {
+    padding-bottom: 1rem;
+  }
+
+  .profile-page .page-header {
+    margin-bottom: 0.9rem;
+  }
+
+  .profile-page .page-header h1 {
+    font-size: 1.2rem !important;
+  }
+
+  .profile-page .page-header p {
+    font-size: 0.78rem;
+  }
+
+  /* A seta de voltar precisa ter alvo de toque de verdade. */
+  .profile-page .back-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .profile-card {
+    padding: 1rem;
+    border-radius: var(--radius-md);
+  }
+
+  /* Notificações: título e status continuam na mesma linha (o
+     contexto não se perde) e o texto fica logo abaixo. */
+  .profile-notifications-card {
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    border-radius: var(--radius-md);
+  }
+
+  .profile-notifications-header {
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .profile-notifications-header h3 {
+    font-size: 0.9rem !important;
+  }
+
+  .profile-notifications-header p {
+    font-size: 0.76rem;
+  }
+
+  .profile-notifications-body {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
+  .profile-notifications-text strong {
+    font-size: 0.82rem;
+  }
+
+  .profile-notifications-text span {
+    font-size: 0.76rem;
+  }
+
+  .profile-notifications-body .btn {
+    width: 100%;
+  }
+
+  .profile-avatar-btn {
+    width: 84px;
+    height: 84px;
+    border-width: 2px;
+  }
+
+  .profile-avatar-initials {
+    font-size: 1.8rem;
+  }
+
+  .profile-avatar-section {
+    margin-bottom: 1.25rem;
+  }
+
+  .profile-avatar-hint {
+    font-size: 0.75rem;
+  }
+
+  .profile-avatar-presets-btn {
+    min-height: 44px;
+    padding: 0 1rem;
+  }
+
+  .profile-avatars-panel {
+    padding: 1rem;
+    border-radius: var(--radius-md);
+  }
+
+  .profile-avatars-header h3 {
+    font-size: 1rem;
+  }
+
+  .profile-avatars-close {
+    width: 40px;
+    height: 40px;
+  }
+
+  .profile-avatars-actions .btn {
+    width: 100%;
+  }
+
+  .profile-message {
+    font-size: 0.84rem;
+    padding: 0.65rem 0.85rem;
+    margin-bottom: 1rem;
+  }
+
+  .profile-fields {
+    gap: 0.85rem;
+  }
+
+  .profile-fields .form-group label {
+    font-size: 0.78rem;
+  }
+
+  .profile-fields .form-group input {
+    font-size: 0.88rem;
+    padding: 0.6rem 0.75rem;
+    min-height: 44px;
+  }
+
+  .profile-name-copy-row {
+    gap: 0.4rem;
+  }
+
+  .profile-copy-btn {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+  }
+
+  /* Uma coluna: celular e data de nascimento empilhados. */
+  .profile-fields .form-row {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+
+  .profile-fields .profile-cpf-acoes .btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .profile-actions {
+    flex-direction: column-reverse;
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+  }
+
+  .profile-actions .btn {
+    width: 100%;
+  }
+
+  .danger-zone {
+    margin-top: 1.25rem;
+    padding: 1rem;
+    border-radius: var(--radius-md);
+  }
+
+  .danger-zone h3 {
+    font-size: 0.95rem !important;
+  }
+
+  .danger-zone > p {
+    font-size: 0.8rem;
+  }
+
+  .danger-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .danger-actions .btn {
+    width: 100%;
+  }
+
+  .delete-error {
+    padding: 0.75rem;
+    gap: 0.5rem;
+  }
+
+  .delete-error p {
+    font-size: 0.8rem;
+  }
+}
+
+/* Quem não quer animação não fica com transição pendurada no
+   hover do avatar nem no fade da página. */
+@media (prefers-reduced-motion: reduce) {
+  .profile-page *,
+  .profile-page *::before,
+  .profile-page *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+  }
 }

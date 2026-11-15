@@ -38,18 +38,56 @@ import {
   calcularMargem,
   calcularPrecoVenda,
   categoriaEhIgnorada,
+  classificarProduto,
   derivarCiclo,
-  limiterDescricao,
+  limparDescricao,
+  marcarComoDividePass,
+  normalizarTexto,
   pacoteEhVendavel,
+  pacoteTemEstoque,
   resolverPlataforma,
+  rotuloCiclo,
   slugify,
+  tagsDoGrupo,
   type DestinoPlataforma,
 } from "./pulse-catalog.ts";
 
 const REGRAS_VIA_PARCEIRO =
-  "Esta é uma entrega individual via Pulse Coding: o acesso é seu e só seu. " +
+  "Esta é uma entrega individual via DividePass: o acesso é seu e só seu. " +
   "Não compartilhe a senha, o link ou a chave com ninguém. " +
   "Se puder, troque a senha no primeiro acesso.";
+
+/**
+ * E-mail do admin OFICIAL da plataforma (o dono).
+ *
+ * Os grupos importados são do DONO, não de quem rodou o sync: o `owner_id`
+ * decide para onde vai o repasse do dinheiro.
+ */
+const EMAIL_ADMIN_OFICIAL = "admin@dividepass.com";
+
+/**
+ * Quem é o DONO dos grupos importados.
+ *
+ * SEMPRE o admin oficial (`admin@dividepass.com`), nunca quem disparou o
+ * sync. Antes, o importador usava o id de quem chamou a função — um sync
+ * feito por uma conta de teste deixava os 79 grupos com o dono errado (e o
+ * repasse do dinheiro iria para a conta errada).
+ *
+ * Se o admin oficial não existir, cai no admin mais antigo.
+ */
+export async function resolverDonoAdmin(supabaseAdmin: any): Promise<string | null> {
+  const { data } = await supabaseAdmin
+    .from("users")
+    .select("id, email, role, created_at")
+    .eq("role", "admin")
+    .order("created_at", { ascending: true });
+
+  const lista = data ?? [];
+  const oficial = lista.find(
+    (u: any) => normalizarTexto(u?.email) === normalizarTexto(EMAIL_ADMIN_OFICIAL),
+  );
+  return oficial?.id ?? lista[0]?.id ?? null;
+}
 
 export interface RelatorioImport {
   total: number;
@@ -90,19 +128,25 @@ async function garantirPlataforma(
   supabaseAdmin: any,
   destino: DestinoPlataforma,
   dryRun: boolean,
-): Promise<{ id: string | null; nome: string; slug: string; criado: boolean }> {
+): Promise<{ id: string | null; nome: string; slug: string; criado: boolean; icon_url: string | null }> {
   const { data: existente } = await supabaseAdmin
     .from("streaming_services")
-    .select("id, name, slug")
+    .select("id, name, slug, icon_url")
     .eq("slug", destino.slug)
     .maybeSingle();
 
   if (existente) {
-    return { id: existente.id, nome: existente.name, slug: existente.slug, criado: false };
+    return {
+      id: existente.id,
+      nome: existente.name,
+      slug: existente.slug,
+      criado: false,
+      icon_url: existente.icon_url ?? null,
+    };
   }
 
   if (dryRun) {
-    return { id: null, nome: destino.nome, slug: destino.slug, criado: true };
+    return { id: null, nome: destino.nome, slug: destino.slug, criado: true, icon_url: null };
   }
 
   const { data: novo, error } = await supabaseAdmin
@@ -116,14 +160,14 @@ async function garantirPlataforma(
       status: "active",
       max_group_size: 4,
     })
-    .select("id, name, slug")
+    .select("id, name, slug, icon_url")
     .single();
 
   if (error) {
     throw new Error(`Falha ao criar a plataforma "${destino.nome}": ${error.message}`);
   }
 
-  return { id: novo.id, nome: novo.name, slug: novo.slug, criado: true };
+  return { id: novo.id, nome: novo.name, slug: novo.slug, criado: true, icon_url: novo.icon_url ?? null };
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +186,16 @@ async function garantirPlano(
 ): Promise<string | null> {
   const { service_id, pkg, billing_cycle, sale_price, dryRun } = params;
 
+  // O CHECK do banco em `service_plans.billing_cycle` aceita SÓ quatro
+  // valores: monthly, quarterly, semiannual e annual. `days` e `custom` são
+  // válidos em `groups`, mas não aqui.
+  //
+  // O prazo exato (7 dias, 30 dias) NÃO se perde: ele vive no GRUPO, em
+  // `custom_cycle_days`, e é o que vale na hora de cobrar e de expirar.
+  const cicloDoPlano = ["monthly", "quarterly", "semiannual", "annual"].includes(billing_cycle)
+    ? billing_cycle
+    : "monthly";
+
   // O plan_key leva o prefixo do package_id: o id da Pulse pode mudar, mas o
   // plano precisa ser o MESMO quando o pacote volta com outro id.
   const plan_key = `${slugify(pkg.title).slice(0, 38)}-${pkg.id.slice(0, 6)}`;
@@ -158,8 +212,8 @@ async function garantirPlano(
       await supabaseAdmin
         .from("service_plans")
         .update({
-          name: pkg.title,
-          billing_cycle,
+          name: marcarComoDividePass(pkg.title),
+          billing_cycle: cicloDoPlano,
           official_price: sale_price,
           is_active: true,
           updated_at: new Date().toISOString(),
@@ -175,9 +229,9 @@ async function garantirPlano(
     .from("service_plans")
     .insert({
       service_id,
-      name: pkg.title,
+      name: marcarComoDividePass(pkg.title),
       plan_key,
-      billing_cycle,
+      billing_cycle: cicloDoPlano,
       official_price: sale_price,
       currency: "BRL",
       country: "Brasil",
@@ -208,9 +262,12 @@ async function garantirGrupo(
     available_cycles: string[];
     custom_cycle_days: number | null;
     custom_cycle_months: number | null;
+    custom_cycle_label: string | null;
     sale_price: number;
     vendavel: boolean;
+    temEstoque: boolean;
     adminUserId: string | null;
+    photo_url: string | null;
     dryRun: boolean;
   },
 ): Promise<string | null> {
@@ -219,12 +276,21 @@ async function garantirGrupo(
   const dados = {
     service_id: p.service_id,
     plan_id: p.plan_id,
-    name: p.pkg.title,
+    // CAPA: a API de revenda NÃO devolve imagem nenhuma (nenhum dos 23
+    // campos é capa). O que existe é o logo da plataforma no Supabase
+    // Storage — é ele que vira a capa do grupo. Plataforma sem logo
+    // (as que o importador cria) fica com o placeholder com ícone.
+    photo_url: p.photo_url,
+    // O nome e a description são o que o CLIENTE lê: a marca do fornecedor
+    // aparece como DIVIDEPASS (decisão do dono). O título cru fica no espelho
+    // `pulse_pacotes`, que é o painel do admin.
+    name: marcarComoDividePass(p.pkg.title),
     price_per_slot: p.sale_price,
     billing_cycle: p.billing_cycle,
     available_cycles: p.available_cycles,
     custom_cycle_days: p.custom_cycle_days,
     custom_cycle_months: p.custom_cycle_months,
+    custom_cycle_label: p.custom_cycle_label,
     cycle_discount: 0,
     max_size: 4,
     // "Vagas ilimitadas": cada comprador leva a SUA conta da Pulse. O grupo é
@@ -234,13 +300,25 @@ async function garantirGrupo(
     entrance_fee: 0,
     status: p.vendavel ? "open" : "closed",
     visibility: p.vendavel ? "public" : "private",
-    tags: [TAG_VIA_PARCEIRO],
+    // Sem estoque no parceiro: o grupo continua NA VITRINE (a pessoa vê que
+    // o produto existe) mas ganha a tag "Esgotado" — o mesmo comportamento de
+    // um grupo cheio: ninguém entra e ninguém paga.
+    //
+    // Grupo que está FORA da vitrine (o parceiro nem libera para revenda) não
+    // precisa da tag: ela é invisível ali e só suja o dado.
+    tags: !p.vendavel
+      ? [TAG_VIA_PARCEIRO]
+      : tagsDoGrupo(p.pkg, p.temEstoque),
     is_official: true,
     approval_status: "approved",
     owner_id: p.adminUserId,
-    description: limiterDescricao(p.pkg.description),
+    description: marcarComoDividePass(limparDescricao(p.pkg.description)),
     rules: REGRAS_VIA_PARCEIRO,
-    plan_type: TAG_VIA_PARCEIRO,
+    // `plan_type` fica VAZIO de propósito: o selo "Via Parceiro" já vem da
+    // tag, e usar o plan_type também fazia aparecer um chip duplicado
+    // ("Tipo de conta compartilhada: Via Parceiro") — que além de repetir,
+    // descrevia errado (o acesso é privado, não compartilhado).
+    plan_type: null,
     chat_enabled: false,
     email_code_enabled: false,
     verified: true,
@@ -291,6 +369,29 @@ async function garantirGrupo(
 // ---------------------------------------------------------------------------
 
 /**
+ * Markup configurado no painel (`/admin/settings` → Revenda).
+ *
+ * Cai no padrão (20%) se ainda não houver nada gravado. O valor vem do
+ * BANCO, e não do código — o dono muda a margem sem precisar republicar
+ * nada.
+ */
+export async function resolverMarkup(supabaseAdmin: any): Promise<number> {
+  try {
+    const { data } = await supabaseAdmin
+      .from("app_settings")
+      .select("value")
+      .eq("key", "pulse_markup")
+      .limit(1);
+    const bruto = String(data?.[0]?.value ?? "").replace(",", ".").trim();
+    const n = Number(bruto);
+    if (Number.isFinite(n) && n >= 0 && n <= 500) return n;
+  } catch {
+    /* app_settings pode não existir em algum ambiente */
+  }
+  return MARKUP_PADRAO;
+}
+
+/**
  * Importa (ou atualiza) o catálogo da Pulse no DividePass.
  *
  * É idempotente: rodar mil vezes não cria grupo duplicado, porque o espelho
@@ -300,7 +401,7 @@ export async function importarCatalogoPulse(
   supabaseAdmin: any,
   opcoes: OpcoesImport = {},
 ): Promise<RelatorioImport> {
-  const markup = opcoes.markup ?? MARKUP_PADRAO;
+  const markup = opcoes.markup ?? await resolverMarkup(supabaseAdmin);
   const dryRun = opcoes.dryRun ?? false;
 
   const relatorio: RelatorioImport = {
@@ -315,14 +416,12 @@ export async function importarCatalogoPulse(
     detalhes: [],
   };
 
+  // O DONO dos grupos é o admin oficial da plataforma — nunca quem disparou
+  // o sync (o `owner_id` manda no repasse do dinheiro).
   let adminUserId = opcoes.adminUserId ?? null;
-  if (!adminUserId && !dryRun) {
-    const { data: admin } = await supabaseAdmin
-      .from("users")
-      .select("id")
-      .eq("role", "admin")
-      .limit(1);
-    adminUserId = admin?.[0]?.id ?? null;
+  if (!dryRun) {
+    const dono = await resolverDonoAdmin(supabaseAdmin);
+    if (dono) adminUserId = dono;
   }
 
   const { packages } = await pulseListPackages();
@@ -361,10 +460,16 @@ export async function importarCatalogoPulse(
       if (plataforma.criado) relatorio.plataformas_criadas++;
 
       const ciclo = derivarCiclo(pkg.title);
+      // Assinatura x pagamento único + tipo de entrega (a API não tem campo
+      // para isso: sai do `delivery`, dos créditos e do período no título).
+      const classificacao = classificarProduto(pkg, ciclo);
       const sale_price = calcularPrecoVenda(pkg.original_price, markup);
       const custo = pkg.price != null ? Number(pkg.price) : null;
       const margem = calcularMargem(sale_price, custo);
       const vendavel = pacoteEhVendavel(pkg);
+      // Estoque do parceiro: se acabou, o grupo fica visível mas marcado
+      // "Esgotado" (ninguém entra, ninguém paga).
+      const temEstoque = pacoteTemEstoque(pkg);
 
       if (margem != null && margem <= 0) relatorio.sem_margem++;
 
@@ -388,7 +493,11 @@ export async function importarCatalogoPulse(
         });
 
         group_id = await garantirGrupo(supabaseAdmin, {
-          grupo_id,
+          // ATENÇÃO: o campo do parâmetro é `grupo_id` (português) e a
+          // variável local é `group_id` (inglês). A forma abreviada
+          // (`grupo_id,`) procuraria uma variável `grupo_id` que não existe
+          // e derrubaria o import inteiro com "grupo_id is not defined".
+          grupo_id: group_id,
           service_id: plataforma.id,
           plan_id: plan_id ?? "",
           pkg,
@@ -396,9 +505,12 @@ export async function importarCatalogoPulse(
           available_cycles: [ciclo.billing_cycle],
           custom_cycle_days: ciclo.custom_cycle_days,
           custom_cycle_months: ciclo.custom_cycle_months,
+          custom_cycle_label: rotuloCiclo(ciclo),
           sale_price: sale_price ?? 0,
           vendavel,
+          temEstoque,
           adminUserId,
+          photo_url: plataforma.icon_url,
           dryRun,
         });
       }
@@ -408,7 +520,7 @@ export async function importarCatalogoPulse(
           package_id: pkg.id,
           title: pkg.title,
           category: pkg.category ?? null,
-          description: limiterDescricao(pkg.description),
+          description: limparDescricao(pkg.description),
           features: pkg.features ?? [],
           original_price: pkg.original_price ?? null,
           price: custo,
@@ -447,6 +559,8 @@ export async function importarCatalogoPulse(
             custo,
             preco_venda: sale_price,
             margem,
+            natureza: classificacao.natureza,
+            entrega_tipo: classificacao.entrega,
             updated_at: new Date().toISOString(),
           };
 

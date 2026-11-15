@@ -11,7 +11,13 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "node server.js",
-    "heroku-postbuild": "vite build"
+    "heroku-postbuild": "vite build",
+    "pulse:config": "node scripts/configurar-pulse.mjs",
+    "pulse:publicar": "node scripts/publicar-functions.mjs --only=pulse-admin,pulse-entrega,pulse-webhook,pulse-poll --real",
+    "pulse:test": "node scripts/pulse-teste.mjs",
+    "pulse:dry-run": "node scripts/pulse-dry-run.mjs",
+    "pulse:qa": "node scripts/qa-pulse-sync.mjs",
+    "pulse:bundle": "node scripts/conferir-bundle-pulse.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

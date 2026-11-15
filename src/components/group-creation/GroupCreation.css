@@ -1327,3 +1327,199 @@
   font-size: 0.78rem;
   color: var(--text-muted);
 }
+
+/* ------------------------------------- confirmacao por e-mail (novo passo) */
+/* Pergunta que aparece quando a plataforma exige confirmacao por e-mail ao
+   acessar com um dispositivo diferente: o dono escolhe se repassa o codigo na
+   mao (manual) ou deixa a DividePass buscar com IA (managed). */
+.gc-code-delivery {
+  margin-top: 1.1rem;
+}
+
+.gc-code-delivery-question {
+  margin-bottom: 0.85rem;
+}
+
+.gc-code-delivery-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  margin: 0 0 0.3rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+
+.gc-code-delivery-title svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--warning);
+}
+
+.gc-code-delivery-sub {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+.gc-code-delivery-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.gc-code-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.gc-code-option:hover { border-color: var(--primary); }
+
+.gc-code-option.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.gc-code-option-radio {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  position: relative;
+}
+
+.gc-code-option.active .gc-code-option-radio { border-color: var(--primary); }
+
+.gc-code-option.active .gc-code-option-radio::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.gc-code-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.gc-code-option-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+  color: var(--text-main);
+}
+
+.gc-code-option-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.gc-code-option-icon.managed {
+  background: rgba(99, 102, 241, 0.16);
+  color: var(--primary);
+}
+
+.gc-code-option-icon.manual {
+  background: rgba(16, 185, 129, 0.14);
+  color: var(--success);
+}
+
+.gc-code-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.gc-code-option-desc {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.gc-code-manual {
+  margin-top: 0.9rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.gc-code-manual-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.gc-code-manual-title svg { color: var(--primary); }
+
+.gc-code-manual-text {
+  margin: 0 0 0.85rem;
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.gc-code-manual .gc-field { margin-bottom: 0.7rem; }
+
+.gc-field-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.gc-code-manual-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.12);
+  font-size: 0.81rem;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+
+.gc-code-manual-warning svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--warning);
+}

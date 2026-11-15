@@ -363,6 +363,141 @@ BEGIN
 END $do$;
 
 -- ============================================================================
+-- 9.5. GUARDA DE MODERAÇÃO: o backend da plataforma pode mudar o dono
+-- ============================================================================
+-- O trigger `guard_group_privileged_fields` bloqueia a mudança dos campos de
+-- moderação (verified, is_official, approval_status, owner_id) para quem não
+-- é admin. Isso é CORRETO para o usuário.
+--
+-- Mas o importador da revenda roda com a service_role e PRECISA escrever o
+-- `owner_id`: o dono dos grupos "Via Parceiro" é o admin oficial
+-- (admin@dividepass.com) e é o owner_id que decide para onde vai o repasse
+-- do dinheiro. Sem esta liberação, o sync quebrava com 79 erros assim que o
+-- dono precisava ser corrigido.
+--
+-- A service_role JÁ ignora RLS (BYPASSRLS) em todas as tabelas — liberar o
+-- trigger para ela não abre nenhuma tabela nova. A guarda continua valendo
+-- para qualquer usuário que não seja admin.
+--
+-- Idempotente: pode rodar quantas vezes quiser.
+CREATE OR REPLACE FUNCTION public.guard_group_privileged_fields()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+BEGIN
+  -- Backend da plataforma (service_role) ou admin logado: pode moderar.
+  IF public.is_admin() OR auth.role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    NEW.verified         := COALESCE(NEW.verified, false);
+    NEW.is_official      := COALESCE(NEW.is_official, false);
+    NEW.approval_status  := COALESCE(NEW.approval_status, 'pending');
+    NEW.reviewed_by      := NULL;
+    NEW.approved_at      := NULL;
+    NEW.rejection_reason := NULL;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.verified IS DISTINCT FROM OLD.verified
+     OR NEW.is_official IS DISTINCT FROM OLD.is_official
+     OR NEW.approval_status IS DISTINCT FROM OLD.approval_status
+     OR NEW.owner_id IS DISTINCT FROM OLD.owner_id
+     OR NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by
+     OR NEW.approved_at IS DISTINCT FROM OLD.approved_at
+     OR NEW.rejection_reason IS DISTINCT FROM OLD.rejection_reason
+  THEN
+    RAISE EXCEPTION
+      'Campo de moderacao (verified, is_official, approval_status, owner_id) so pode ser alterado por admin'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+-- ============================================================================
+-- 9.6. NATUREZA DA COBRANÇA (assinatura x pagamento único)
+-- ============================================================================
+-- A API de revenda não tem campo "recorrente": nenhum dos 23 campos diz se o
+-- produto é assinatura ou pagamento único. A classificação é derivada do que
+-- a API devolve de verdade (delivery, credits e o período no título) e
+-- gravada aqui, no mapeamento grupo <-> pacote.
+--
+--   recorrente      → acesso contínuo a um serviço; o cliente renova
+--                     ("Netflix 1 mês", "Canva Pro 12 meses").
+--   pagamento_unico → saldo (créditos/tokens) ou extensão curta; o cliente
+--                     compra de novo quando o saldo acaba.
+--
+-- `entrega_tipo` vem do campo `delivery` da API: "automatica" (chega
+-- sozinha) ou "manual" (precisa de intervenção humana).
+--
+-- Idempotente: pode rodar quantas vezes quiser.
+ALTER TABLE public.pulse_mapeamentos
+  ADD COLUMN IF NOT EXISTS natureza text;
+
+ALTER TABLE public.pulse_mapeamentos
+  ADD COLUMN IF NOT EXISTS entrega_tipo text;
+
+COMMENT ON COLUMN public.pulse_mapeamentos.natureza IS
+  'recorrente (assinatura) ou pagamento_unico — derivado do produto na revenda';
+COMMENT ON COLUMN public.pulse_mapeamentos.entrega_tipo IS
+  'automatica ou manual — vem do campo delivery da API de revenda';
+
+CREATE INDEX IF NOT EXISTS idx_pulse_mapeamentos_natureza
+  ON public.pulse_mapeamentos (natureza);
+
+-- ============================================================================
+-- 9.7. VIEW DO PAINEL: expor a natureza e a capa do grupo
+-- ============================================================================
+-- A view `pulse_painel` é o que o painel /admin/pulse lê. Ela já faz o JOIN
+-- com `pulse_mapeamentos`; faltavam as colunas novas.
+--
+-- CREATE OR REPLACE VIEW só aceita COLUNAS NO FIM — por isso a ordem é a
+-- mesma, com as novas no final.
+--
+-- Idempotente: pode rodar quantas vezes quiser.
+CREATE OR REPLACE VIEW public.pulse_painel AS
+  SELECT p.package_id,
+         p.title,
+         p.category,
+         p.status,
+         p.visible,
+         p.orderable_via_api,
+         p.availability,
+         p.delivery,
+         p.stock,
+         p.original_price,
+         p.price                AS custo,
+         p.sale_price,
+         COALESCE(p.sale_price, 0) - COALESCE(p.price, 0) AS margem,
+         p.duration_days,
+         p.billing_cycle,
+         p.service_id,
+         p.plan_id,
+         p.group_id,
+         g.name                 AS grupo_nome,
+         g.slug                 AS grupo_slug,
+         g.status               AS grupo_status,
+         g.visibility           AS grupo_visibility,
+         g.price_per_slot       AS grupo_preco,
+         s.name                 AS plataforma_nome,
+         s.slug                 AS plataforma_slug,
+         m.status               AS mapeamento_status,
+         p.last_synced_at,
+         g.photo_url            AS grupo_capa,
+         m.natureza             AS natureza,
+         m.entrega_tipo         AS entrega_tipo
+    FROM public.pulse_pacotes p
+    LEFT JOIN public.groups g             ON g.id = p.group_id
+    LEFT JOIN public.streaming_services s ON s.id = p.service_id
+    LEFT JOIN public.pulse_mapeamentos m  ON m.package_id = p.package_id
+                                          AND m.group_id = p.group_id;
+
+-- ============================================================================
 -- 10. CONFERÊNCIA
 -- ============================================================================
 SELECT 'pulse_pacotes'      AS tabela, COUNT(*) AS linhas FROM public.pulse_pacotes

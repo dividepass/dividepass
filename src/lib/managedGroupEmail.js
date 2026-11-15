@@ -229,7 +229,11 @@ export async function emailGerenciadoDisponivel() {
 export function isMissingEmailCodeColumn(error) {
   if (!error) return false;
   const texto = `${error.message || ''} ${error.details || ''} ${error.code || ''} ${error.hint || ''}`;
-  return /email_code_enabled|email_code_method|managed_email/i.test(texto)
+  /* `email_code_delivery` e `owner_contact` entram na mesma migration das
+     colunas de busca de código: se o banco não conhece uma delas, a mensagem
+     de erro cita o nome da coluna — e ela precisa entrar no teste, senão o
+     grupo é salvo com o campo e a gravação inteira quebra. */
+  return /email_code_enabled|email_code_method|managed_email|email_code_delivery|owner_contact/i.test(texto)
     && /(does not exist|nao existe|não existe|unknown column|PGRST204|42703)/i.test(texto);
 }
 

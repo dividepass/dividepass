@@ -2,6 +2,9 @@
 
 import { getGatewaySettings } from "./settings.ts";
 import { getInitialPaymentStatus } from "./status-helpers.ts";
+// Guarda de assinatura em vigor: o prazo de 12h da entrada NÃO pode encerrar
+// o vínculo de quem já tem assinatura paga.
+import { buscarAssinaturaVigente } from "../../_shared/subscription-guard.ts";
 
 interface HandlerContext {
   supabaseAdmin: any;
@@ -29,8 +32,10 @@ export default async function handleStripe(req: Request, ctx: HandlerContext) {
   const body = ctx.body || {};
   const type = payment_type || "subscription";
   const cycleMonths = months && months > 0 ? months : 1;
-  const cycle = billing_cycle || group.billing_cycle || "monthly";
 
+  // O grupo vem ANTES do cálculo do ciclo: `group.billing_cycle` é o ciclo
+  // padrão do grupo. Usar `group` antes da declaração é TDZ (ReferenceError
+  // em runtime) — o `billing_cycle` do body pode não vir.
   const { data: group, error: groupError } = await supabaseAdmin
     .from("groups")
     .select("*, service:service_id(*)")
@@ -43,6 +48,8 @@ export default async function handleStripe(req: Request, ctx: HandlerContext) {
       { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
+
+  const cycle = billing_cycle || group.billing_cycle || "monthly";
 
   const stripeHeaders = {
     "Authorization": `Bearer ${stripeSecretKey}`,
@@ -133,11 +140,18 @@ export default async function handleStripe(req: Request, ctx: HandlerContext) {
     }
 
     if (member?.subscription_deadline && new Date(member.subscription_deadline) < new Date()) {
-      await supabaseAdmin
-        .from("group_members")
-        .update({ payment_status: "expired", status: "cancelled", left_at: new Date().toISOString() })
-        .eq("group_id", group_id)
-        .eq("user_id", user_id);
+      // Quem tem assinatura paga e vigente continua no grupo: o prazo de 12h
+      // é o prazo para ASSINATAR depois da entrada, não para revogar acesso.
+      const assinatura = await buscarAssinaturaVigente(supabaseAdmin, user_id, group_id);
+      if (!assinatura) {
+        await supabaseAdmin
+          .from("group_members")
+          .update({ payment_status: "expired", status: "cancelled", left_at: new Date().toISOString() })
+          .eq("group_id", group_id)
+          .eq("user_id", user_id);
+      } else {
+        console.log(`[stripe] prazo de 12h expirou, mas a assinatura ${assinatura.id} esta em vigor — vinculo mantido`);
+      }
 
       return new Response(
         JSON.stringify({ error: "Prazo de 12h expirou." }),

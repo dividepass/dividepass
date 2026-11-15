@@ -3,6 +3,9 @@
 
 import { getGatewaySettings } from "./settings.ts";
 import { getInitialPaymentStatus } from "./status-helpers.ts";
+// Guarda de assinatura em vigor: o prazo de 12h da entrada NÃO pode encerrar
+// o vínculo de quem já tem assinatura paga.
+import { buscarAssinaturaVigente } from "../../_shared/subscription-guard.ts";
 
 interface HandlerContext {
   supabaseAdmin: any;
@@ -139,11 +142,18 @@ const body = ctx.body || {};
     }
 
     if (member?.subscription_deadline && new Date(member.subscription_deadline) < new Date()) {
-      await supabaseAdmin
-        .from("group_members")
-        .update({ payment_status: "expired", status: "cancelled", left_at: new Date().toISOString() })
-        .eq("group_id", group_id)
-        .eq("user_id", user_id);
+      // Quem tem assinatura paga e vigente continua no grupo: o prazo de 12h
+      // é o prazo para ASSINATAR depois da entrada, não para revogar acesso.
+      const assinatura = await buscarAssinaturaVigente(supabaseAdmin, user_id, group_id);
+      if (!assinatura) {
+        await supabaseAdmin
+          .from("group_members")
+          .update({ payment_status: "expired", status: "cancelled", left_at: new Date().toISOString() })
+          .eq("group_id", group_id)
+          .eq("user_id", user_id);
+      } else {
+        console.log(`[mercadopago] prazo de 12h expirou, mas a assinatura ${assinatura.id} esta em vigor — vinculo mantido`);
+      }
 
       return new Response(
         JSON.stringify({ error: "Prazo de 12h expirou." }),
