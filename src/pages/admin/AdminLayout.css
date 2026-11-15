@@ -114,14 +114,82 @@
   border-top: 1px solid var(--border);
 }
 
-/* Eyebrow do grupo — é o que dá hierarquia à navegação. */
-.admin-nav-group-label {
+/* Cabeçalho da seção — botão de acordeão. Colapsado por padrão. */
+.admin-nav-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.45rem 0.7rem;
+  border: none;
+  background: none;
+  border-radius: 0.55rem;
+  cursor: pointer;
   font-size: 0.63rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.13em;
   color: var(--text-soft);
-  padding: 0.35rem 0.7rem 0.45rem;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.admin-nav-group-head:hover,
+.admin-nav-group-head:focus-visible {
+  background-color: var(--surface-soft);
+  color: var(--text-main);
+  outline: none;
+}
+
+.admin-nav-group-icon {
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+/* Seção que contém a página atual: indica onde o admin está mesmo recolhida. */
+.admin-nav-group-head.has-active {
+  color: var(--primary);
+}
+
+.admin-nav-group-head.has-active .admin-nav-group-icon {
+  opacity: 1;
+}
+
+.admin-nav-group-chevron {
+  margin-left: auto;
+  opacity: 0.65;
+  flex-shrink: 0;
+  transition: transform 0.22s ease;
+}
+
+.admin-nav-group.open .admin-nav-group-chevron {
+  transform: rotate(180deg);
+}
+
+/* Eyebrow do grupo herdando o estilo do botão. */
+.admin-nav-group-label {
+  /* o texto vem do botão pai — aqui só garante hierarquia visual */
+}
+
+/* Corpo recolhível — anima via grid-template-rows (0fr → 1fr). */
+.admin-nav-group-items {
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition: grid-template-rows 0.24s ease, visibility 0s linear 0.24s;
+}
+
+.admin-nav-group.open .admin-nav-group-items {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition: grid-template-rows 0.24s ease;
+}
+
+.admin-nav-group-inner {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .admin-nav .nav-item {

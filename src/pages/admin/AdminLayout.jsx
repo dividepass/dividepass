@@ -2,17 +2,22 @@ import { useMemo, useState, useEffect } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
+  Boxes,
+  ChevronDown,
   ChevronRight,
+  Gauge,
   ClipboardList,
   CreditCard,
   Crown,
   FileText,
+  Landmark,
   Layers,
   LayoutDashboard,
   LifeBuoy,
   ListChecks,
   LogOut,
   Mail,
+  SlidersHorizontal,
   Megaphone,
   Menu,
   MessageSquare,
@@ -46,6 +51,7 @@ import './admin-responsive.css';
 const NAV_SECTIONS = [
   {
     label: 'Operação',
+    icon: Gauge,
     items: [
       { to: '/admin', label: 'Painel', icon: LayoutDashboard, end: true },
       { to: '/admin/support', label: 'Suporte', icon: LifeBuoy },
@@ -56,6 +62,7 @@ const NAV_SECTIONS = [
   },
   {
     label: 'Pessoas',
+    icon: Users,
     items: [
       { to: '/admin/users', label: 'Usuários', icon: Users },
       { to: '/admin/onboarding', label: 'Onboarding', icon: Target },
@@ -67,6 +74,7 @@ const NAV_SECTIONS = [
   },
   {
     label: 'Plataforma',
+    icon: Boxes,
     items: [
       { to: '/admin/platforms', label: 'Plataformas', icon: Layers },
       { to: '/admin/service-plans', label: 'Planos', icon: FileText },
@@ -78,6 +86,7 @@ const NAV_SECTIONS = [
   },
   {
     label: 'Financeiro',
+    icon: Landmark,
     items: [
       { to: '/admin/billing', label: 'Cobranças', icon: Wallet },
       { to: '/admin/wallets', label: 'Carteiras', icon: PiggyBank },
@@ -87,6 +96,7 @@ const NAV_SECTIONS = [
   },
   {
     label: 'Ajustes',
+    icon: SlidersHorizontal,
     items: [
       { to: '/admin/settings', label: 'Configurações', icon: Settings },
     ],
@@ -129,6 +139,11 @@ function AdminLayout() {
   const { signOut } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [newFeedbackCount, setNewFeedbackCount] = useState(0);
+  // Acordeão: uma seção aberta por vez. Começa na seção da página atual
+  // (senão o admin cai no painel com o menu todo fechado, sem pista de onde está).
+  const [openSection, setOpenSection] = useState(
+    () => matchItem(location.pathname)?.section.label ?? null,
+  );
 
   // Badge de feedbacks novos: deixa o item do menu discoverível mesmo sem
   // o admin abrir a página. Falha silenciosa — é cosmético.
@@ -158,6 +173,11 @@ function AdminLayout() {
   }, []);
 
   const closeMenu = () => setMenuOpen(false);
+
+  // Navegou para outra seção? Abre a seção correspondente automaticamente.
+  useEffect(() => {
+    setOpenSection(matchItem(location.pathname)?.section.label ?? null);
+  }, [location.pathname]);
 
   const handleLogout = async (e) => {
     e.preventDefault();
@@ -191,42 +211,65 @@ function AdminLayout() {
         </Link>
 
         <nav className="admin-nav" aria-label="Navegação do admin">
-          {NAV_SECTIONS.map((section, sectionIndex) => (
-            <div
-              className={`admin-nav-group ${sectionIndex > 0 ? 'has-rule' : ''}`}
-              key={section.label}
-            >
-              <span className="admin-nav-group-label">{section.label}</span>
+          {NAV_SECTIONS.map((section, sectionIndex) => {
+            const open = openSection === section.label;
+            const hasActive = current?.section.label === section.label;
+            const SectionIcon = section.icon;
 
-              {section.items.map((item) => {
-                const Icon = item.icon;
-                const active = item.end
-                  ? location.pathname === item.to
-                  : location.pathname === item.to || location.pathname.startsWith(item.to + '/');
+            return (
+              <div
+                className={`admin-nav-group ${sectionIndex > 0 ? 'has-rule' : ''} ${open ? 'open' : ''}`}
+                key={section.label}
+              >
+                <button
+                  type="button"
+                  className={`admin-nav-group-head ${hasActive ? 'has-active' : ''}`}
+                  onClick={() => setOpenSection(open ? null : section.label)}
+                  aria-expanded={open}
+                  aria-controls={`admin-nav-section-${sectionIndex}`}
+                >
+                  <SectionIcon size={15} className="admin-nav-group-icon" aria-hidden />
+                  <span className="admin-nav-group-label">{section.label}</span>
+                  <ChevronDown size={15} className="admin-nav-group-chevron" aria-hidden />
+                </button>
 
-                return (
-                  <Link
-                    onClick={closeMenu}
-                    to={item.to}
-                    key={item.to}
-                    className={`nav-item ${active ? 'active' : ''}`}
-                    aria-current={active ? 'page' : undefined}
-                  >
-                    <Icon size={16} className="nav-item-icon" aria-hidden />
-                    <span>{item.label}</span>
-                    {item.badge === 'feedback' && newFeedbackCount > 0 && (
-                      <span
-                        className="nav-item-badge"
-                        title={`${newFeedbackCount} feedback(s) novo(s) sem revisão`}
-                      >
-                        {newFeedbackCount}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+                <div
+                  className="admin-nav-group-items"
+                  id={`admin-nav-section-${sectionIndex}`}
+                >
+                  <div className="admin-nav-group-inner">
+                    {section.items.map((item) => {
+                      const Icon = item.icon;
+                      const active = item.end
+                        ? location.pathname === item.to
+                        : location.pathname === item.to || location.pathname.startsWith(item.to + '/');
+
+                      return (
+                        <Link
+                          onClick={closeMenu}
+                          to={item.to}
+                          key={item.to}
+                          className={`nav-item ${active ? 'active' : ''}`}
+                          aria-current={active ? 'page' : undefined}
+                        >
+                          <Icon size={16} className="nav-item-icon" aria-hidden />
+                          <span>{item.label}</span>
+                          {item.badge === 'feedback' && newFeedbackCount > 0 && (
+                            <span
+                              className="nav-item-badge"
+                              title={`${newFeedbackCount} feedback(s) novo(s) sem revisão`}
+                            >
+                              {newFeedbackCount}
+                            </span>
+                          )}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </nav>
 
         <div className="admin-footer">
