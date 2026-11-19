@@ -152,8 +152,31 @@
   flex-shrink: 0;
 }
 
+/* Aviso de e-mail de OUTRA plataforma: a caixa do grupo é compartilhada e
+   chegou e-mail de outra conta (ex.: Netflix numa tela de Crunchyroll).
+   O e-mail é descartado no servidor — aqui só avisamos o usuário. */
+.platform-skipped-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.2);
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.platform-skipped-warning svg {
+  color: #EAB308;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .email-delay-warning {
-  font-size: 0.75rem;
+  font-size: 0.9rem;
   color: var(--text-muted);
   text-align: center;
   margin: 0.5rem 0 0;
@@ -164,7 +187,7 @@
   background: none;
   border: none;
   color: var(--primary);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
   text-decoration: underline;
@@ -226,6 +249,16 @@
   font-weight: 700;
   font-size: 1rem;
   color: var(--secondary);
+}
+
+/* Plataforma do pedido (vem do servidor, a partir do serviço do grupo) */
+.manual-action-platform {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.manual-action-platform strong {
+  color: var(--text);
 }
 
 .manual-action-desc {

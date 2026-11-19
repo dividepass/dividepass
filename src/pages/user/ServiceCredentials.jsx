@@ -758,12 +758,14 @@ function ServiceCredentials() {
                     <p className="email-delay-warning">
                       Os e-mails podem sofrer delay caso os servidores estejam com instabilidade.
                       {' '}
+                      Se o código não chegar, contate o administrador do grupo ou a DividePass.
+                      {' '}
                       <button
                         type="button"
                         className="contact-admin-link"
                         onClick={() => setShowContactModal(true)}
                       >
-                        Contatar administrador do grupo
+                        Contatar administrador do grupo ou com a DividePass
                       </button>
                     </p>
                   )}

@@ -1,4 +1,12 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  plataformaDoServico,
+  classificarEmailParaPlataforma,
+  detectarPlataformaDoEmail,
+  detectarMarcaNoTexto,
+  type PlatformInfo,
+  type ClassificacaoEmail,
+} from "../_shared/plataforma-email.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -249,27 +257,69 @@ const MAX_LINKS_PER_EMAIL = 3;
 // O link é de uso único e expira em ~15min: NÃO pode ser acessado pelo servidor,
 // senão o clique do usuário passa a falhar.
 
-const CONFIRM_CTA_TEXT = /(sim,?\s*fui\s*eu|yes,?\s*(it|that)\s+was\s+me|fui\s+eu|foi\s+eu|confirmar|confirme|aprovar|aprovo|ativar|ative|continuar|yes,?\s*i\s+did)/i;
-const CONFIRM_URL_HINTS = /(household|residence|updatehousehold|verifyhousehold|confirm|approve|activate|deviceupdate|update-?device|manage-?devices|update-primary-location|primary-location|operation=update)/i;
+// Botões de APROVAÇÃO (o que libera o acesso).
+const CONFIRM_CTA_TEXT = /(sim,?\s*fui\s*eu|yes,?\s*(it|that)\s+was\s*me|fui\s+eu|foi\s*eu|confirmar|confirme|aprovar|aprovo|ativar|ative|continuar|yes,?\s*i\s+did)/i;
+// Botões de NEGAÇÃO. Precisam ser DESCARTADOS: "NÃO FUI EU" troca a senha
+// da conta em vez de liberar o acesso — e, por conter "FUI EU" como
+// substring, cairia no padrão de aprovação acima se não fosse filtrado.
+const DENY_CTA_TEXT = /(n[aã]o\s*fui\s*eu|n[aã]o\s*foi\s*eu|not\s+me|didn'?t\s+do\s+it|it\s+wasn'?t\s*me|was\s+not\s*me)/i;
+// URLs de NEGAÇÃO (o "não fui eu" do Crunchyroll): nunca podem ser o link de ação.
+const DENY_URL_HINTS = /(deny|reject|declin|not-?me|wasn-?t|deauthoriz|unauthor)/i;
+const CONFIRM_URL_HINTS = /(household|residence|updatehousehold|verifyhousehold|confirm|approve|activate|deviceupdate|update-?device|manage-?devices|update-primary-location|primary-location|operation=update|approve-?login|login-?approval|verify-?login|new-?login)/i;
 const CONFIRM_SUBJECT = /(resid[eê]ncia|atualizar\s+(a\s+|sua\s+)?(resid[eê]ncia|conta|acesso)|update\s+your\s+(household|residence)|household)/i;
+// Aprovação de LOGIN/dispositivo. No Crunchyroll o assunto é "Notamos um novo
+// login" e o corpo pede "confirme sua atividade de login".
+const LOGIN_APPROVAL_SUBJECT = /(novo\s+login|novo\s+acesso|novo\s+dispositivo|login\s+suspeito|acesso\s+suspeito|new\s+sign-?in|new\s+login|unusual\s+(sign-?in|login|activity)|approve\s+(the\s+)?login)/i;
+const LOGIN_APPROVAL_BODY = /(notamos?\s+(um\s+|o\s+)?(novo\s+|nov\s+)?login|login\s+suspeito|confirme\s+sua\s+atividade\s+de\s+login|aprovar\s+(o\s+)?login|aprovar\s+o\s+acesso)/i;
+// Contexto de "acesso" — evita que um e-mail de marketing com a palavra
+// "confirmar" seja tratado como pedido de confirmação de acesso.
+const ACCESS_CONTEXT = /(resid[eê]ncia|household|\bacesso\b|\blogin\b|entrar|entrada|dispositivo|device|perfil|\blocal\b)/i;
 // E-mails de "depois" da ação: o pedido já foi aprovado/concluído, então não há
 // nada para o usuário confirmar. Ex.: "Confirmação: sua residência Netflix foi confirmada".
 const CONFIRM_ALREADY_DONE = /(foi\s+confirmad[ao]|confirmad[ao]\s+(com\s+sucesso|o\s+seu)|já\s+(foi|confirmad|atualiz)|foi\s+atualizad[ao]|residence\s+(has\s+been|was)\s+(updated|confirmed)|your\s+household\s+(has\s+been|was)\s+(updated|confirmed))/i;
 const PLATFORM_SENDER = /(netflix|disney\+|disneyplus|max\.com|hbo|primevideo|amazon|spotify|globoplay|paramount|crunchyroll|mubi)/i;
 
-function looksLikeConfirmationEmail(sender: string, subject: string, body: string): boolean {
-  const haystack = `${sender} ${subject} ${body}`;
-  if (!PLATFORM_SENDER.test(haystack)) return false;
-  if (CONFIRM_ALREADY_DONE.test(subject)) return false;
-  if (CONFIRM_SUBJECT.test(subject)) return true;
-  return CONFIRM_CTA_TEXT.test(subject) || CONFIRM_CTA_TEXT.test(body);
+/** Tipo de confirmação que o e-mail está pedindo. */
+type ConfirmacaoTipo = "household" | "login" | "generic";
+
+/**
+ * Diz se o e-mail é um pedido de confirmação (aprovação) que o USUÁRIO
+ * precisa fazer com um clique.
+ *
+ * A checagem de plataforma NÃO acontece aqui: quem chama já filtrou os
+ * e-mails que não são da plataforma pedida.
+ */
+function looksLikeConfirmationEmail(subject: string, body: string): ConfirmacaoTipo | null {
+  if (CONFIRM_ALREADY_DONE.test(subject)) return null;
+  if (LOGIN_APPROVAL_SUBJECT.test(subject) || LOGIN_APPROVAL_BODY.test(body)) return "login";
+  if (CONFIRM_SUBJECT.test(subject)) return "household";
+  const temCta = CONFIRM_CTA_TEXT.test(subject) || CONFIRM_CTA_TEXT.test(body);
+  if (temCta && ACCESS_CONTEXT.test(`${subject} ${body}`)) return "generic";
+  return null;
 }
 
 // Detalhe do pedido mostrado no cartão do front, ex.:
 // "Solicitado por Cintia em um aparelho Sony PlayStation 5 em 4 de outubro, 23:39"
 // Esse texto fica apenas na parte HTML do e-mail (o texto plano omite).
-function extractRequestDetails(html: string, plain: string): { requester: string; device: string; when: string } | null {
-  const source = `${html ? stripHtml(html) : ""}\n${plain || ""}`.replace(/\s+/g, " ");
+// Na aprovação de LOGIN (Crunchyroll) o e-mail traz data/hora e local:
+// "2026-11-18 15:22 UTC" e "Próximo Salvador, Bahia, Brazil".
+interface DetalheConfirmacao {
+  requester: string;
+  device: string;
+  when: string;
+  location: string;
+}
+
+/** "2026-11-18 15:22 UTC" → "18/11/2026 15:22 UTC". */
+function formatarDataIso(valor: string): string {
+  const m = valor.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}:\d{2})\s*(UTC)?/i);
+  if (!m) return valor.trim();
+  return `${m[3]}/${m[2]}/${m[1]} ${m[4]}${m[5] ? " UTC" : ""}`;
+}
+
+function extractRequestDetails(html: string, plain: string): DetalheConfirmacao | null {
+  const bruto = `${html ? stripHtml(html) : ""}\n${plain || ""}`;
+  const source = bruto.replace(/\s+/g, " ");
 
   // PT-BR: a data tem formato previsível, então dá para ancorar com segurança.
   // As classes de caractere evitam [a-z] puro porque meses e cidades carregam
@@ -282,6 +332,7 @@ function extractRequestDetails(html: string, plain: string): { requester: string
       requester: pt[1].trim().replace(/\s*\.\s*$/, ""),
       device: pt[2].trim().replace(/\s*\.\s*$/, ""),
       when: pt[3].trim(),
+      location: "",
     };
   }
 
@@ -293,6 +344,27 @@ function extractRequestDetails(html: string, plain: string): { requester: string
       requester: loose[1].trim(),
       device: loose[2].trim(),
       when: (loose[3] || "").trim(),
+      location: "",
+    };
+  }
+
+  // Aprovação de LOGIN (Crunchyroll): data/hora e local aproximado.
+  const dataLogin = bruto.match(/(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?:\s+UTC)?)/i);
+  const localLogin = bruto.match(/Pr[oó]ximo\s+([^\n\r]{3,80})/i);
+  if (dataLogin || localLogin) {
+    let location = "";
+    if (localLogin) {
+      location = localLogin[1]
+        // Corta o que vem depois do local (botões e avisos do e-mail).
+        .split(/\s+(?=FUI|N[AÃ]O\s+FUI|Este\s)/i)[0]
+        .replace(/\s*\.\s*$/, "")
+        .trim();
+    }
+    return {
+      requester: "",
+      device: "",
+      when: dataLogin ? formatarDataIso(dataLogin[1]) : "",
+      location,
     };
   }
 
@@ -316,10 +388,16 @@ function extractActionLink(html: string, plain: string): string | null {
     if (!url) return;
     const clean = normalizeUrl(url);
     if (!clean) return;
+    // Link de NEGAÇÃO ("não fui eu"): nunca pode ser entregue ao usuário.
+    if (DENY_URL_HINTS.test(clean)) return;
     scored.set(clean, (scored.get(clean) || 0) + points);
   };
 
   const bump = (value: number, text: string, href: string): void => {
+    // Botão de NEGAÇÃO ("NÃO FUI EU"): clicar nele troca a senha da conta
+    // em vez de liberar o acesso. Precisa ser descartado aqui — e, como
+    // "NÃO FUI EU" contém "FUI EU", ele casaria com o padrão de aprovação.
+    if (DENY_CTA_TEXT.test(text)) return;
     if (CONFIRM_CTA_TEXT.test(text)) value += 4;
     if (CONFIRM_URL_HINTS.test(href)) value += 3;
     if (PLATFORM_SENDER.test(href)) value += 1;
@@ -777,6 +855,20 @@ export default {
         if (service?.name) serviceName = service.name;
       }
 
+      // A PLATAFORMA do grupo é a fonte de verdade da checagem de e-mail.
+      //
+      // POR QUE VIR DO BANCO E NÃO DO FRONT
+      // ----------------------------------
+      // A caixa do grupo é compartilhada entre plataformas: o mesmo endereço
+      // (ex.: grupo1@dividepass.com) recebe e-mail de várias contas ao
+      // mesmo tempo. Sem esta checagem, o usuário na tela do Crunchyroll
+      // recebia o código do Netflix — "certinho" para o regex, mas inútil
+      // para ele. A plataforma vem do `service_id` do grupo (`streaming_services`),
+      // resolvida AQUI no servidor: o front não manda o nome da plataforma
+      // justamente para que ela não possa ser falsificada.
+      const plataforma: PlatformInfo = plataformaDoServico(serviceName);
+      console.log(`[fetch-email-code] Plataforma do grupo: ${plataforma.label} (${plataforma.key})`);
+
       const groupConfig: GroupConfig = {
         email_code_patterns: mailbox.email_code_patterns || [],
         email_body_keywords: mailbox.email_body_keywords || [],
@@ -814,7 +906,16 @@ export default {
         let sensitiveType = "";
         let sensitiveMessage = "";
 
-        const emailBodies: { body: string; html: string; sender: string; subject: string; date: string }[] = [];
+        // E-mails candidatos. `plataforma` traz o resultado da checagem:
+        // "match" (é da plataforma pedida) ou "unknown" (sem sinal claro —
+        // entra como fallback para não quebrar serviços fora da tabela).
+        const emailBodies: {
+          body: string; html: string; sender: string; subject: string; date: string;
+          plataforma: ClassificacaoEmail;
+        }[] = [];
+
+        // Quais outras plataformas apareceram na caixa e foram descartadas.
+        const plataformasIgnoradas = new Map<string, number>();
 
         for (const uid of sortedUids.slice(0, 20)) {
           const headerBlock = await client.fetchHeaders(uid);
@@ -842,10 +943,35 @@ export default {
             continue;
           }
 
+          // ETAPA 0 (PLATAFORMA): a caixa do grupo é COMPARTILHADA — o mesmo
+          // endereço recebe e-mail de várias plataformas (Netflix, Crunchyroll,
+          // ...). E-mail de outra plataforma NÃO pode virar código. Antes de
+          // baixar o corpo, o remetente e o assunto já dizem de quem é.
+          const preClass = classificarEmailParaPlataforma({ sender, subject, body: "" }, plataforma);
+          if (preClass === "foreign") {
+            const detectada = detectarPlataformaDoEmail({ sender, subject, body: "" });
+            const nome = detectada?.label || "outra plataforma";
+            plataformasIgnoradas.set(nome, (plataformasIgnoradas.get(nome) || 0) + 1);
+            console.log(`[fetch-email-code] SKIP UID ${uid}: e-mail de outra plataforma (${nome}) — plataforma pedida: ${plataforma.label}`);
+            continue;
+          }
+
           const { text: bodyText, html: bodyHtml } = await client.fetchBody(uid);
           console.log(`[fetch-email-code] UID ${uid} body length: ${bodyText.length}, preview: ${bodyText.substring(0, 200)}`);
 
-          emailBodies.push({ body: bodyText, html: bodyHtml, sender, subject, date: emailDate });
+          // Reconfirma com o corpo: às vezes a marca da plataforma só aparece
+          // no texto do e-mail (remetente e assunto genéricos).
+          const classificacao = classificarEmailParaPlataforma({ sender, subject, body: bodyText }, plataforma);
+          if (classificacao === "foreign") {
+            const detectada = detectarPlataformaDoEmail({ sender, subject, body: bodyText })
+              || detectarMarcaNoTexto(subject, bodyText);
+            const nome = detectada?.label || "outra plataforma";
+            plataformasIgnoradas.set(nome, (plataformasIgnoradas.get(nome) || 0) + 1);
+            console.log(`[fetch-email-code] SKIP UID ${uid}: corpo de outra plataforma (${nome}) — plataforma pedida: ${plataforma.label}`);
+            continue;
+          }
+
+          emailBodies.push({ body: bodyText, html: bodyHtml, sender, subject, date: emailDate, plataforma: classificacao });
         }
 
         emailBodies.sort((a, b) => {
@@ -854,35 +980,60 @@ export default {
           return db - da;
         });
 
+        // Plataformas descartadas: o front avisa o usuário para que ele não
+        // conclua que a caixa do grupo está vazia.
+        const ignoradas = [...plataformasIgnoradas.entries()]
+          .map(([label, quantidade]) => ({ label, quantidade }));
+
         // ETAPA 1 (prioridade máxima): e-mails de CONFIRMAÇÃO.
         // Ex.: "Importante: Como atualizar sua residência Netflix", botão "Sim, fui eu".
+        // Ex.: Crunchyroll "Notamos um novo login", botões "FUI EU" / "NÃO FUI EU".
         // Esses e-mails NÃO têm código: o link é de uso único e expira em ~15min, então
         // nunca deve ser acessado pelo servidor. É preciso rodar ANTES da IA e do regex,
         // porque ambos podem devolver um código falso (o nftoken da URL tem vários
         // dígitos) ou um código antigo de um e-mail "seu código de acesso" anterior.
         for (const email of emailBodies) {
-          if (!looksLikeConfirmationEmail(email.sender, email.subject, email.body)) continue;
+          // Só e-mail DA plataforma pedida chega aqui: um e-mail de outra
+          // plataforma nunca vira cartão de confirmação.
+          if (email.plataforma !== "match") continue;
+
+          const tipoConfirmacao = looksLikeConfirmationEmail(email.subject, email.body);
+          if (!tipoConfirmacao) continue;
+
           const actionLink = extractActionLink(email.html || "", email.body || "");
           if (!actionLink) {
             console.log(`[fetch-email-code] E-mail de confirmação sem link utilizável: ${email.subject}`);
             continue;
           }
 
-          console.log(`[fetch-email-code] Confirmação detectada — link entregue ao usuário: ${actionLink.slice(0, 90)}...`);
+          console.log(`[fetch-email-code] Confirmação (${tipoConfirmacao}) detectada — link entregue ao usuário: ${actionLink.slice(0, 90)}...`);
           const details = extractRequestDetails(email.html || "", email.body || "");
           if (details) {
-            console.log(`[fetch-email-code] Detalhe do pedido: ${details.requester} / ${details.device} / ${details.when}`);
+            console.log(`[fetch-email-code] Detalhe do pedido: ${details.requester} / ${details.device} / ${details.when} / ${details.location}`);
           }
+
+          // Rótulos dinâmicos: nada de "Netflix" hardcoded — a mesma tela
+          // serve para qualquer plataforma do grupo.
+          const rotulo = plataforma.label;
+          const eLogin = tipoConfirmacao === "login";
+          const mensagem = eLogin
+            ? `${rotulo} enviou uma notificação de novo login em vez de um código. Confirme que foi você para liberar o acesso.`
+            : `${rotulo} enviou uma confirmação de acesso em vez de um código. Clique no botão abaixo para aprovar e liberar o acesso.`;
+          const nota = eLogin
+            ? "Abra o link, confirme que o login foi seu e o acesso é liberado. O link expira em 15 minutos."
+            : "Clique no botão, aprove a solicitação e o acesso é liberado. O link expira em 15 minutos.";
 
           return Response.json({
             code: null,
             requires_manual_action: true,
-            manual_action_type: "confirm_household",
+            manual_action_type: eLogin ? "confirm_login" : (tipoConfirmacao === "household" ? "confirm_household" : "confirm_action"),
             manual_action_url: actionLink,
-            manual_action_label: "Abrir e confirmar na Netflix",
-            manual_action_note: "Clique no botão, aprove a solicitação e o acesso é liberado na TV. O link expira em 15 minutos.",
+            manual_action_label: "Abrir e confirmar o acesso",
+            manual_action_note: nota,
             manual_action_details: details,
-            message: "A Netflix enviou uma confirmação de acesso em vez de um código. Clique no botão abaixo para aprovar e ativar a TV.",
+            message: mensagem,
+            platform_label: rotulo,
+            skipped_platforms: ignoradas,
             sender: email.sender,
             subject: email.subject,
             received_at: email.date || new Date().toISOString(),
@@ -937,7 +1088,7 @@ export default {
           linkLoop:
           for (const email of emailBodies.slice(0, 3)) {
             // Link de confirmação não pode ser acessado pelo servidor (uso único)
-            if (looksLikeConfirmationEmail(email.sender, email.subject, email.body)) continue;
+            if (looksLikeConfirmationEmail(email.subject, email.body)) continue;
 
             const links = extractCandidateLinks(email.html || "", email.body || "");
             if (links.length === 0) continue;
@@ -977,8 +1128,16 @@ export default {
         }
 
         if (!resultCode) {
+          // A mensagem NÃO repete as plataformas ignoradas: elas vão no campo
+          // `skipped_platforms` e o front mostra um aviso próprio para isso.
+          const mensagem = `Nenhum código de verificação da plataforma ${plataforma.label} foi encontrado nos e-mails recentes (corpo ou links).`;
           return Response.json(
-            { code: null, message: "Nenhum código de verificação encontrado nos e-mails recentes (corpo ou links)." },
+            {
+              code: null,
+              message: mensagem,
+              platform_label: plataforma.label,
+              skipped_platforms: ignoradas,
+            },
             { headers: corsHeaders },
           );
         }
@@ -989,6 +1148,8 @@ export default {
             sensitive: true,
             sensitiveType,
             sensitiveMessage,
+            platform_label: plataforma.label,
+            skipped_platforms: ignoradas,
             sender: foundSender,
             subject: foundSubject,
             source_url: foundSourceUrl || null,
@@ -1006,6 +1167,8 @@ export default {
 
         return Response.json({
           code: resultCode,
+          platform_label: plataforma.label,
+          skipped_platforms: ignoradas,
           sender: foundSender,
           subject: foundSubject,
           source: foundSourceUrl ? "link" : "email_body",

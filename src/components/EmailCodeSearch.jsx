@@ -37,6 +37,12 @@ export default function EmailCodeSearch({
   const [codeMessage, setCodeMessage] = useState('');
   const [sensitiveWarning, setSensitiveWarning] = useState(null);
   const [manualAction, setManualAction] = useState(null);
+  // Plataforma do grupo e plataformas CUJO e-mail foi descartado.
+  // A plataforma é resolvida no servidor (vem do serviço do grupo), então o
+  // front não pode mascará-la — e o usuário precisa ver de qual plataforma
+  // veio o código e de qual plataforma foi ignorado.
+  const [platformLabel, setPlatformLabel] = useState('');
+  const [skippedPlatforms, setSkippedPlatforms] = useState([]);
   const [cooldown, setCooldown] = useState(0);
   const [copied, setCopied] = useState(false);
 
@@ -80,6 +86,8 @@ export default function EmailCodeSearch({
     setVerificationCode(null);
     setSensitiveWarning(null);
     setManualAction(null);
+    setPlatformLabel('');
+    setSkippedPlatforms([]);
     setCooldown(COOLDOWN_SECONDS);
 
     try {
@@ -135,6 +143,11 @@ export default function EmailCodeSearch({
         setCodeMessage(json.error || `Erro ${res.status}: falha ao buscar código`);
         return;
       }
+
+      // Plataforma do grupo e as plataformas ignoradas na caixa do grupo.
+      // O servidor é a fonte da verdade (a plataforma vem do serviço do grupo).
+      setPlatformLabel(json.platform_label || '');
+      setSkippedPlatforms(Array.isArray(json.skipped_platforms) ? json.skipped_platforms : []);
 
       if (json.sensitive) {
         setSensitiveWarning({
@@ -238,6 +251,9 @@ export default function EmailCodeSearch({
             </button>
           </div>
           <div className="code-meta">
+            {platformLabel && (
+              <span>Plataforma: <strong>{platformLabel}</strong></span>
+            )}
             {verificationCode.sender && (
               <span>Enviado por: <strong>{verificationCode.sender}</strong></span>
             )}
@@ -287,23 +303,49 @@ export default function EmailCodeSearch({
         </div>
       )}
 
+      {skippedPlatforms.length > 0 && (
+        <div className="platform-skipped-warning">
+          <AlertTriangle size={18} />
+          <span>
+            Chegou e-mail de outra plataforma e ele foi ignorado
+            {skippedPlatforms.length > 1 ? 's' : ''}:{' '}
+            <strong>{skippedPlatforms.map((p) => p.label).join(', ')}</strong>.
+            {' '}O código desse e-mail não vale para o acesso deste grupo.
+          </span>
+        </div>
+      )}
+
       {manualAction && (
         <div className="manual-action-card">
           <div className="manual-action-content">
             <span className="manual-action-title">
-              {manualAction.type === 'confirm_household' || manualAction.type === 'netflix_verify_link'
+              {manualAction.type === 'confirm_household'
+                || manualAction.type === 'confirm_login'
+                || manualAction.type === 'confirm_action'
+                || manualAction.type === 'netflix_verify_link'
                 ? 'Confirmação necessária'
                 : 'Ação necessária'}
             </span>
+            {platformLabel && (
+              <span className="manual-action-platform">
+                Plataforma: <strong>{platformLabel}</strong>
+              </span>
+            )}
             <span className="manual-action-desc">
               {manualAction.message}
             </span>
-            {manualAction.details?.requester && (
+            {manualAction.details
+              && (manualAction.details.requester
+                || manualAction.details.device
+                || manualAction.details.when
+                || manualAction.details.location) && (
               <div className="manual-action-details">
-                <span className="manual-action-detail">
-                  <span className="manual-action-detail-label">Solicitado por</span>
-                  <strong>{manualAction.details.requester}</strong>
-                </span>
+                {manualAction.details.requester && (
+                  <span className="manual-action-detail">
+                    <span className="manual-action-detail-label">Solicitado por</span>
+                    <strong>{manualAction.details.requester}</strong>
+                  </span>
+                )}
                 {manualAction.details.device && (
                   <span className="manual-action-detail">
                     <span className="manual-action-detail-label">Aparelho</span>
@@ -314,6 +356,12 @@ export default function EmailCodeSearch({
                   <span className="manual-action-detail">
                     <span className="manual-action-detail-label">Quando</span>
                     <strong>{manualAction.details.when}</strong>
+                  </span>
+                )}
+                {manualAction.details.location && (
+                  <span className="manual-action-detail">
+                    <span className="manual-action-detail-label">Local</span>
+                    <strong>{manualAction.details.location}</strong>
                   </span>
                 )}
               </div>
