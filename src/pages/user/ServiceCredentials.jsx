@@ -756,16 +756,24 @@ function ServiceCredentials() {
                   serviceName={service?.name || ''}
                   footer={(
                     <p className="email-delay-warning">
-                      Os e-mails podem sofrer delay caso os servidores estejam com instabilidade.
-                      {' '}
-                      Se o código não chegar, contate o administrador do grupo ou a DividePass.
+                      <span className="dp-only-wide">
+                        Os e-mails podem sofrer delay caso os servidores estejam com instabilidade. Se o código não chegar, contate o administrador do grupo ou a DividePass.
+                      </span>
+                      <span className="dp-only-narrow">
+                        O e-mail pode demorar um pouco.
+                      </span>
                       {' '}
                       <button
                         type="button"
                         className="contact-admin-link"
                         onClick={() => setShowContactModal(true)}
                       >
-                        Contatar administrador do grupo ou com a DividePass
+                        <span className="dp-only-wide">
+                          Contatar administrador do grupo ou com a DividePass
+                        </span>
+                        <span className="dp-only-narrow">
+                          Contatar o grupo ou a DividePass
+                        </span>
                       </button>
                     </p>
                   )}

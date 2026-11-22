@@ -27,6 +27,9 @@ export default function EmailCodeSearch({
   serviceName = '',
   title = 'Código de Verificação',
   description = 'Busque o código mais recente enviado para a conta compartilhada.',
+  // Versão curta do subtítulo: no mobile ela substitui a longa para a
+  // rolagem da tela não ficar enorme.
+  descriptionShort = 'Busque o código do grupo.',
   footer = null,
   className = '',
 }) {
@@ -209,7 +212,10 @@ export default function EmailCodeSearch({
         <Mail size={20} />
         <div>
           <h3>{title}</h3>
-          <p>{description}</p>
+          <p>
+            <span className="dp-only-wide">{description}</span>
+            <span className="dp-only-narrow">{descriptionShort}</span>
+          </p>
         </div>
       </div>
 
@@ -226,7 +232,8 @@ export default function EmailCodeSearch({
         ) : cooldown > 0 ? (
           <>
             <Mail size={16} />
-            Buscar Código ({cooldown}s)
+            Buscar Código
+            <span className="fetch-code-countdown">{cooldown}s</span>
           </>
         ) : (
           <>
@@ -318,20 +325,20 @@ export default function EmailCodeSearch({
       {manualAction && (
         <div className="manual-action-card">
           <div className="manual-action-content">
-            <span className="manual-action-title">
-              {manualAction.type === 'confirm_household'
-                || manualAction.type === 'confirm_login'
-                || manualAction.type === 'confirm_access_code'
-                || manualAction.type === 'confirm_action'
-                || manualAction.type === 'netflix_verify_link'
-                ? 'Confirmação necessária'
-                : 'Ação necessária'}
-            </span>
-            {platformLabel && (
-              <span className="manual-action-platform">
-                Plataforma: <strong>{platformLabel}</strong>
+            <div className="manual-action-head">
+              <span className="manual-action-title">
+                {manualAction.type === 'confirm_household'
+                  || manualAction.type === 'confirm_login'
+                  || manualAction.type === 'confirm_access_code'
+                  || manualAction.type === 'confirm_action'
+                  || manualAction.type === 'netflix_verify_link'
+                  ? 'Confirmação necessária'
+                  : 'Ação necessária'}
               </span>
-            )}
+              {platformLabel && (
+                <span className="manual-action-platform">{platformLabel}</span>
+              )}
+            </div>
             <span className="manual-action-desc">
               {manualAction.message}
             </span>

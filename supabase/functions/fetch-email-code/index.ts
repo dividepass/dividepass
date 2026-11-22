@@ -437,17 +437,20 @@ function montarRespostaAcaoManual(
   const eLogin = tipo === "login";
   const eCodigo = tipo === "access_code";
 
+  // Textos CURTOS de propósito: no mobile o cartão ficava com muitas linhas
+  // e a rolagem da tela ficava enorme. A plataforma aparece no selo ao lado
+  // do título, então as frases não precisam repetir o nome dela.
   const mensagem = eLogin
-    ? `${rotulo} enviou uma notificação de novo login em vez de um código. Confirme que foi você para liberar o acesso.`
+    ? "Novo login detectado. Confirme que foi você para liberar o acesso."
     : eCodigo
-      ? `${rotulo} enviou um pedido de código de acesso temporário em vez de um código. Clique no botão abaixo para gerar o código.`
-      : `${rotulo} enviou uma confirmação de acesso em vez de um código. Clique no botão abaixo para aprovar e liberar o acesso.`;
+      ? "Foi pedido um código de acesso temporário. Toque no botão para gerá-lo."
+      : "Esta solicitação precisa ser aprovada. Toque no botão para liberar o acesso.";
 
   const nota = eLogin
-    ? "Abra o link, confirme que o login foi seu e o acesso é liberado. O link expira em 15 minutos."
+    ? "Confirme que foi você. O link expira em 15 min."
     : eCodigo
-      ? "Clique no botão: o código temporário é gerado na página da plataforma para usar na TV. O link expira em 15 minutos."
-      : "Clique no botão, aprove a solicitação e o acesso é liberado. O link expira em 15 minutos.";
+      ? "O código é gerado na página da plataforma. O link expira em 15 min."
+      : "Aprove a solicitação. O link expira em 15 min.";
 
   return {
     code: null,
