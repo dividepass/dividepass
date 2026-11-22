@@ -12,6 +12,8 @@
   padding: 1.5rem;
   margin-top: 1.5rem;
   border-left: 4px solid #0EA5E9;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .verification-code-header {
@@ -46,6 +48,7 @@
   align-items: center;
   gap: 0.5rem;
   width: 100%;
+  max-width: 100%;
   justify-content: center;
   margin-bottom: 1rem;
 }
@@ -210,6 +213,13 @@
   border-radius: 0.75rem;
   padding: 1.25rem;
   margin-top: 0.75rem;
+  /* O card não pode crescer além do container da tela. */
+  min-width: 0;
+  max-width: 100%;
+  /* O brilho do botão não pode vazar para fora do card: no mobile o
+     botão ocupa 100% da largura e o box-shadow padrão (22px de blur)
+     ultrapassava a borda, parecendo que o botão "passava do card". */
+  overflow: hidden;
 }
 
 .manual-action-content {
@@ -217,6 +227,11 @@
   flex-direction: column;
   gap: 0.5rem;
   flex: 1;
+  /* Item flexível SEM `min-width: 0` não encolhe abaixo do seu
+     min-content: num celular estreito o conteúdo empurrava a borda do
+     card e o botão "Sim, fui eu" passava por fora. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Detalhes do pedido: quem pediu, em qual aparelho e quando */
@@ -228,6 +243,8 @@
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .manual-action-detail {
@@ -236,6 +253,14 @@
   gap: 0.125rem;
   font-size: 0.85rem;
   color: var(--text);
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Nome de aparelho longo ("Samsung - Smart TV (UE55S9G5A)") não pode
+   empurrar a borda do card: quebra em qualquer ponto. */
+.manual-action-detail strong {
+  overflow-wrap: anywhere;
 }
 
 .manual-action-detail-label {
@@ -280,6 +305,12 @@
   border-radius: 0.5rem;
   text-decoration: none;
   width: fit-content;
+  /* O botão nunca pode ultrapassar o card, aconteça o que acontecer. */
+  box-sizing: border-box;
+  max-width: 100%;
+  /* Brilho curto: o padrão do `.btn-primary` (blur de 22px) estourava
+     as bordas do card. */
+  box-shadow: 0 3px 8px rgba(79, 70, 229, 0.28);
 }
 
 .manual-action-hint {
@@ -465,9 +496,13 @@
 
   .manual-action-btn {
     width: 100%;
+    max-width: 100%;
     justify-content: center;
     padding: 0.55rem 0.75rem;
     font-size: 0.85rem;
+    /* O brilho padrão do `.btn-primary` (22px de blur) vazava para fora
+       do card e parecia que o botão estava "passando" da borda. */
+    box-shadow: 0 3px 8px rgba(79, 70, 229, 0.28);
   }
 
   .manual-action-hint {
