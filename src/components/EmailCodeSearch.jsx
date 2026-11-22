@@ -321,6 +321,7 @@ export default function EmailCodeSearch({
             <span className="manual-action-title">
               {manualAction.type === 'confirm_household'
                 || manualAction.type === 'confirm_login'
+                || manualAction.type === 'confirm_access_code'
                 || manualAction.type === 'confirm_action'
                 || manualAction.type === 'netflix_verify_link'
                 ? 'Confirmação necessária'

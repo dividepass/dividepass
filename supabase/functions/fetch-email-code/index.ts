@@ -258,19 +258,28 @@ const MAX_LINKS_PER_EMAIL = 3;
 // senão o clique do usuário passa a falhar.
 
 // Botões de APROVAÇÃO (o que libera o acesso).
-const CONFIRM_CTA_TEXT = /(sim,?\s*fui\s*eu|yes,?\s*(it|that)\s+was\s*me|fui\s+eu|foi\s*eu|confirmar|confirme|aprovar|aprovo|ativar|ative|continuar|yes,?\s*i\s+did)/i;
+// Botões de APROVAÇÃO (o que libera o acesso).
+const CONFIRM_CTA_TEXT = /(sim,?\s*fui\s*eu|yes,?\s*(it|that)\s+was\s*me|fui\s+eu|foi\s*eu|confirmar|confirme|aprovar|aprovo|ativar|ative|continuar|yes,?\s*i\s+did|receber\s+c[oó]digo|receba\s+o\s+c[oó]digo|obter\s+c[oó]digo|obtain\s+(your\s+)?(code|passcode))/i;
 // Botões de NEGAÇÃO. Precisam ser DESCARTADOS: "NÃO FUI EU" troca a senha
 // da conta em vez de liberar o acesso — e, por conter "FUI EU" como
 // substring, cairia no padrão de aprovação acima se não fosse filtrado.
 const DENY_CTA_TEXT = /(n[aã]o\s*fui\s*eu|n[aã]o\s*foi\s*eu|not\s+me|didn'?t\s+do\s+it|it\s+wasn'?t\s*me|was\s+not\s*me)/i;
 // URLs de NEGAÇÃO (o "não fui eu" do Crunchyroll): nunca podem ser o link de ação.
 const DENY_URL_HINTS = /(deny|reject|declin|not-?me|wasn-?t|deauthoriz|unauthor)/i;
-const CONFIRM_URL_HINTS = /(household|residence|updatehousehold|verifyhousehold|confirm|approve|activate|deviceupdate|update-?device|manage-?devices|update-primary-location|primary-location|operation=update|approve-?login|login-?approval|verify-?login|new-?login)/i;
+const CONFIRM_URL_HINTS = /(household|residence|updatehousehold|verifyhousehold|confirm|approve|activate|deviceupdate|update-?device|manage-?devices|update-primary-location|primary-location|operation=update|approve-?login|login-?approval|verify-?login|new-?login|temporary|temporary-?access|access-?code|passcode|verify-?device|device-?verify|travel)/i;
 const CONFIRM_SUBJECT = /(resid[eê]ncia|atualizar\s+(a\s+|sua\s+)?(resid[eê]ncia|conta|acesso)|update\s+your\s+(household|residence)|household)/i;
 // Aprovação de LOGIN/dispositivo. No Crunchyroll o assunto é "Notamos um novo
 // login" e o corpo pede "confirme sua atividade de login".
 const LOGIN_APPROVAL_SUBJECT = /(novo\s+login|novo\s+acesso|novo\s+dispositivo|login\s+suspeito|acesso\s+suspeito|new\s+sign-?in|new\s+login|unusual\s+(sign-?in|login|activity)|approve\s+(the\s+)?login)/i;
 const LOGIN_APPROVAL_BODY = /(notamos?\s+(um\s+|o\s+)?(novo\s+|nov\s+)?login|login\s+suspeito|confirme\s+sua\s+atividade\s+de\s+login|aprovar\s+(o\s+)?login|aprovar\s+o\s+acesso)/i;
+// CÓDIGO DE ACESSO TEMPORÁRIO (Netflix).
+//
+// A Netflix trocou o código em texto por um BOTÃO no e-mail — e o TEXTO do
+// botão muda o tempo todo ("Sim, fui eu", "Receber código", ...). Por isso a
+// detecção é pelo ASSUNTO e pelo CORPO ("código de acesso temporário"), e
+// nunca pelo texto do botão.
+const ACCESS_CODE_SUBJECT = /(seu\s+c[oó]digo\s+de\s+acesso\s+tempor[aá]rio|c[oó]digo\s+de\s+acesso\s+tempor[aá]rio|temporary\s+access\s+code)/i;
+const ACCESS_CODE_BODY = /(solicita[çc][ãa]o\s+de\s+c[oó]digo\s+de\s+acesso\s+tempor[aá]rio|recebemos\s+uma\s+solicita[çc][ãa]o\s+de\s+c[oó]digo|c[oó]digo\s+de\s+acesso\s+tempor[aá]rio)/i;
 // Contexto de "acesso" — evita que um e-mail de marketing com a palavra
 // "confirmar" seja tratado como pedido de confirmação de acesso.
 const ACCESS_CONTEXT = /(resid[eê]ncia|household|\bacesso\b|\blogin\b|entrar|entrada|dispositivo|device|perfil|\blocal\b)/i;
@@ -280,7 +289,7 @@ const CONFIRM_ALREADY_DONE = /(foi\s+confirmad[ao]|confirmad[ao]\s+(com\s+sucess
 const PLATFORM_SENDER = /(netflix|disney\+|disneyplus|max\.com|hbo|primevideo|amazon|spotify|globoplay|paramount|crunchyroll|mubi)/i;
 
 /** Tipo de confirmação que o e-mail está pedindo. */
-type ConfirmacaoTipo = "household" | "login" | "generic";
+type ConfirmacaoTipo = "household" | "login" | "access_code" | "generic";
 
 /**
  * Diz se o e-mail é um pedido de confirmação (aprovação) que o USUÁRIO
@@ -291,13 +300,15 @@ type ConfirmacaoTipo = "household" | "login" | "generic";
  */
 function looksLikeConfirmationEmail(subject: string, body: string): ConfirmacaoTipo | null {
   if (CONFIRM_ALREADY_DONE.test(subject)) return null;
+  // O "código de acesso temporário" (Netflix) vem primeiro: o texto do botão
+  // muda o tempo todo, então a detecção se apoia no assunto e no corpo.
+  if (ACCESS_CODE_SUBJECT.test(subject) || ACCESS_CODE_BODY.test(body)) return "access_code";
   if (LOGIN_APPROVAL_SUBJECT.test(subject) || LOGIN_APPROVAL_BODY.test(body)) return "login";
   if (CONFIRM_SUBJECT.test(subject)) return "household";
   const temCta = CONFIRM_CTA_TEXT.test(subject) || CONFIRM_CTA_TEXT.test(body);
   if (temCta && ACCESS_CONTEXT.test(`${subject} ${body}`)) return "generic";
   return null;
 }
-
 // Detalhe do pedido mostrado no cartão do front, ex.:
 // "Solicitado por Cintia em um aparelho Sony PlayStation 5 em 4 de outubro, 23:39"
 // Esse texto fica apenas na parte HTML do e-mail (o texto plano omite).
@@ -324,8 +335,12 @@ function extractRequestDetails(html: string, plain: string): DetalheConfirmacao 
   // PT-BR: a data tem formato previsível, então dá para ancorar com segurança.
   // As classes de caractere evitam [a-z] puro porque meses e cidades carregam
   // acento (ex.: "outubro", "Brasília").
+  //
+  // A Netflix usa DOIS formatos no mesmo e-mail:
+  //   "Solicitado por Cintia em um aparelho Sony PlayStation 5 em 21 de novembro, 21:10 ..."
+  //   "Solicitado por Cintia do aparelho Apple iPhone 14 às 21 de novembro, 20:52 ..."
   const pt = source.match(
-    /Solicitado\s+por\s+(.+?)\s+em\s+um\s+aparelho\s+(.+?)\s+em\s+(\d{1,2}\s+de\s+[^\s,.]+,?\s*\d{1,2}:\d{2}\s*hor[áa]rio\s+de\s+[^\s,.]{2,})/i,
+    /Solicitado\s+por\s+(.+?)\s+(?:em\s+um\s+(?:aparelho|dispositivo)|do\s+(?:aparelho|dispositivo))\s+(.+?)\s+(?:em|[aà]s)\s+(\d{1,2}\s+de\s+[^\s,.]+,?\s*\d{1,2}:\d{2}\s*hor[áa]rio\s+de\s+[^\s,.]{2,})/i,
   );
   if (pt) {
     return {
@@ -337,7 +352,7 @@ function extractRequestDetails(html: string, plain: string): DetalheConfirmacao 
   }
 
   // Fallback: sem a data, ainda vale mostrar quem e em qual aparelho pediu.
-  const loose = source.match(/(?:Solicitado\s+por|Requested\s+by)\s+(.+?)\s+em\s+um\s+aparelho\s+(.+?)(?:\s+em\s+\d{1,2}\s+de|\s{2,}|\s*$)/i)
+  const loose = source.match(/(?:Solicitado\s+por|Requested\s+by)\s+(.+?)\s+(?:em\s+um\s+(?:aparelho|dispositivo)|do\s+(?:aparelho|dispositivo))\s+(.+?)(?:\s+(?:em|[aà]s)\s+\d{1,2}\s+de|\s{2,}|\s*$)/i)
     || source.match(/Requested\s+by\s+(.+?)\s+on\s+(?:a\s+)?(.+?)\s+device(?:\s+on\s+(.+?))?(?:\s{2,}|\s*$)/i);
   if (loose) {
     return {
@@ -370,7 +385,6 @@ function extractRequestDetails(html: string, plain: string): DetalheConfirmacao 
 
   return null;
 }
-
 function normalizeUrl(raw: string): string | null {
   let url = (raw || "").replace(/=3D/gi, "=").replace(/&amp;/g, "&").trim();
   url = url.replace(/[)\].,;'"]+$/, "");
@@ -379,18 +393,106 @@ function normalizeUrl(raw: string): string | null {
   return url;
 }
 
+/**
+ * Limpa o texto do botão que veio do e-mail para virar rótulo do NOSSO
+ * botão.
+ *
+ * POR QUE REAPROVEITAR O TEXTO DO E-MAIL
+ * ---------------------------------------
+ * A Netflix muda o texto do botão o tempo todo ("Sim, fui eu", "Receber
+ * código", ...). Mostrar o mesmo texto no botão que entregamos ao usuário
+ * mantém a tela coerente com o e-mail que ele acabou de receber. Texto
+ * estranho (vazio, gigante ou cheio de URL) vira o rótulo padrão.
+ */
+function limparRotuloBotao(texto: string): string {
+  const padrao = "Abrir e confirmar o acesso";
+  const limpo = String(texto || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!limpo) return padrao;
+  if (limpo.length > 40) return padrao;
+  // Só número/símbolo não serve de rótulo.
+  if (!/[^\W\d_]/.test(limpo)) return padrao;
+  return limpo;
+}
+
+/**
+ * Monta a resposta do CARTÃO DE AÇÃO MANUAL (o usuário precisa clicar).
+ *
+ * O rótulo do botão vem do e-mail (ver `limparRotuloBotao`) e as mensagens
+ * são dinâmicas por plataforma e por tipo de pedido — nada de "Netflix"
+ * hardcoded, porque a mesma tela serve para qualquer plataforma do grupo.
+ */
+function montarRespostaAcaoManual(
+  acao: { url: string; texto: string },
+  tipo: ConfirmacaoTipo,
+  plataforma: PlatformInfo,
+  email: { sender: string; subject: string; date: string },
+  details: DetalheConfirmacao | null,
+  ignoradas: { label: string; quantidade: number }[],
+): Record<string, unknown> {
+  const rotulo = plataforma.label;
+  const eLogin = tipo === "login";
+  const eCodigo = tipo === "access_code";
+
+  const mensagem = eLogin
+    ? `${rotulo} enviou uma notificação de novo login em vez de um código. Confirme que foi você para liberar o acesso.`
+    : eCodigo
+      ? `${rotulo} enviou um pedido de código de acesso temporário em vez de um código. Clique no botão abaixo para gerar o código.`
+      : `${rotulo} enviou uma confirmação de acesso em vez de um código. Clique no botão abaixo para aprovar e liberar o acesso.`;
+
+  const nota = eLogin
+    ? "Abra o link, confirme que o login foi seu e o acesso é liberado. O link expira em 15 minutos."
+    : eCodigo
+      ? "Clique no botão: o código temporário é gerado na página da plataforma para usar na TV. O link expira em 15 minutos."
+      : "Clique no botão, aprove a solicitação e o acesso é liberado. O link expira em 15 minutos.";
+
+  return {
+    code: null,
+    requires_manual_action: true,
+    manual_action_type: eLogin
+      ? "confirm_login"
+      : eCodigo
+        ? "confirm_access_code"
+        : (tipo === "household" ? "confirm_household" : "confirm_action"),
+    manual_action_url: acao.url,
+    manual_action_label: limparRotuloBotao(acao.texto),
+    manual_action_note: nota,
+    manual_action_details: details,
+    message: mensagem,
+    platform_label: rotulo,
+    skipped_platforms: ignoradas,
+    sender: email.sender,
+    subject: email.subject,
+    received_at: email.date || new Date().toISOString(),
+  };
+}
+
 // Extrai a URL do BOTÃO de ação, usando o TEXTO da âncora para pontuar.
 // Falls back para <form action>, <button onclick> e URLs soltas no HTML.
-function extractActionLink(html: string, plain: string): string | null {
-  const scored = new Map<string, number>();
+//
+// Devolve também o TEXTO do botão escolhido: a Netflix troca o texto do
+// botão ("Sim, fui eu", "Receber código", ...) e o front precisa mostrar o
+// mesmo texto no botão que ele entrega ao usuário.
+function extractActionLink(html: string, plain: string): { url: string; texto: string } | null {
+  const scored = new Map<string, { pontos: number; texto: string }>();
 
-  const score = (url: string | null, points: number): void => {
+  const score = (url: string | null, points: number, texto = ""): void => {
     if (!url) return;
     const clean = normalizeUrl(url);
     if (!clean) return;
     // Link de NEGAÇÃO ("não fui eu"): nunca pode ser entregue ao usuário.
     if (DENY_URL_HINTS.test(clean)) return;
-    scored.set(clean, (scored.get(clean) || 0) + points);
+    const atual = scored.get(clean);
+    if (!atual) {
+      scored.set(clean, { pontos: points, texto });
+      return;
+    }
+    atual.pontos += points;
+    // Guarda o texto do botão (o que casou com o CTA), sem sobrescrever.
+    if (texto && !atual.texto) atual.texto = texto;
   };
 
   const bump = (value: number, text: string, href: string): void => {
@@ -402,7 +504,7 @@ function extractActionLink(html: string, plain: string): string | null {
     if (CONFIRM_URL_HINTS.test(href)) value += 3;
     if (PLATFORM_SENDER.test(href)) value += 1;
     if (/(btn|button|cta)/i.test(text)) value += 1;
-    score(href, value);
+    score(href, value, text);
   };
 
   // 1) Âncoras com href + texto interno
@@ -426,14 +528,14 @@ function extractActionLink(html: string, plain: string): string | null {
 
   // 4) URLs soltas no texto (tracking redirects do próprio e-mail)
   const bareRe = /https?:\/\/[^\s<>"')]+/g;
-  while ((m = bareRe.exec(plain)) !== null) {
+  while ((m = bareRe.exec(html + "\n" + plain)) !== null) {
     score(m[0], 1);
   }
 
   if (scored.size === 0) return null;
-  return [...scored.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const melhor = [...scored.entries()].sort((a, b) => b[1].pontos - a[1].pontos)[0];
+  return { url: melhor[0], texto: melhor[1].texto };
 }
-
 function extractCandidateLinks(html: string, plain: string): string[] {
   const found = new Map<string, number>();
   const add = (rawUrl: string, baseScore: number) => {
@@ -905,6 +1007,9 @@ export default {
         let sensitive = false;
         let sensitiveType = "";
         let sensitiveMessage = "";
+        // Índice (na lista de e-mails, do mais novo para o mais antigo) do
+        // e-mail de onde veio o código — usado para comparar com o botão.
+        let indiceCodigo = -1;
 
         // E-mails candidatos. `plataforma` traz o resultado da checagem:
         // "match" (é da plataforma pedida) ou "unknown" (sem sinal claro —
@@ -912,6 +1017,7 @@ export default {
         const emailBodies: {
           body: string; html: string; sender: string; subject: string; date: string;
           plataforma: ClassificacaoEmail;
+          temBotao?: boolean;
         }[] = [];
 
         // Quais outras plataformas apareceram na caixa e foram descartadas.
@@ -992,7 +1098,16 @@ export default {
         // nunca deve ser acessado pelo servidor. É preciso rodar ANTES da IA e do regex,
         // porque ambos podem devolver um código falso (o nftoken da URL tem vários
         // dígitos) ou um código antigo de um e-mail "seu código de acesso" anterior.
-        for (const email of emailBodies) {
+        //
+        // EXCEÇÃO — E-MAIL DE BOTÃO (Netflix "código de acesso temporário"):
+        // ele NÃO interrompe a busca aqui. A Netflix pode mandar o botão e o
+        // código em texto; se houver código, ele tem que aparecer. O botão
+        // fica GUARDADO e só é usado no fim, se não houver código (ou se o
+        // botão for mais novo que o código encontrado).
+        let acaoPendente: { url: string; texto: string; tipo: ConfirmacaoTipo } | null = null;
+        let indiceAcaoPendente = -1;
+
+        for (const [indice, email] of emailBodies.entries()) {
           // Só e-mail DA plataforma pedida chega aqui: um e-mail de outra
           // plataforma nunca vira cartão de confirmação.
           if (email.plataforma !== "match") continue;
@@ -1000,50 +1115,58 @@ export default {
           const tipoConfirmacao = looksLikeConfirmationEmail(email.subject, email.body);
           if (!tipoConfirmacao) continue;
 
-          const actionLink = extractActionLink(email.html || "", email.body || "");
-          if (!actionLink) {
+          const acao = extractActionLink(email.html || "", email.body || "");
+          if (!acao) {
             console.log(`[fetch-email-code] E-mail de confirmação sem link utilizável: ${email.subject}`);
             continue;
           }
 
-          console.log(`[fetch-email-code] Confirmação (${tipoConfirmacao}) detectada — link entregue ao usuário: ${actionLink.slice(0, 90)}...`);
           const details = extractRequestDetails(email.html || "", email.body || "");
+
+          if (tipoConfirmacao === "access_code") {
+            // Botão: a ação fica guardada (a busca de código continua).
+            email.temBotao = true;
+            acaoPendente = { url: acao.url, texto: acao.texto, tipo: tipoConfirmacao };
+            indiceAcaoPendente = indice;
+            console.log(`[fetch-email-code] E-mail de botão detectado — ação guardada: ${acao.url.slice(0, 90)}... (texto do botão: "${acao.texto}")`);
+            continue;
+          }
+
+          console.log(`[fetch-email-code] Confirmação (${tipoConfirmacao}) detectada — link entregue ao usuário: ${acao.url.slice(0, 90)}...`);
           if (details) {
             console.log(`[fetch-email-code] Detalhe do pedido: ${details.requester} / ${details.device} / ${details.when} / ${details.location}`);
           }
 
-          // Rótulos dinâmicos: nada de "Netflix" hardcoded — a mesma tela
-          // serve para qualquer plataforma do grupo.
-          const rotulo = plataforma.label;
-          const eLogin = tipoConfirmacao === "login";
-          const mensagem = eLogin
-            ? `${rotulo} enviou uma notificação de novo login em vez de um código. Confirme que foi você para liberar o acesso.`
-            : `${rotulo} enviou uma confirmação de acesso em vez de um código. Clique no botão abaixo para aprovar e liberar o acesso.`;
-          const nota = eLogin
-            ? "Abra o link, confirme que o login foi seu e o acesso é liberado. O link expira em 15 minutos."
-            : "Clique no botão, aprove a solicitação e o acesso é liberado. O link expira em 15 minutos.";
-
-          return Response.json({
-            code: null,
-            requires_manual_action: true,
-            manual_action_type: eLogin ? "confirm_login" : (tipoConfirmacao === "household" ? "confirm_household" : "confirm_action"),
-            manual_action_url: actionLink,
-            manual_action_label: "Abrir e confirmar o acesso",
-            manual_action_note: nota,
-            manual_action_details: details,
-            message: mensagem,
-            platform_label: rotulo,
-            skipped_platforms: ignoradas,
-            sender: email.sender,
-            subject: email.subject,
-            received_at: email.date || new Date().toISOString(),
-          }, { headers: corsHeaders });
+          return Response.json(
+            montarRespostaAcaoManual(acao, tipoConfirmacao, plataforma, email, details, ignoradas),
+            { headers: corsHeaders },
+          );
         }
 
         if (groupConfig.email_ai_enabled && groqApiKey && emailBodies.length > 0) {
           const aiEmails = emailBodies.slice(0, 3);
           console.log(`[fetch-email-code] IA habilitada, processando ${aiEmails.length} emails mais recentes com Groq...`);
-          for (const email of aiEmails) {
+          for (const [indice, email] of aiEmails.entries()) {
+            // E-mail de BOTÃO: a IA pode "achar" um código nos dígitos do
+            // token da URL do botão. O código (se a Netflix mandar em texto)
+            // é lido pelo regex exato, que para esse e-mail é suficiente.
+            if (email.temBotao) {
+              const direto = extractCode(email.body, groupConfig);
+              console.log(`[fetch-email-code] E-mail de botão — regex direto:`, JSON.stringify(direto));
+              if (direto.code) {
+                resultCode = direto.code;
+                foundSender = email.sender;
+                foundSubject = email.subject;
+                foundDate = email.date;
+                sensitive = direto.sensitive === true;
+                sensitiveType = direto.sensitiveType || "";
+                sensitiveMessage = direto.sensitiveMessage || "";
+                indiceCodigo = indice;
+                break;
+              }
+              continue;
+            }
+
             const aiResult = await extractCodeWithAI(email.body, groqApiKey, serviceName);
             if (aiResult) {
               console.log(`[fetch-email-code] IA retornou:`, JSON.stringify(aiResult));
@@ -1055,6 +1178,7 @@ export default {
                 sensitive = aiResult.sensitive === true;
                 sensitiveType = aiResult.sensitiveType || "";
                 sensitiveMessage = aiResult.sensitiveMessage || "";
+                indiceCodigo = indice;
                 break;
               }
             }
@@ -1063,7 +1187,7 @@ export default {
 
         if (!resultCode) {
           console.log(`[fetch-email-code] ${groupConfig.email_ai_enabled ? 'IA não encontrou, fallback para regex' : 'Usando regex'}`);
-          for (const email of emailBodies) {
+          for (const [indice, email] of emailBodies.entries()) {
             const result = extractCode(email.body, groupConfig);
             console.log(`[fetch-email-code] regex result:`, JSON.stringify(result));
 
@@ -1075,6 +1199,7 @@ export default {
               sensitive = result.sensitive === true;
               sensitiveType = result.sensitiveType || "";
               sensitiveMessage = result.sensitiveMessage || "";
+              indiceCodigo = indice;
               break;
             }
           }
@@ -1086,8 +1211,9 @@ export default {
           // devolve corpo vazio (o front reportava "Unexpected end of JSON input").
           const linkStageDeadline = Date.now() + LINK_STAGE_BUDGET_MS;
           linkLoop:
-          for (const email of emailBodies.slice(0, 3)) {
-            // Link de confirmação não pode ser acessado pelo servidor (uso único)
+          for (const [indice, email] of emailBodies.slice(0, 3).entries()) {
+            // Link de confirmação/botão não pode ser acessado pelo servidor
+            // (uso único): é o próprio botão que o usuário precisa clicar.
             if (looksLikeConfirmationEmail(email.subject, email.body)) continue;
 
             const links = extractCandidateLinks(email.html || "", email.body || "");
@@ -1121,10 +1247,25 @@ export default {
                 sensitive = result.sensitive === true;
                 sensitiveType = result.sensitiveType || "";
                 sensitiveMessage = result.sensitiveMessage || "";
+                indiceCodigo = indice;
                 break linkLoop;
               }
             }
           }
+        }
+
+        // BOTÃO x CÓDIGO: o botão só entra no lugar do código se for MAIS NOVO
+        // que ele (a Netflix pode ter trocado o pedido) ou se não houver
+        // código nenhum. Assim o extrator de código continua valendo — o botão
+        // é a NOVA feature, não um substituto.
+        if (acaoPendente && (indiceCodigo === -1 || indiceAcaoPendente < indiceCodigo)) {
+          const emailBotao = emailBodies[indiceAcaoPendente];
+          const details = extractRequestDetails(emailBotao.html || "", emailBotao.body || "");
+          console.log(`[fetch-email-code] Botão entregue ao usuário (sem código): ${acaoPendente.url.slice(0, 90)}...`);
+          return Response.json(
+            montarRespostaAcaoManual(acaoPendente, acaoPendente.tipo, plataforma, emailBotao, details, ignoradas),
+            { headers: corsHeaders },
+          );
         }
 
         if (!resultCode) {
