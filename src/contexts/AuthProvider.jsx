@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { LogIn, ShieldAlert } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { AuthContext } from './AuthContext';
 import { getGoogleAdsAttribution } from '../lib/googleAds';
@@ -373,6 +372,9 @@ export function AuthProvider({ children }) {
     /* Impersonação: `impersonation` é null fora da impersonação. */
     impersonation,
     impersonating: !!impersonation,
+    /* `true` enquanto a sessão do admin está sendo recolocada: os botões
+       de saída (ícone amarelo do menu) mostram o carregamento. */
+    restoringAdmin,
     startImpersonation,
     restoreAdminSession,
     returnToAdmin,
@@ -385,45 +387,6 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={value}>
       {children}
-
-      {/* Banner de impersonação. Fica AQUI (e não dentro de uma página)
-          porque o admin pode cair em telas fora do painel do cliente — o
-          onboarding, o modal de avatar, a tela de login. Se o banner
-          morresse junto com a página, o admin ficaria preso na conta do
-          cliente sem como voltar. O z-index fica acima do gate de avatar
-          (700) justamente por isso. */}
-      {impersonation && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed inset-x-0 bottom-3 z-[800] mx-auto flex w-[calc(100%_-_1.5rem)] max-w-xl flex-wrap items-center gap-2 rounded-xl border border-warning/40 bg-card/95 px-3 py-2.5 shadow-lg backdrop-blur-xl"
-        >
-          <ShieldAlert size={18} className="shrink-0 text-warning" aria-hidden="true" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-foreground">
-              Você está como {impersonation.target_name || impersonation.target_email}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {impersonation.orfa
-                ? 'A aba foi fechada no meio do acesso: a sessão do admin se perdeu. Saia e entre de novo como admin.'
-                : 'A senha do cliente não foi alterada. A sessão do admin ficou guardada só nesta aba.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={returnToAdmin}
-            disabled={restoringAdmin}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-warning px-3 py-1.5 text-xs font-bold text-warning-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
-          >
-            {restoringAdmin ? (
-              <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-warning-foreground/40 border-t-warning-foreground" />
-            ) : (
-              <LogIn size={14} aria-hidden="true" />
-            )}
-            {impersonation.orfa ? 'Entrar como admin' : 'Voltar ao painel admin'}
-          </button>
-        </div>
-      )}
     </AuthContext.Provider>
   );
 }

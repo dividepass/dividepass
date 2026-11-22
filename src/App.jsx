@@ -4,6 +4,7 @@ import { AuthProvider } from './contexts/AuthProvider';
 import { AppDataProvider } from './contexts/AppDataContext';
 import { ProtectedRoute, PublicRoute } from './components/ProtectedRoute';
 import AvatarGate from './components/AvatarGate';
+import ImpersonationExitButton from './components/ImpersonationExitButton';
 import ErrorBoundary from './components/ErrorBoundary';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Toaster } from './components/ui/sonner';
@@ -107,6 +108,10 @@ function App() {
               página logo após o login (inclusive a home e o onboarding).
               O gate em si só aparece para quem ainda não tem avatar. */}
           <AvatarGate />
+          {/* Saída da impersonação fora do painel do cliente (onboarding,
+              gate de avatar, login): dentro de /dashboard quem impersona
+              usa o ícone amarelo do menu lateral. */}
+          <ImpersonationExitButton />
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />

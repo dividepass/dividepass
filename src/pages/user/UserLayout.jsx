@@ -7,7 +7,8 @@ import { useAppTheme } from '../../hooks/useAppTheme';
 import {
   ChevronDown, ChevronLeft,
   LayoutDashboard, Search, Users, Key, Package, CreditCard, Wallet, CreditCardIcon,
-  History, Headphones, Gift, Star, Shield, Sun, Moon, LogOut, Menu, User as UserIcon
+  History, Headphones, Gift, Star, Shield, ShieldCheck, Sun, Moon, LogOut, Menu, User as UserIcon,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -83,6 +84,37 @@ function NavLink({ to, label, icon: Icon, active, onNavigate, indicatorId }) {
  * Conteudo da navegacao — usado na sidebar do desktop e dentro do Sheet
  * do mobile. Vive fora do componente para nao ser remontado a cada render.
  */
+/**
+ * Ícone amarelo de saída da impersonação.
+ *
+ * Fica no topo do menu (gaveta no mobile, barra fixa no desktop) para o
+ * admin voltar ao painel com um clique. Substitui o card flutuante que
+ * cobria os botões da tela — no painel do cliente o card atrapalhava e o
+ * menu já tem o caminho de volta.
+ */
+function ImpersonationExitIcon({ impersonating, restoringAdmin, targetName, onClick }) {
+  if (!impersonating) return null;
+
+  const rotulo = 'Voltar ao painel admin';
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={restoringAdmin}
+      aria-label={rotulo}
+      title={targetName ? `${rotulo} — você está como ${targetName}` : rotulo}
+      className="flex size-10 shrink-0 items-center justify-center rounded-full border border-warning/50 bg-warning text-warning-foreground shadow-md transition-opacity hover:opacity-90 disabled:opacity-60"
+    >
+      {restoringAdmin ? (
+        <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+      ) : (
+        <ShieldCheck size={18} aria-hidden="true" />
+      )}
+    </button>
+  );
+}
+
 function NavContent({
   isActive,
   isFinanceActive,
@@ -230,7 +262,7 @@ function UserLayout() {
   const [financeOpen, setFinanceOpen] = useState(false);
   const [novaVersao, setNovaVersao] = useState(false);
   const { currentUser, getActiveServices } = useAppDataContext();
-  const { signOut, profile, impersonating, returnToAdmin } = useAuth();
+  const { signOut, profile, impersonating, impersonation, returnToAdmin, restoringAdmin } = useAuth();
   const { theme, toggleTheme } = useAppTheme();
   const isAdmin = profile?.role === 'admin';
 
@@ -355,17 +387,25 @@ function UserLayout() {
             </Button>
           </SheetTrigger>
           <SheetContent side="right" className="flex w-[286px] flex-col gap-0 border-l border-border bg-card p-0">
-            <Link
-              to="/dashboard"
-              onClick={closeMenu}
-              className="flex items-center gap-2 px-5 py-5"
-              aria-label="DividePass"
-            >
-              <img src={logoImg} alt="" className="size-9 object-contain" />
-              <span className="text-xl font-extrabold tracking-tight text-foreground">
-                Divide<span className="text-primary">Pass</span>
-              </span>
-            </Link>
+            <div className="flex items-center justify-between gap-2 px-5 py-5">
+              <Link
+                to="/dashboard"
+                onClick={closeMenu}
+                className="flex min-w-0 items-center gap-2"
+                aria-label="DividePass"
+              >
+                <img src={logoImg} alt="" className="size-9 shrink-0 object-contain" />
+                <span className="truncate text-xl font-extrabold tracking-tight text-foreground">
+                  Divide<span className="text-primary">Pass</span>
+                </span>
+              </Link>
+              <ImpersonationExitIcon
+                impersonating={impersonating}
+                restoringAdmin={restoringAdmin}
+                targetName={impersonation?.target_name || impersonation?.target_email}
+                onClick={handleGoToAdmin}
+              />
+            </div>
             <NavContent {...navProps} onNavigate={closeMenu} indicatorId="dp-nav-indicator-mobile" />
           </SheetContent>
         </Sheet>
@@ -373,12 +413,20 @@ function UserLayout() {
 
       {/* Sidebar fixa no desktop (a partir de 851px) */}
       <aside className="sticky top-0 hidden h-screen w-[280px] shrink-0 flex-col border-r border-border bg-card min-[851px]:flex">
-        <Link to="/dashboard" className="flex items-center gap-2 px-6 py-6" aria-label="DividePass">
-          <img src={logoImg} alt="" className="size-9 object-contain" />
-          <span className="text-xl font-extrabold tracking-tight text-foreground">
-            Divide<span className="text-primary">Pass</span>
-          </span>
-        </Link>
+        <div className="flex items-center justify-between gap-2 px-6 py-6">
+          <Link to="/dashboard" className="flex min-w-0 items-center gap-2" aria-label="DividePass">
+            <img src={logoImg} alt="" className="size-9 shrink-0 object-contain" />
+            <span className="truncate text-xl font-extrabold tracking-tight text-foreground">
+              Divide<span className="text-primary">Pass</span>
+            </span>
+          </Link>
+          <ImpersonationExitIcon
+            impersonating={impersonating}
+            restoringAdmin={restoringAdmin}
+            targetName={impersonation?.target_name || impersonation?.target_email}
+            onClick={handleGoToAdmin}
+          />
+        </div>
         <NavContent {...navProps} onNavigate={closeMenu} indicatorId="dp-nav-indicator-desktop" />
       </aside>
 
