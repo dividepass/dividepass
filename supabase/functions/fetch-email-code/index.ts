@@ -7,6 +7,16 @@ import {
   type PlatformInfo,
   type ClassificacaoEmail,
 } from "../_shared/plataforma-email.ts";
+import {
+  textoVisivel,
+  limparHtml,
+  stripHtml,
+  classificarRestricao,
+  extrairCodigo,
+  codigoPresenteNoTexto,
+  codigoPlausivel,
+  type Restricao,
+} from "../_shared/email-classificacao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,40 +24,15 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const CODE_PATTERNS = [
-  /c[oó]digo\s+de\s+(?:verifica[çc][ãa]o|valida[çc][ãa]|acesso)[:\s]*(\d{4,8})/i,
-  /verification\s+code[:\s]*(\d{4,8})/i,
-  /your\s+(?:verification\s+)?code[:\s]*(\d{4,8})/i,
-  /use\s+(?:this\s+)?code[:\s]*(\d{4,8})/i,
-  /seu\s+c[oó]digo[:\s]*(\d{4,8})/i,
-  /c[oó]digo[:\s]+(\d{4,8})/i,
-  /pin[:\s]+(\d{4,8})/i,
-  /(\d{4,8})\s+(?:is\s+your|for\s+your|é\s+seu|para\s+seu)/i,
-  /enter\s+(\d{4,8})/i,
-  /digite\s+(\d{4,8})/i,
-  /insira\s+(\d{4,8})/i,
-  /(?:your|seu|o\s+seu)\s+(?:code|c[oó]digo)\s+(?:is|é|e)[:\s]*(\d{4,8})/i,
-  /(?:access|invite)\s+(?:code|link)[:\s]*(\d{4,8})/i,
-  /(?:c[oó]digo|code)\s*(?:de|for)\s*(?:convite|invite|entry)[:\s]*(\d{4,8})/i,
-];
-
-const SENSITIVE_PATTERNS: { pattern: RegExp; type: string; message: string }[] = [
-  {
-    pattern: /(?:redefini[çc][ãa]o|recupera[çc][ãa]o)\s+de\s+senha|password\s+(?:reset|change|update)/i,
-    type: "password_change",
-    message: "Este código é de redefinição/alteração de senha. Por segurança, não é possível exibi-lo.",
-  },
-  {
-    pattern: /(?:altera[çc][ãa]o|troca)\s+(?:de\s+)?e[- ]?mail|email\s+(?:change|update)/i,
-    type: "email_change",
-    message: "Este código é de alteração de e-mail. Por segurança, não é possível exibi-lo.",
-  },
-  {
-    pattern: /conta\s+bloqueada|account\s+locked|suspended|suspensa/i,
-    type: "account_lock",
-    message: "Este código está relacionado a uma restrição na conta. Verifique com o administrador.",
-  },
-];
+/** E-mail candidato já baixado da caixa do grupo. */
+interface EmailCandidato {
+  body: string;
+  html: string;
+  sender: string;
+  subject: string;
+  date: string;
+  plataforma: ClassificacaoEmail;
+}
 
 interface GroupConfig {
   email_code_patterns: string[];
@@ -57,74 +42,141 @@ interface GroupConfig {
   email_allowed_senders: string[];
 }
 
-function decodeBase64(s: string): string {
+/**
+ * BYTES → TEXTO (com o charset do e-mail).
+ *
+ * POR QUE ISTO EXISTE
+ * -------------------
+ * O decodificador antigo transformava CADA BYTE num caractere
+ * (`String.fromCharCode`), ou seja, lia UTF-8 como Latin-1. O e-mail da
+ * Netflix chegava escrito "cÃ³digo" em vez de "código" — e toda regex que
+ * tem `[óo]` (botão de código, restrição, extrator de código) simplesmente
+ * não casava. O e-mail era lido, nada era reconhecido, e a tela caía no
+ * aviso genérico.
+ *
+ * A ordem de tentativa é de propósito: UTF-8 estrito primeiro (um texto
+ * Latin-1 acentuado quase nunca forma UTF-8 válido, então ele falha aqui e
+ * cai no charset declarado), depois o charset que o e-mail declarou, por
+ * fim a versão com tolerância.
+ */
+function decodificarBytes(bytes: Uint8Array, charset: string): string {
+  const cs = (charset || "utf-8").trim().toLowerCase().replace(/["']/g, "");
+  const declarado =
+    cs === "us-ascii" || cs === "us_ascii" ? "utf-8"
+      : cs === "latin-1" || cs === "iso-8859-1" || cs === "iso8859-1" ? "windows-1252"
+        : cs;
+
+  const tentar = (label: string, fatal: boolean): string | null => {
+    try {
+      return new TextDecoder(label, { fatal }).decode(bytes);
+    } catch {
+      return null;
+    }
+  };
+
+  return (
+    tentar("utf-8", true) ??
+    tentar(declarado, true) ??
+    tentar(declarado, false) ??
+    tentar("utf-8", false) ??
+    ""
+  );
+}
+
+function charsetDoBloco(bloco: string): string {
+  // Ancorado no INÍCIO DA LINHA: um e-mail assinado por DKIM tem a linha
+  // "h=From:To:Subject:...:Content-Transfer-Encoding:..." no cabeçalho, e
+  // sem âncora a busca pegava essa lista em vez do cabeçalho verdadeiro —
+  // o corpo ficava sem decodificar ("c=C3=B3digo" cru).
+  const m = bloco.match(/(?:^|\r?\n)\s*Content-Type:[^\r\n]*?charset\s*=\s*"?([^"\r\n;]+)"?/i);
+  return m?.[1]?.trim() || "utf-8";
+}
+
+function codificacaoDoBloco(bloco: string): string {
+  const m = bloco.match(/(?:^|\r?\n)\s*Content-Transfer-Encoding:\s*([^\s;\r\n]+)/i);
+  return (m?.[1] || "").toLowerCase();
+}
+
+function decodeBase64(s: string, charset = "utf-8"): string {
   try {
     const cleaned = s.replace(/[\s\r\n]+/g, "");
-    const bytes = Uint8Array.from(atob(cleaned), (c) => c.charCodeAt(0));
-    return new TextDecoder("utf-8").decode(bytes);
+    const bin = atob(cleaned);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return decodificarBytes(bytes, charset);
   } catch {
     return s;
   }
 }
 
-function decodeQuotedPrintable(s: string): string {
-  let result = s.replace(/=\r?\n/g, "");
-  result = result.replace(/=([0-9A-Fa-f]{2})/g, (_, hex: string) =>
-    String.fromCharCode(parseInt(hex, 16))
+function decodeQuotedPrintable(s: string, charset = "utf-8"): string {
+  // "=C3=B3" é UM byte (0xC3) seguido de outro (0xB3) — juntos, em UTF-8,
+  // são o "ó". Por isso o resultado monta BYTES e só depois vira texto.
+  const semKebra = s.replace(/=\r?\n/g, "");
+  const bytes: number[] = [];
+  for (let i = 0; i < semKebra.length; i++) {
+    const ch = semKebra[i];
+    if (ch === "=" && /^[0-9A-Fa-f]{2}/.test(semKebra.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(semKebra.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      bytes.push(semKebra.charCodeAt(i) & 0xff);
+    }
+  }
+  return decodificarBytes(Uint8Array.from(bytes), charset);
+}
+
+/**
+ * Assunto/remetente chegam codificados (RFC 2047):
+ * `=?UTF-8?Q?Seu_c=C3=B3digo_de_acesso_tempor=C3=A1rio?=`.
+ * Sem decodificar, NENHUMA regra de assunto casava — nem "código de acesso
+ * temporário", nem as regras de restrição.
+ */
+function decodeRfc2047(valor: string): string {
+  const bruto = valor || "";
+  const decodificado = bruto.replace(
+    /=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g,
+    (_todo: string, charset: string, enc: string, texto: string) => {
+      if (enc.toLowerCase() === "b") return decodeBase64(texto, charset);
+      return decodeQuotedPrintable(texto.replace(/_/g, " "), charset);
+    },
   );
-  return result;
+  // Junta as partes ("=?UTF-8?Q?A?= =?UTF-8?Q?B?=") e desfaz a dobra do cabeçalho.
+  return decodificado.replace(/\r?\n[ \t]+/g, " ").replace(/\s{2,}/g, " ").trim();
 }
 
 function extractMimeParts(raw: string): { plain: string; html: string } {
   let plain = "";
   let html = "";
+  const parteDecodificada = (part: string): string => {
+    const bodyIdx = part.indexOf("\r\n\r\n");
+    const body = bodyIdx !== -1 ? part.substring(bodyIdx + 4).trim() : "";
+    if (!body) return "";
+    const modo = codificacaoDoBloco(part);
+    const charset = charsetDoBloco(part);
+    if (modo === "base64") return decodeBase64(body, charset);
+    if (modo === "quoted-printable") return decodeQuotedPrintable(body, charset);
+    return body;
+  };
+
   const bMatch = raw.match(/Content-Type:[\s\S]*?boundary="?([^";\r\n\s]+)"?/i);
   if (bMatch) {
     const b = bMatch[1];
     const parts = raw.split(new RegExp(`--${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:--)?`));
     for (const part of parts) {
-      const bodyIdx = part.indexOf("\r\n\r\n");
-      const body = bodyIdx !== -1 ? part.substring(bodyIdx + 4).trim() : "";
-      if (!body) continue;
-      const enc = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-      const isBase64 = enc?.[1]?.toLowerCase() === "base64";
-      const decoded = isBase64 ? decodeBase64(body) : decodeQuotedPrintable(body);
+      const decoded = parteDecodificada(part);
+      if (!decoded) continue;
       if (/Content-Type:\s*text\/plain/i.test(part)) plain += decoded;
       else if (/Content-Type:\s*text\/html/i.test(part)) html += decoded;
     }
   } else {
     const bodyIdx = raw.indexOf("\r\n\r\n");
-    const body = bodyIdx !== -1 ? raw.substring(bodyIdx + 4).trim() : raw;
-    const enc = raw.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-    const isBase64 = enc?.[1]?.toLowerCase() === "base64";
-    const decoded = isBase64 ? decodeBase64(body) : decodeQuotedPrintable(body);
+    const cabecalhos = bodyIdx !== -1 ? raw.substring(0, bodyIdx) : "";
+    const corpo = bodyIdx !== -1 ? raw.substring(bodyIdx + 4).trim() : raw;
+    const decoded = parteDecodificada(`${cabecalhos}\r\n\r\n${corpo}`);
     if (/Content-Type:\s*text\/html/i.test(raw)) html = decoded;
     else plain = decoded;
   }
   return { plain, html };
-}
-
-function stripHtml(html: string): string {
-  let t = html.replace(/<br\s*\/?>/gi, "\n");
-  t = t.replace(/<\/p>/gi, "\n");
-  t = t.replace(/<\/div>/gi, "\n");
-  t = t.replace(/<[^>]+>/g, " ");
-  t = t.replace(/&nbsp;/g, " ");
-  t = t.replace(/&amp;/g, "&");
-  t = t.replace(/&lt;/g, "<");
-  t = t.replace(/&gt;/g, ">");
-  t = t.replace(/&quot;/g, '"');
-  t = t.replace(/&#39;/g, "'");
-  t = t.replace(/&#x27;/g, "'");
-  t = t.replace(/&atilde;/g, "ã");
-  t = t.replace(/&ccedil;/g, "ç");
-  t = t.replace(/&oacute;/g, "ó");
-  t = t.replace(/&eacute;/g, "é");
-  t = t.replace(/&aacute;/g, "á");
-  t = t.replace(/&iacute;/g, "í");
-  t = t.replace(/&uacute;/g, "ú");
-  t = t.replace(/[ \t]+/g, " ");
-  return t;
 }
 
 function stripMime(raw: string): string {
@@ -140,95 +192,8 @@ interface CodeResult {
   sensitive?: boolean;
   sensitiveType?: string;
   sensitiveMessage?: string;
+  botao?: string | null;
   reason?: string;
-}
-
-function buildPatternsFromConfig(groupPatterns: string[]): RegExp[] {
-  const patterns: RegExp[] = [];
-  for (const p of groupPatterns) {
-    try {
-      patterns.push(new RegExp(p, "i"));
-    } catch {
-      console.log(`[fetch-email-code] Padrão inválido ignorado: ${p}`);
-    }
-  }
-  return patterns;
-}
-
-function checkSensitive(body: string): { isSensitive: boolean; type: string; message: string } {
-  for (const sp of SENSITIVE_PATTERNS) {
-    if (sp.pattern.test(body)) {
-      return { isSensitive: true, type: sp.type, message: sp.message };
-    }
-  }
-  return { isSensitive: false, type: "", message: "" };
-}
-
-function extractCode(body: string, groupConfig?: GroupConfig): CodeResult {
-  const sensitiveCheck = checkSensitive(body);
-
-  const groupPatterns = groupConfig?.email_code_patterns || [];
-  const groupKeywords = groupConfig?.email_body_keywords || [];
-
-  let patternsToUse = CODE_PATTERNS;
-  if (groupPatterns.length > 0) {
-    const customPatterns = buildPatternsFromConfig(groupPatterns);
-    if (customPatterns.length > 0) {
-      patternsToUse = [...customPatterns, ...CODE_PATTERNS];
-    }
-  }
-
-  for (const regex of patternsToUse) {
-    const match = body.match(regex);
-    if (match && match[1]) {
-      if (sensitiveCheck.isSensitive) {
-        return {
-          code: match[1],
-          sensitive: true,
-          sensitiveType: sensitiveCheck.type,
-          sensitiveMessage: sensitiveCheck.message,
-        };
-      }
-      return { code: match[1] };
-    }
-  }
-
-  if (groupKeywords.length > 0) {
-    const bodyLower = (body || "").toLowerCase();
-    const hasKeyword = groupKeywords.some((kw) => bodyLower.includes(kw.toLowerCase()));
-    if (hasKeyword) {
-      const digitMatch = body.match(/(\d{4,8})/);
-      if (digitMatch) {
-        if (sensitiveCheck.isSensitive) {
-          return {
-            code: digitMatch[1],
-            sensitive: true,
-            sensitiveType: sensitiveCheck.type,
-            sensitiveMessage: sensitiveCheck.message,
-          };
-        }
-        return { code: digitMatch[1] };
-      }
-    }
-  }
-
-  const hasVerificationContext = /(?:code|c[oó]digo|verify|verifica[çc][ãa]o|access|acesso|enter|digite|insira|use|utilize)/i.test(body);
-  if (hasVerificationContext) {
-    const standaloneMatch = body.match(/^\s*(\d{4,8})\s*$/m);
-    if (standaloneMatch) {
-      if (sensitiveCheck.isSensitive) {
-        return {
-          code: standaloneMatch[1],
-          sensitive: true,
-          sensitiveType: sensitiveCheck.type,
-          sensitiveMessage: sensitiveCheck.message,
-        };
-      }
-      return { code: standaloneMatch[1] };
-    }
-  }
-
-  return { code: null, reason: "Nenhum código de verificação encontrado." };
 }
 
 function isSenderAllowed(sender: string, allowedSenders: string[]): boolean {
@@ -245,6 +210,10 @@ function isSubjectAllowed(subject: string, subjectIncludes: string[]): boolean {
 
 const LINK_KEYWORDS = /(code|c[oó]digo|verify|verifica|confirm|signin|sign-?_?in|login|token|otp|pin|auth|acesso|entrar|access|tv)/i;
 const LINK_BLOCKLIST = /(unsubscribe|opt[-_]?out|descadast|cancel(ar|e)?|remov|preferences|settings|privacy|privacidade|terms|termos|legal|help|ajuda|support|suporte|blog|jobs|careers|giftcard|pagamento|billing|invoice)/i;
+// Endereços que aparecem no HTML mas não são link de nada: DOCTYPE, schema,
+// namespace XML. Sem esse filtro, o "botão" do e-mail virava
+// http://www.w3.org/TR/html4/loose.dtd.
+const LINK_SEM_SENTIDO = /(w3\.org|schema\.org|xmlsoap\.org|purl\.org|www\.w3\.org|loose\.dtd|\/TR\/html)/i;
 
 // Limites da etapa de "seguir links". A edge function e encerrada pelo gateway
 // se passar do tempo maximo e devolve corpo vazio, o que quebrava o front.
@@ -390,6 +359,7 @@ function normalizeUrl(raw: string): string | null {
   url = url.replace(/[)\].,;'"]+$/, "");
   if (!/^https?:\/\//i.test(url)) return null;
   if (LINK_BLOCKLIST.test(url)) return null;
+  if (LINK_SEM_SENTIDO.test(url)) return null;
   return url;
 }
 
@@ -479,10 +449,15 @@ function montarRespostaAcaoManual(
 // Devolve também o TEXTO do botão escolhido: a Netflix troca o texto do
 // botão ("Sim, fui eu", "Receber código", ...) e o front precisa mostrar o
 // mesmo texto no botão que ele entrega ao usuário.
-function extractActionLink(html: string, plain: string): { url: string; texto: string } | null {
-  const scored = new Map<string, { pontos: number; texto: string }>();
+//
+// E devolve a PONTUAÇÃO. Ela é o filtro do "botão de verdade": um e-mail que
+// não é pedido de confirmação só entrega botão quando o link tem cara de
+// AÇÃO (texto tipo CTA + URL de verificação), senão um botão de marketing
+// ("Assistir agora") tomaria o lugar do código.
+function extractActionLink(html: string, plain: string): { url: string; texto: string; pontos: number; acao: boolean } | null {
+  const scored = new Map<string, { pontos: number; texto: string; acao: boolean }>();
 
-  const score = (url: string | null, points: number, texto = ""): void => {
+  const score = (url: string | null, points: number, texto = "", ehAcao = false): void => {
     if (!url) return;
     const clean = normalizeUrl(url);
     if (!clean) return;
@@ -490,10 +465,11 @@ function extractActionLink(html: string, plain: string): { url: string; texto: s
     if (DENY_URL_HINTS.test(clean)) return;
     const atual = scored.get(clean);
     if (!atual) {
-      scored.set(clean, { pontos: points, texto });
+      scored.set(clean, { pontos: points, texto, acao: ehAcao });
       return;
     }
     atual.pontos += points;
+    atual.acao = atual.acao || ehAcao;
     // Guarda o texto do botão (o que casou com o CTA), sem sobrescrever.
     if (texto && !atual.texto) atual.texto = texto;
   };
@@ -503,11 +479,13 @@ function extractActionLink(html: string, plain: string): { url: string; texto: s
     // em vez de liberar o acesso. Precisa ser descartado aqui — e, como
     // "NÃO FUI EU" contém "FUI EU", ele casaria com o padrão de aprovação.
     if (DENY_CTA_TEXT.test(text)) return;
-    if (CONFIRM_CTA_TEXT.test(text)) value += 4;
-    if (CONFIRM_URL_HINTS.test(href)) value += 3;
+    const textoEhCta = CONFIRM_CTA_TEXT.test(text);
+    const urlEhAcao = CONFIRM_URL_HINTS.test(href);
+    if (textoEhCta) value += 4;
+    if (urlEhAcao) value += 3;
     if (PLATFORM_SENDER.test(href)) value += 1;
     if (/(btn|button|cta)/i.test(text)) value += 1;
-    score(href, value, text);
+    score(href, value, text, textoEhCta || urlEhAcao);
   };
 
   // 1) Âncoras com href + texto interno
@@ -520,7 +498,7 @@ function extractActionLink(html: string, plain: string): { url: string; texto: s
   // 2) Formulários (botão submit)
   const formRe = /<form\b[^>]*action\s*=\s*["']([^"']+)["']/gi;
   while ((m = formRe.exec(html)) !== null) {
-    score(m[1], 3);
+    score(m[1], 3, "", true);
   }
 
   // 3) <button onclick="window.location='...'">
@@ -532,13 +510,18 @@ function extractActionLink(html: string, plain: string): { url: string; texto: s
   // 4) URLs soltas no texto (tracking redirects do próprio e-mail)
   const bareRe = /https?:\/\/[^\s<>"')]+/g;
   while ((m = bareRe.exec(html + "\n" + plain)) !== null) {
-    score(m[0], 1);
+    score(m[0], 1, "", CONFIRM_URL_HINTS.test(m[0]));
   }
 
   if (scored.size === 0) return null;
   const melhor = [...scored.entries()].sort((a, b) => b[1].pontos - a[1].pontos)[0];
-  return { url: melhor[0], texto: melhor[1].texto };
+  return { url: melhor[0], texto: melhor[1].texto, pontos: melhor[1].pontos, acao: melhor[1].acao };
 }
+
+// Nota mínima para um e-mail que NÃO é pedido de confirmação entregar o botão:
+// 2 (âncora) + 4 (texto de CTA) ou 2 + 3 (URL de verificação) já passam;
+// botão de marketing (2 + 1 do domínio) fica de fora.
+const PONTOS_MIN_BOTAO_GENERICO = 6;
 function extractCandidateLinks(html: string, plain: string): string[] {
   const found = new Map<string, number>();
   const add = (rawUrl: string, baseScore: number) => {
@@ -546,6 +529,7 @@ function extractCandidateLinks(html: string, plain: string): string[] {
     url = url.replace(/[)\].,;'"]+$/, "");
     if (!/^https?:\/\//i.test(url)) return;
     if (LINK_BLOCKLIST.test(url)) return;
+    if (LINK_SEM_SENTIDO.test(url)) return;
     let score = baseScore;
     if (LINK_KEYWORDS.test(url)) score += 2;
     const existing = found.get(url);
@@ -586,7 +570,10 @@ async function fetchPageText(url: string): Promise<string | null> {
     const finalUrl = res.url || url;
     if (LINK_BLOCKLIST.test(finalUrl)) return null;
     const rawPage = await res.text();
-    return `${finalUrl}\n${stripHtml(rawPage.substring(0, 300000))}`;
+    // textoVisivel (e não stripHtml puro): sem isso o CSS da página entra na
+    // varredura e "#e00000" virava o "código 0000" — código falso entregue ao
+    // usuário no lugar de um "nenhum código encontrado".
+    return `${finalUrl}\n${textoVisivel(rawPage.substring(0, 300000), "")}`;
   } catch (err) {
     console.log(`[fetch-email-code] Falha ao acessar link ${url}:`, err.message);
     return null;
@@ -595,74 +582,343 @@ async function fetchPageText(url: string): Promise<string | null> {
   }
 }
 
+// Modelos da Groq, do melhor para o mais barato. A lista existe porque a
+// Groq aposenta modelos sem aviso: com um nome só (o antigo
+// "llama-3.3-70b-versatile") a API respondia 404, a IA virava nula e a
+// análise ficava só no regex.
+const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
+
 async function extractCodeWithAI(content: string, apiKey: string, serviceName: string, isPage = false): Promise<CodeResult | null> {
-  try {
-    const sourceLabel = isPage ? "página web aberta a partir do link de um botão do email" : "email";
-    const prompt = `Você é um extrator de códigos de verificação e acesso. Analise o conteúdo abaixo (${sourceLabel}).
+  const prompt = `Você é um extrator de códigos de verificação e acesso. Analise o conteúdo abaixo (${isPage ? "página web aberta a partir do link de um botão do email" : "email"}).
 
 CONTEXTO: Foi enviado para uma conta compartilhada da plataforma "${serviceName}".
 
 Regras:
 1. Este conteúdo é da plataforma ${serviceName}? Se NÃO for, retorne {"is_verification": false, "code": null, "is_sensitive": false, "reason": "conteúdo não é da plataforma ${serviceName}"}
-2. Se É da ${serviceName} e contém um código de verificação ou acesso de 4 a 8 dígitos, retorne o código
-3. Se É da ${serviceName} e é sobre redefinição de senha, alteração de senha ou alteração de e-mail, marque como sensível
-4. Se É da ${serviceName} e é sobre bloqueio de conta, marque como sensível
-5. Se não há código, retorne null para code
-6. Não confunda números de pedido, ID de transação ou outros números com códigos de verificação
-7. Em páginas web, o código costuma aparecer sozinho ou perto de textos como "digite este código", "enter this code", "seu código é"
+2. Se contém um CÓDIGO de verificação/acesso (4 a 8 dígitos) escrito no texto, retorne o código.
+3. NUNCA retorne: data, horário, ano, número de pedido, ID de transação ou os caracteres de um token que está dentro de uma URL.
+4. Se o e-mail PEDE para trocar senha, trocar e-mail da conta, atualizar cartão/forma de pagamento, ou avisa conta bloqueada/suspensa, marque is_sensitive true.
+   IMPORTANTE: uma DICA de segurança no rodapé ("se você não reconheceu, altere sua senha") NÃO é um pedido de troca de senha — nesse caso is_sensitive é false.
+5. Se não há código no texto, mas existe um botão/link para o usuário clicar (ex.: "Receber código", "Sim, fui eu"), retorne code null e button_label com o texto do botão.
+6. Se não há nada disso, retorne code null.
 
 Retorne APENAS JSON válido (sem markdown, sem texto extra):
-{"is_verification": true/false, "code": "123456" ou null, "is_sensitive": true/false, "reason": "breve descrição"}
+{"is_verification": true/false, "code": "123456" ou null, "is_sensitive": true/false, "button_label": "texto do botão" ou null, "reason": "breve descrição"}
 
 Conteúdo:
 ${content.substring(0, 3000)}`;
 
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.1,
-        max_tokens: 200,
-      }),
-    });
+  for (const model of GROQ_MODELS) {
+    try {
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.1,
+          max_tokens: 250,
+        }),
+      });
 
-    if (!response.ok) {
-      console.log(`[fetch-email-code] Groq API error: ${response.status}`);
-      return null;
-    }
+      if (!response.ok) {
+        console.log(`[fetch-email-code] Groq API error (${model}): ${response.status}`);
+        continue;
+      }
 
-    const data = await response.json();
-    const aiContent = data.choices?.[0]?.message?.content?.trim();
-    if (!aiContent) return null;
+      const data = await response.json();
+      const aiContent = data.choices?.[0]?.message?.content?.trim();
+      if (!aiContent) continue;
 
-    const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
+      const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) continue;
 
-    const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonMatch[0]);
+      const codigo = parsed.code ? String(parsed.code).replace(/\D/g, "").substring(0, 8) : null;
 
-    if (parsed.is_verification && parsed.code && !parsed.is_sensitive) {
-      return { code: String(parsed.code).replace(/\D/g, "").substring(0, 8) };
-    }
-
-    if (parsed.is_verification && parsed.is_sensitive) {
       return {
-        code: parsed.code ? String(parsed.code).replace(/\D/g, "").substring(0, 8) : null,
-        sensitive: true,
+        code: parsed.is_verification ? codigo : null,
+        sensitive: parsed.is_verification === true && parsed.is_sensitive === true,
         sensitiveType: "ai_detected_sensitive",
-        sensitiveMessage: `Este código foi identificado como sensível pela IA: ${parsed.reason || "operação de segurança"}`,
+        sensitiveMessage: parsed.reason || "operação de segurança",
+        botao: parsed.button_label ? String(parsed.button_label).substring(0, 60) : null,
+        reason: parsed.reason || "",
       };
+    } catch (err) {
+      console.log(`[fetch-email-code] Groq AI error (${model}):`, err.message);
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// DECISÃO DO QUE MOSTRAR AO GRUPO: RESTRIÇÃO → CÓDIGO → BOTÃO
+//
+// Recebe os e-mails já filtrados (plataforma, remetente, janela de 2h) e
+// devolve a resposta que o aplicativo mostra. Não fala com IMAP nem com o
+// banco: assim dá para rodar a mesma decisão contra e-mails reais em teste.
+// ─────────────────────────────────────────────────────────────────────────
+async function analisarEmails(opcoes: {
+emailBodies: EmailCandidato[];
+plataforma: PlatformInfo;
+serviceName: string;
+groupConfig: GroupConfig;
+groqApiKey: string;
+ignoradas: { label: string; quantidade: number }[];
+registrarPin?: (code: string, sender: string) => Promise<void>;
+}): Promise<Response> {
+const { emailBodies, plataforma, serviceName, groupConfig, groqApiKey, ignoradas, registrarPin } = opcoes;
+
+let resultCode: string | null = null;
+let foundSender = "";
+let foundSubject = "";
+let foundDate = "";
+let foundSourceUrl = "";
+
+  // ─────────────────────────────────────────────────────────────────────
+  // ETAPA 1 — ANÁLISE DO E-MAIL (do mais novo para o mais antigo).
+  //
+  // A ordem é a regra do produto e vale para QUALQUER plataforma:
+  //   1. LER O E-MAIL. Ele está PEDINDO troca de senha, troca de e-mail,
+  //      cartão de crédito/forma de pagamento, ou avisando conta
+  //      bloqueada/suspensa? → RESTRIÇÃO: nada desse e-mail é mostrado.
+  //   2. Não é restrição e o e-mail traz um CÓDIGO/TOKEN no texto?
+  //      → o código é mostrado ao grupo.
+  //   3. Não traz código, mas traz um BOTÃO que direciona para a
+  //      plataforma? → o botão é mostrado no aplicativo.
+  //
+  // QUEM DECIDE A RESTRIÇÃO É O E-MAIL, NÃO A IA. A IA só ajuda a
+  // encontrar código. Antes, o "sensível" da IA bastava para bloquear:
+  // no e-mail do código de acesso temporário da Netflix ele marcava a
+  // DICA de segurança do rodapé ("Você também pode alterar a senha") e
+  // o botão ficava escondido atrás do aviso de PIN.
+  //
+  // A checagem roda sobre o TEXTO VISÍVEL (sem CSS): o CSS da Netflix
+  // traz a classe "suspended", que casava com a regra de conta
+  // bloqueada.
+  // ─────────────────────────────────────────────────────────────────────
+  let indiceRestrito = -1;
+  let restricaoEmail: Restricao | null = null;
+  // Botão de e-mail que NÃO é pedido de confirmação: guardado e usado só
+  // se nenhum código aparecer em nenhum e-mail.
+  let botaoGenerico: {
+    acao: { url: string; texto: string };
+    email: (typeof emailBodies)[number];
+  } | null = null;
+
+  for (const [indice, email] of emailBodies.entries()) {
+    // Só e-mail DA plataforma pedida chega aqui: um e-mail de outra
+    // plataforma nunca vira cartão de confirmação.
+    if (email.plataforma !== "match") continue;
+
+    const corpo = textoVisivel(email.html || "", email.body || "");
+    const htmlLimpo = limparHtml(email.html || "");
+
+    // 1) RESTRIÇÃO — pedido de troca de senha/e-mail, cartão de
+    //    crédito/forma de pagamento ou conta bloqueada.
+    const restricao = classificarRestricao(email.subject, corpo);
+    if (restricao) {
+      if (indiceRestrito === -1) {
+        indiceRestrito = indice;
+        restricaoEmail = restricao;
+      }
+      console.log(`[fetch-email-code] E-mail RESTRITO (${restricao.tipo}) — descartado: ${email.subject}`);
+      continue;
     }
 
-    return null;
-  } catch (err) {
-    console.log(`[fetch-email-code] Groq AI error:`, err.message);
-    return null;
+    // 2) BOTÃO — é a alternativa quando o e-mail não traz o código.
+    const tipoConfirmacao = looksLikeConfirmationEmail(email.subject, corpo);
+    const acao = extractActionLink(htmlLimpo, email.body || "");
+    const botaoDeConfirmacao = !!(tipoConfirmacao && acao);
+    if (tipoConfirmacao && !acao) {
+      console.log(`[fetch-email-code] E-mail de confirmação sem link utilizável: ${email.subject}`);
+    }
+    if (!tipoConfirmacao && !botaoGenerico && acao && acao.acao && acao.pontos >= PONTOS_MIN_BOTAO_GENERICO) {
+      botaoGenerico = { acao, email };
+      console.log(`[fetch-email-code] Botão de ação guardado (e-mail não é confirmação): ${acao.url.slice(0, 90)}...`);
+    }
+
+    // 3) CÓDIGO — a IA entra só nos e-mails mais novos e NUNCA no e-mail
+    //    de botão de confirmação (o token da URL engana a IA).
+    let codigo: string | null = null;
+
+    if (!botaoDeConfirmacao && groupConfig.email_ai_enabled && groqApiKey && indice < 3) {
+      const aiResult = await extractCodeWithAI(corpo, groqApiKey, serviceName);
+      if (aiResult) {
+        console.log(`[fetch-email-code] IA retornou:`, JSON.stringify(aiResult));
+        if (!aiResult.code) {
+          // A IA não achou código: segue para o botão do e-mail.
+        } else if (codigoPlausivel(aiResult.code) && codigoPresenteNoTexto(aiResult.code, corpo)) {
+          codigo = aiResult.code;
+        } else {
+          // Barreira contra alucinação: horário "15:22", ano "2026",
+          // número de pedido.
+          console.log(`[fetch-email-code] Código da IA não confere com o texto do e-mail — descartado: ${aiResult.code}`);
+        }
+      }
+    }
+
+    if (!codigo) {
+      codigo = extrairCodigo(corpo, {
+        padroes: groupConfig.email_code_patterns,
+        palavrasChave: groupConfig.email_body_keywords,
+      });
+    }
+
+    if (codigo) {
+      console.log(`[fetch-email-code] Código encontrado no e-mail: ${codigo} (${email.subject})`);
+      resultCode = codigo;
+      foundSender = email.sender;
+      foundSubject = email.subject;
+      foundDate = email.date;
+      break;
+    }
+
+    // 4) Sem código em texto: o botão do pedido é entregue na hora (ele é
+    //    mais novo que qualquer código antigo da caixa).
+    if (botaoDeConfirmacao && tipoConfirmacao) {
+      const details = extractRequestDetails(htmlLimpo, email.body || "");
+      console.log(`[fetch-email-code] Botão entregue ao usuário (${tipoConfirmacao}): ${acao!.url.slice(0, 90)}...`);
+      if (details) {
+        console.log(`[fetch-email-code] Detalhe do pedido: ${details.requester} / ${details.device} / ${details.when} / ${details.location}`);
+      }
+      return Response.json(
+        montarRespostaAcaoManual(acao!, tipoConfirmacao, plataforma, email, details, ignoradas),
+        { headers: corsHeaders },
+      );
+    }
   }
+
+  if (!resultCode && !restricaoEmail) {
+    console.log(`[fetch-email-code] Nenhum código no corpo dos e-mails. Tentando seguir links/botões...`);
+    // Orçamento de tempo: a função é encerrada pelo gateway se demorar demais e
+    // devolve corpo vazio (o front reportava "Unexpected end of JSON input").
+    const linkStageDeadline = Date.now() + LINK_STAGE_BUDGET_MS;
+    linkLoop:
+    for (const [indice, email] of emailBodies.slice(0, 3).entries()) {
+      // Link de confirmação/botão não pode ser acessado pelo servidor
+      // (uso único): é o próprio botão que o usuário precisa clicar.
+      if (looksLikeConfirmationEmail(email.subject, textoVisivel(email.html || "", email.body || ""))) continue;
+      // Link que também é o BOTÃO guardado: mesmo motivo, é de uso único.
+      if (botaoGenerico && botaoGenerico.email === email) continue;
+      // E-mail restrito também não entra: o código dele não pode ser
+      // mostrado ao grupo.
+      if (indiceRestrito !== -1 && indice >= indiceRestrito) continue;
+
+      const links = extractCandidateLinks(email.html || "", email.body || "");
+      if (links.length === 0) continue;
+      console.log(`[fetch-email-code] ${links.length} links candidatos no email de ${email.sender}`);
+
+      for (const link of links.slice(0, MAX_LINKS_PER_EMAIL)) {
+        if (Date.now() > linkStageDeadline) {
+          console.log(`[fetch-email-code] Orçamento de tempo esgotado, interrompendo busca em links`);
+          break linkLoop;
+        }
+
+        console.log(`[fetch-email-code] Acessando: ${link}`);
+        const pageText = await fetchPageText(link);
+        if (!pageText) continue;
+
+        // Regex primeiro (gratuito e instantâneo); IA só se o regex falhar.
+        let codigoDaPagina = extrairCodigo(pageText, {
+          padroes: groupConfig.email_code_patterns,
+          palavrasChave: groupConfig.email_body_keywords,
+        });
+        if (!codigoDaPagina && groupConfig.email_ai_enabled && groqApiKey) {
+          const aiResult = await extractCodeWithAI(pageText, groqApiKey, serviceName, true);
+          if (aiResult?.code && codigoPlausivel(aiResult.code) && codigoPresenteNoTexto(aiResult.code, pageText)) {
+            codigoDaPagina = aiResult.code;
+          }
+        }
+
+        if (codigoDaPagina) {
+          console.log(`[fetch-email-code] Código encontrado via link: ${codigoDaPagina}`);
+          resultCode = codigoDaPagina;
+          foundSender = email.sender;
+          foundSubject = email.subject;
+          foundDate = email.date;
+          foundSourceUrl = link;
+          break linkLoop;
+        }
+      }
+    }
+  }
+
+  if (!resultCode && restricaoEmail) {
+    // O e-mail mais recente era um pedido de troca de senha/e-mail,
+    // cartão de crédito ou bloqueio de conta: nada dele pode ser
+    // mostrado ao grupo — só o aviso.
+    const emailRestrito = emailBodies[indiceRestrito];
+    console.log(`[fetch-email-code] Aviso de restrição (${restricaoEmail.tipo}) — nenhum código será exibido.`);
+    return Response.json({
+      code: null,
+      sensitive: true,
+      sensitiveType: restricaoEmail.tipo,
+      sensitiveMessage: restricaoEmail.mensagem,
+      platform_label: plataforma.label,
+      skipped_platforms: ignoradas,
+      sender: emailRestrito?.sender || foundSender,
+      subject: emailRestrito?.subject || foundSubject,
+      source_url: null,
+      received_at: emailRestrito?.date || foundDate || new Date().toISOString(),
+    }, { headers: corsHeaders });
+  }
+
+  if (!resultCode && botaoGenerico) {
+    // Nenhum e-mail trouxe código, mas um deles trouxe um BOTÃO que
+    // direciona para a plataforma: o botão vai para o aplicativo.
+    const emailBotao = botaoGenerico.email;
+    const details = extractRequestDetails(
+      limparHtml(emailBotao.html || ""),
+      emailBotao.body || "",
+    );
+    console.log(`[fetch-email-code] Botão genérico entregue ao usuário: ${botaoGenerico.acao.url.slice(0, 90)}...`);
+    return Response.json(
+      montarRespostaAcaoManual(
+        botaoGenerico.acao,
+        "generic",
+        plataforma,
+        emailBotao,
+        details,
+        ignoradas,
+      ),
+      { headers: corsHeaders },
+    );
+  }
+
+  if (!resultCode) {
+    // A mensagem NÃO repete as plataformas ignoradas: elas vão no campo
+    // `skipped_platforms` e o front mostra um aviso próprio para isso.
+    const mensagem = `Nenhum código de verificação da plataforma ${plataforma.label} foi encontrado nos e-mails recentes (corpo ou links).`;
+    return Response.json(
+      {
+        code: null,
+        message: mensagem,
+        platform_label: plataforma.label,
+        skipped_platforms: ignoradas,
+      },
+      { headers: corsHeaders },
+    );
+  }
+
+if (resultCode) {
+  if (registrarPin) await registrarPin(resultCode, foundSender);
+
+  return Response.json({
+    code: resultCode,
+    platform_label: plataforma.label,
+    skipped_platforms: ignoradas,
+    sender: foundSender,
+    subject: foundSubject,
+    source: foundSourceUrl ? "link" : "email_body",
+    source_url: foundSourceUrl || null,
+    received_at: foundDate || new Date().toISOString(),
+    expires_in: 600,
+  }, { headers: corsHeaders });
+}
 }
 
 class ImapClient {
@@ -798,22 +1054,28 @@ class ImapClient {
   }
 }
 
+/**
+ * Lê um cabeçalho (FROM/SUBJECT/DATE) juntando as linhas dobradas e
+ * decodificando o RFC 2047. O assunto codificado era o motivo de as regras
+ * de assunto nunca casarem.
+ */
+function headerField(headerBlock: string, nome: string): string {
+  const re = new RegExp(`^${nome}:([\\s\\S]*?)(?=\\r?\\n(?!\\s)|\\s*$)`, "im");
+  const m = headerBlock.match(re);
+  if (!m) return "";
+  return decodeRfc2047(m[1].replace(/\r?\n/g, " "));
+}
+
 function extractSender(headerBlock: string): string {
-  const fromMatch = headerBlock.match(/From:\s*(.+)/i);
-  if (fromMatch) return fromMatch[1].trim();
-  return "";
+  return headerField(headerBlock, "From");
 }
 
 function extractSubject(headerBlock: string): string {
-  const subMatch = headerBlock.match(/Subject:\s*(.+)/i);
-  if (subMatch) return subMatch[1].trim();
-  return "";
+  return headerField(headerBlock, "Subject");
 }
 
 function extractEmailDate(headerBlock: string): string {
-  const dateMatch = headerBlock.match(/Date:\s*(.+)/i);
-  if (dateMatch) return dateMatch[1].trim();
-  return "";
+  return headerField(headerBlock, "Date");
 }
 
 export default {
@@ -1002,26 +1264,10 @@ export default {
         const sortedUids = [...allUids].reverse();
         const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
 
-        let resultCode: string | null = null;
-        let foundSender = "";
-        let foundSubject = "";
-        let foundDate = "";
-        let foundSourceUrl = "";
-        let sensitive = false;
-        let sensitiveType = "";
-        let sensitiveMessage = "";
-        // Índice (na lista de e-mails, do mais novo para o mais antigo) do
-        // e-mail de onde veio o código — usado para comparar com o botão.
-        let indiceCodigo = -1;
-
         // E-mails candidatos. `plataforma` traz o resultado da checagem:
         // "match" (é da plataforma pedida) ou "unknown" (sem sinal claro —
         // entra como fallback para não quebrar serviços fora da tabela).
-        const emailBodies: {
-          body: string; html: string; sender: string; subject: string; date: string;
-          plataforma: ClassificacaoEmail;
-          temBotao?: boolean;
-        }[] = [];
+        const emailBodies: EmailCandidato[] = [];
 
         // Quais outras plataformas apareceram na caixa e foram descartadas.
         const plataformasIgnoradas = new Map<string, number>();
@@ -1094,232 +1340,25 @@ export default {
         const ignoradas = [...plataformasIgnoradas.entries()]
           .map(([label, quantidade]) => ({ label, quantidade }));
 
-        // ETAPA 1 (prioridade máxima): e-mails de CONFIRMAÇÃO.
-        // Ex.: "Importante: Como atualizar sua residência Netflix", botão "Sim, fui eu".
-        // Ex.: Crunchyroll "Notamos um novo login", botões "FUI EU" / "NÃO FUI EU".
-        // Esses e-mails NÃO têm código: o link é de uso único e expira em ~15min, então
-        // nunca deve ser acessado pelo servidor. É preciso rodar ANTES da IA e do regex,
-        // porque ambos podem devolver um código falso (o nftoken da URL tem vários
-        // dígitos) ou um código antigo de um e-mail "seu código de acesso" anterior.
-        //
-        // EXCEÇÃO — E-MAIL DE BOTÃO (Netflix "código de acesso temporário"):
-        // ele NÃO interrompe a busca aqui. A Netflix pode mandar o botão e o
-        // código em texto; se houver código, ele tem que aparecer. O botão
-        // fica GUARDADO e só é usado no fim, se não houver código (ou se o
-        // botão for mais novo que o código encontrado).
-        let acaoPendente: { url: string; texto: string; tipo: ConfirmacaoTipo } | null = null;
-        let indiceAcaoPendente = -1;
-
-        for (const [indice, email] of emailBodies.entries()) {
-          // Só e-mail DA plataforma pedida chega aqui: um e-mail de outra
-          // plataforma nunca vira cartão de confirmação.
-          if (email.plataforma !== "match") continue;
-
-          const tipoConfirmacao = looksLikeConfirmationEmail(email.subject, email.body);
-          if (!tipoConfirmacao) continue;
-
-          const acao = extractActionLink(email.html || "", email.body || "");
-          if (!acao) {
-            console.log(`[fetch-email-code] E-mail de confirmação sem link utilizável: ${email.subject}`);
-            continue;
-          }
-
-          const details = extractRequestDetails(email.html || "", email.body || "");
-
-          if (tipoConfirmacao === "access_code") {
-            // Botão: a ação fica guardada (a busca de código continua).
-            email.temBotao = true;
-            acaoPendente = { url: acao.url, texto: acao.texto, tipo: tipoConfirmacao };
-            indiceAcaoPendente = indice;
-            console.log(`[fetch-email-code] E-mail de botão detectado — ação guardada: ${acao.url.slice(0, 90)}... (texto do botão: "${acao.texto}")`);
-            continue;
-          }
-
-          console.log(`[fetch-email-code] Confirmação (${tipoConfirmacao}) detectada — link entregue ao usuário: ${acao.url.slice(0, 90)}...`);
-          if (details) {
-            console.log(`[fetch-email-code] Detalhe do pedido: ${details.requester} / ${details.device} / ${details.when} / ${details.location}`);
-          }
-
-          return Response.json(
-            montarRespostaAcaoManual(acao, tipoConfirmacao, plataforma, email, details, ignoradas),
-            { headers: corsHeaders },
-          );
-        }
-
-        if (groupConfig.email_ai_enabled && groqApiKey && emailBodies.length > 0) {
-          const aiEmails = emailBodies.slice(0, 3);
-          console.log(`[fetch-email-code] IA habilitada, processando ${aiEmails.length} emails mais recentes com Groq...`);
-          for (const [indice, email] of aiEmails.entries()) {
-            // E-mail de BOTÃO: a IA pode "achar" um código nos dígitos do
-            // token da URL do botão. O código (se a Netflix mandar em texto)
-            // é lido pelo regex exato, que para esse e-mail é suficiente.
-            if (email.temBotao) {
-              const direto = extractCode(email.body, groupConfig);
-              console.log(`[fetch-email-code] E-mail de botão — regex direto:`, JSON.stringify(direto));
-              if (direto.code) {
-                resultCode = direto.code;
-                foundSender = email.sender;
-                foundSubject = email.subject;
-                foundDate = email.date;
-                sensitive = direto.sensitive === true;
-                sensitiveType = direto.sensitiveType || "";
-                sensitiveMessage = direto.sensitiveMessage || "";
-                indiceCodigo = indice;
-                break;
-              }
-              continue;
-            }
-
-            const aiResult = await extractCodeWithAI(email.body, groqApiKey, serviceName);
-            if (aiResult) {
-              console.log(`[fetch-email-code] IA retornou:`, JSON.stringify(aiResult));
-              if (aiResult.code) {
-                resultCode = aiResult.code;
-                foundSender = email.sender;
-                foundSubject = email.subject;
-                foundDate = email.date;
-                sensitive = aiResult.sensitive === true;
-                sensitiveType = aiResult.sensitiveType || "";
-                sensitiveMessage = aiResult.sensitiveMessage || "";
-                indiceCodigo = indice;
-                break;
-              }
-            }
-          }
-        }
-
-        if (!resultCode) {
-          console.log(`[fetch-email-code] ${groupConfig.email_ai_enabled ? 'IA não encontrou, fallback para regex' : 'Usando regex'}`);
-          for (const [indice, email] of emailBodies.entries()) {
-            const result = extractCode(email.body, groupConfig);
-            console.log(`[fetch-email-code] regex result:`, JSON.stringify(result));
-
-            if (result.code) {
-              resultCode = result.code;
-              foundSender = email.sender;
-              foundSubject = email.subject;
-              foundDate = email.date;
-              sensitive = result.sensitive === true;
-              sensitiveType = result.sensitiveType || "";
-              sensitiveMessage = result.sensitiveMessage || "";
-              indiceCodigo = indice;
-              break;
-            }
-          }
-        }
-
-        if (!resultCode) {
-          console.log(`[fetch-email-code] Nenhum código no corpo dos e-mails. Tentando seguir links/botões...`);
-          // Orçamento de tempo: a função é encerrada pelo gateway se demorar demais e
-          // devolve corpo vazio (o front reportava "Unexpected end of JSON input").
-          const linkStageDeadline = Date.now() + LINK_STAGE_BUDGET_MS;
-          linkLoop:
-          for (const [indice, email] of emailBodies.slice(0, 3).entries()) {
-            // Link de confirmação/botão não pode ser acessado pelo servidor
-            // (uso único): é o próprio botão que o usuário precisa clicar.
-            if (looksLikeConfirmationEmail(email.subject, email.body)) continue;
-
-            const links = extractCandidateLinks(email.html || "", email.body || "");
-            if (links.length === 0) continue;
-            console.log(`[fetch-email-code] ${links.length} links candidatos no email de ${email.sender}`);
-
-            for (const link of links.slice(0, MAX_LINKS_PER_EMAIL)) {
-              if (Date.now() > linkStageDeadline) {
-                console.log(`[fetch-email-code] Orçamento de tempo esgotado, interrompendo busca em links`);
-                break linkLoop;
-              }
-
-              console.log(`[fetch-email-code] Acessando: ${link}`);
-              const pageText = await fetchPageText(link);
-              if (!pageText) continue;
-
-              // Regex primeiro (gratuito e instantâneo); IA só se o regex falhar.
-              let result: CodeResult | null = extractCode(pageText, groupConfig);
-              if (!result.code && groupConfig.email_ai_enabled && groqApiKey) {
-                const aiResult = await extractCodeWithAI(pageText, groqApiKey, serviceName, true);
-                if (aiResult?.code) result = aiResult;
-              }
-
-              if (result?.code) {
-                console.log(`[fetch-email-code] Código encontrado via link: ${result.code}`);
-                resultCode = result.code;
-                foundSender = email.sender;
-                foundSubject = email.subject;
-                foundDate = email.date;
-                foundSourceUrl = link;
-                sensitive = result.sensitive === true;
-                sensitiveType = result.sensitiveType || "";
-                sensitiveMessage = result.sensitiveMessage || "";
-                indiceCodigo = indice;
-                break linkLoop;
-              }
-            }
-          }
-        }
-
-        // BOTÃO x CÓDIGO: o botão só entra no lugar do código se for MAIS NOVO
-        // que ele (a Netflix pode ter trocado o pedido) ou se não houver
-        // código nenhum. Assim o extrator de código continua valendo — o botão
-        // é a NOVA feature, não um substituto.
-        if (acaoPendente && (indiceCodigo === -1 || indiceAcaoPendente < indiceCodigo)) {
-          const emailBotao = emailBodies[indiceAcaoPendente];
-          const details = extractRequestDetails(emailBotao.html || "", emailBotao.body || "");
-          console.log(`[fetch-email-code] Botão entregue ao usuário (sem código): ${acaoPendente.url.slice(0, 90)}...`);
-          return Response.json(
-            montarRespostaAcaoManual(acaoPendente, acaoPendente.tipo, plataforma, emailBotao, details, ignoradas),
-            { headers: corsHeaders },
-          );
-        }
-
-        if (!resultCode) {
-          // A mensagem NÃO repete as plataformas ignoradas: elas vão no campo
-          // `skipped_platforms` e o front mostra um aviso próprio para isso.
-          const mensagem = `Nenhum código de verificação da plataforma ${plataforma.label} foi encontrado nos e-mails recentes (corpo ou links).`;
-          return Response.json(
-            {
-              code: null,
-              message: mensagem,
-              platform_label: plataforma.label,
-              skipped_platforms: ignoradas,
-            },
-            { headers: corsHeaders },
-          );
-        }
-
-        if (sensitive) {
-          return Response.json({
-            code: null,
-            sensitive: true,
-            sensitiveType,
-            sensitiveMessage,
-            platform_label: plataforma.label,
-            skipped_platforms: ignoradas,
-            sender: foundSender,
-            subject: foundSubject,
-            source_url: foundSourceUrl || null,
-            received_at: foundDate || new Date().toISOString(),
-          }, { headers: corsHeaders });
-        }
-
-        await supabaseAdmin.from("verification_pins").insert({
-          group_id,
-          code: resultCode,
-          source_email: foundSender,
-          used: false,
-          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        }).then(() => {});
-
-        return Response.json({
-          code: resultCode,
-          platform_label: plataforma.label,
-          skipped_platforms: ignoradas,
-          sender: foundSender,
-          subject: foundSubject,
-          source: foundSourceUrl ? "link" : "email_body",
-          source_url: foundSourceUrl || null,
-          received_at: foundDate || new Date().toISOString(),
-          expires_in: 600,
-        }, { headers: corsHeaders });
+        // A decisão (restrição → código → botão) vive fora do handler para poder
+        // ser testada com e-mails reais, sem IMAP e sem banco.
+        return await analisarEmails({
+          emailBodies,
+          plataforma,
+          serviceName,
+          groupConfig,
+          groqApiKey,
+          ignoradas,
+          registrarPin: async (code, sender) => {
+            await supabaseAdmin.from("verification_pins").insert({
+              group_id,
+              code,
+              source_email: sender,
+              used: false,
+              expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+            });
+          },
+        });
       } finally {
         client.close();
       }
