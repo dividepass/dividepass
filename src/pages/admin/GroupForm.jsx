@@ -2102,7 +2102,7 @@ function GroupForm() {
                 <label>Visibilidade</label>
                 <select name="visibility" value={formData.visibility} onChange={handleChange}>
                   <option value="public">Público — aparece no catálogo</option>
-                  <option value="private">Privado — só por convite ou link</option>
+                  <option value="private">Privado — desabilitado (não aparece na vitrine)</option>
                 </select>
               </div>
             )}

@@ -79,6 +79,9 @@ function ManageGroup() {
      true = Com anúncios, false = Sem anúncios, null = Não mostrar. */
   const [hasAds, setHasAds] = useState(null);
   const [hasAdsColumn, setHasAdsColumn] = useState(false);
+  /* Visibilidade do grupo na vitrine (coluna groups.visibility). */
+  const [visibility, setVisibility] = useState('public');
+  const [hasVisibilityColumn, setHasVisibilityColumn] = useState(false);
   const [activatingSubscription, setActivatingSubscription] = useState(false);
 
   /* Pedido de mudança do preço por vaga — não é uma edição direta: o valor
@@ -194,6 +197,8 @@ function ManageGroup() {
         setHasAds(
           groupData.has_ads === true ? true : (groupData.has_ads === false ? false : null)
         );
+        setHasVisibilityColumn('visibility' in groupData);
+        setVisibility(groupData.visibility || 'public');
 
         /* Carteira e saques são do DONO do grupo — no modo admin é o dono
            real, não quem está logado. Grupo sem dono (criado pela
@@ -540,6 +545,32 @@ function ManageGroup() {
       if (error) throw error;
       setGroup(prev => ({ ...prev, rules: texto || null }));
       setToast('Regras do grupo salvas!');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleVisibility = async () => {
+    if (!hasVisibilityColumn) {
+      setError('A coluna visibility ainda não existe no banco. Aplique database/add-platform-plans-and-group-visibility.sql para habilitar a função.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const newValue = visibility === 'public' ? 'private' : 'public';
+      const { error } = await supabase
+        .from('groups')
+        .update({ visibility: newValue })
+        .eq('id', groupId);
+      if (error) throw error;
+      setVisibility(newValue);
+      setGroup(prev => ({ ...prev, visibility: newValue }));
+      setToast(newValue === 'private'
+        ? 'Grupo desabilitado: não aparece mais na vitrine.'
+        : 'Grupo reativado na vitrine.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1408,6 +1439,32 @@ function ManageGroup() {
               <h3>Grupo Recusado</h3>
               <p><strong>Motivo:</strong> {group.rejection_reason || 'Não informado'}</p>
               <p className="rejected-hint">Faça as alterações necessárias e entre em contato com o suporte para reavaliação.</p>
+            </div>
+          )}
+
+          {/* Visibilidade na vitrine */}
+          {hasVisibilityColumn && (
+            <div className="manage-card">
+              <div className="manage-card-title">
+                <Eye size={18} />
+                <h3>Visibilidade na vitrine</h3>
+              </div>
+              <div className="manage-card-body">
+                <p className="section-desc">
+                  {visibility === 'public'
+                    ? 'Grupo visível no catálogo público (vitrine).'
+                    : 'Grupo desabilitado: não aparece na vitrine nem no catálogo. Continua acessível por link ou convite.'}
+                </p>
+                <button
+                  type="button"
+                  className={visibility === 'public' ? 'btn btn-outline btn-full' : 'btn btn-primary btn-full'}
+                  onClick={handleToggleVisibility}
+                  disabled={saving}
+                >
+                  {saving ? <Loader2 size={16} className="spin" /> : (visibility === 'public' ? <EyeOff size={16} /> : <Eye size={16} />)}
+                  {visibility === 'public' ? 'Desabilitar grupo (ocultar da vitrine)' : 'Reativar grupo na vitrine'}
+                </button>
+              </div>
             </div>
           )}
 
