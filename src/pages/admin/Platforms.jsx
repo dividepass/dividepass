@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus, Loader2, ChevronLeft, Pencil, Trash2, Heart, Search, X,
-  AlertCircle, CheckCircle, Clock, Ban, MessageSquare,
+  AlertCircle, CheckCircle, Clock, Ban, MessageSquare, Copy,
   DollarSign, Users, TrendingUp, CreditCard, Activity, BarChart3, Gauge
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import GroupRules from '../../components/GroupRules';
 import InterestList from './InterestList';
 import './Platforms.css';
+import './Groups.css';
 
 const TABS = [
   { id: 'platforms', label: 'Plataformas', icon: <BarChart3 size={16} /> },
@@ -17,7 +18,16 @@ const TABS = [
 ];
 
 function Platforms() {
-  const [activeTab, setActiveTab] = useState('platforms');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activeTab = ['platforms', 'groups', 'financial'].includes(tabParam) ? tabParam : 'platforms';
+
+  const handleTabChange = (tab) => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'platforms') next.delete('tab');
+    else next.set('tab', tab);
+    setSearchParams(next);
+  };
 
   return (
     <div className="fade-in platforms-page">
@@ -32,7 +42,7 @@ function Platforms() {
           <button
             key={tab.id}
             className={`pf-tab ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabChange(tab.id)}
           >
             {tab.icon} {tab.label}
           </button>
@@ -91,6 +101,7 @@ function PlatformsTab() {
   return (
     <>
       {error && <div className="error-banner">{error}</div>}
+{cloneNotice && <div className="success-banner">{cloneNotice}</div>}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
         <div className="platforms-search">
           <input
@@ -160,6 +171,7 @@ function GroupsTab() {
   const [rejectModal, setRejectModal] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [processingId, setProcessingId] = useState(null);
+  const [cloneNotice, setCloneNotice] = useState(null);
 
   useEffect(() => {
     if (initialLoadDone.current) return;
@@ -220,6 +232,70 @@ function GroupsTab() {
       setRejectedGroups(prev => prev.filter(g => g.id !== id));
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const handleCloneGroup = async (group) => {
+    if (!group?.id) return;
+    if (!confirm(`Clonar o grupo "${group.name}"? Será criado um novo grupo com as mesmas referências, sem membros nem credenciais.`)) return;
+    setProcessingId(group.id);
+    setError('');
+    setCloneNotice(null);
+    try {
+      const { data: src, error: srcError } = await supabase
+        .from('groups')
+        .select('*')
+        .eq('id', group.id)
+        .single();
+      if (srcError) throw srcError;
+
+      const payload = { ...src };
+      // Remove campos que devem ser gerados pelo banco ou não copiados.
+      delete payload.id;
+      delete payload.created_at;
+      delete payload.updated_at;
+      delete payload.slug;
+      delete payload.reference_code;
+      delete payload.approved_at;
+      delete payload.reviewed_by;
+      delete payload.members;
+
+      payload.name = `${src.name || 'Grupo'} (cópia)`;
+      payload.approval_status = 'approved';
+      payload.approved_at = new Date().toISOString();
+      payload.featured_in_slide = false;
+      // Mantém as referências (preço, ciclos, regras, tags, visibilidade etc.).
+      // Dono do clone: admin logado (repasse), a menos que o original tenha dono
+      // e queiramos preservar? Aqui definimos o admin atual como dono do clone.
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser?.id) payload.owner_id = currentUser.id;
+
+      const { data: inserted, error: insertError } = await supabase
+        .from('groups')
+        .insert(payload)
+        .select('id')
+        .single();
+      if (insertError) throw insertError;
+
+      // Recarrega o grupo com joins para exibir na lista.
+      const { data: created } = await supabase
+        .from('groups')
+        .select(`
+          *,
+          service:service_id (*),
+          owner:owner_id (id, name),
+          members:group_members (*, user:user_id (id, name, email))
+        `)
+        .eq('id', inserted.id)
+        .single();
+
+      if (created) setGroups(prev => [created, ...prev]);
+      setCloneNotice(`Grupo clonado: ${created?.name || payload.name}`);
+      setTimeout(() => setCloneNotice(null), 4000);
+    } catch (err) {
+      setError(err.message || 'Erro ao clonar grupo.');
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -411,6 +487,7 @@ function GroupsTab() {
         </div>
 
         {error && <div className="error-banner">{error}</div>}
+{cloneNotice && <div className="success-banner">{cloneNotice}</div>}
 
         <div className="groups-search-bar">
           <Search size={16} />
@@ -512,6 +589,9 @@ function GroupsTab() {
                     <Link to={`/admin/groups/${group.id}/edit`} className="group-btn edit">
                       <Pencil size={14} /> Editar
                     </Link>
+                    <button className="group-btn clone" onClick={() => handleCloneGroup(group)} disabled={processingId === group.id}>
+                      {processingId === group.id ? <Loader2 size={14} className="spin" /> : <Copy size={14} />} Clonar
+                    </button>
                     <button className="group-btn delete" onClick={() => handleDelete(group.id)}>
                       <Trash2 size={14} /> Excluir
                     </button>
@@ -540,6 +620,7 @@ function GroupsTab() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+{cloneNotice && <div className="success-banner">{cloneNotice}</div>}
 
       <div className="groups-tabs">
         <button className={`groups-tab ${groupTab === 'all' ? 'active' : ''}`} onClick={() => setGroupTab('all')}>
