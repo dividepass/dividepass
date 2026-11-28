@@ -35,7 +35,7 @@ export const ACCESS_PENDING = 'pending';
 export const OVERDUE_GRACE_DAYS = 7;
 
 /** Dias antes do vencimento em que o card de renovação aparece. */
-export const RENEWAL_REMINDER_DAYS = 2;
+export const RENEWAL_REMINDER_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

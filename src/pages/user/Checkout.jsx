@@ -389,24 +389,24 @@ function CheckoutPagina({ variante }) {
     const fetchGroup = async () => {
       let groupData = null;
 
-      const tryBySlug = await supabase
+      let tryBySlugQuery = supabase
         .from('groups')
         .select(`*, service:service_id (*), members:group_members (*), credential:group_credentials (*), owner:owner_id (id, name, email)`)
-        .eq('slug', groupSlug)
-        .eq('status', 'open')
-        .maybeSingle();
+        .eq('slug', groupSlug);
+      if (!renovacaoAtiva) tryBySlugQuery = tryBySlugQuery.eq('status', 'open');
+      const tryBySlug = await tryBySlugQuery.maybeSingle();
 
       if (!cancelled && tryBySlug.data) {
         groupData = tryBySlug.data;
       }
 
       if (!cancelled && !groupData) {
-        const tryById = await supabase
+        let tryByIdQuery = supabase
           .from('groups')
           .select(`*, service:service_id (*), members:group_members (*), credential:group_credentials (*), owner:owner_id (id, name, email)`)
-          .eq('id', groupSlug)
-          .eq('status', 'open')
-          .maybeSingle();
+          .eq('id', groupSlug);
+        if (!renovacaoAtiva) tryByIdQuery = tryByIdQuery.eq('status', 'open');
+        const tryById = await tryByIdQuery.maybeSingle();
 
         if (!cancelled && tryById.data) {
           groupData = tryById.data;
@@ -414,12 +414,12 @@ function CheckoutPagina({ variante }) {
       }
 
       if (!cancelled && !groupData) {
-        const tryByName = await supabase
+        let tryByNameQuery = supabase
           .from('groups')
           .select(`*, service:service_id (*), members:group_members (*), credential:group_credentials (*), owner:owner_id (id, name, email)`)
-          .ilike('name', groupSlug)
-          .eq('status', 'open')
-          .maybeSingle();
+          .ilike('name', groupSlug);
+        if (!renovacaoAtiva) tryByNameQuery = tryByNameQuery.eq('status', 'open');
+        const tryByName = await tryByNameQuery.maybeSingle();
 
         if (!cancelled && tryByName.data) {
           groupData = tryByName.data;
