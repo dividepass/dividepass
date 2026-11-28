@@ -313,8 +313,12 @@ async function liberacaoConcluida(
       .maybeSingle();
 
     const assinaturaAtiva = sub?.status === "active";
-    const vinculoLiberado =
-      mem?.payment_status === "active" || mem?.payment_status === "entrance_paid";
+    // Para a assinatura, a liberação só está concluída quando o vínculo
+    // reflete o pagamento da assinatura (`payment_status = 'active'`). Se o
+    // membro ainda está em `entrance_paid`, a confirmação da assinatura
+    // ainda não aplicou a liberação — e o atalho de idempotência não pode
+    // considerar "pronto", senão o membro fica preso em `entrance_paid`.
+    const vinculoLiberado = mem?.payment_status === "active";
     return assinaturaAtiva && !!vinculoLiberado;
   } catch (e) {
     console.error("[confirm-payment] erro ao verificar a liberacao:", e);
