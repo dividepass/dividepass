@@ -66,7 +66,10 @@ function Billing() {
           .limit(50),
         supabase
           .from('invoices')
-          .select('id, group_id, amount, due_date, status, paid_at, created_at, gateway_transaction_id')
+          .select(`
+            id, group_id, amount, due_date, status, paid_at, created_at, gateway_transaction_id,
+            group:group_id (name, service:service_id (name, full_name, icon, color))
+          `)
           .eq('user_id', user.id)
           .order('due_date', { ascending: true }),
       ]);
@@ -545,27 +548,27 @@ function Billing() {
                       Tentar novamente
                     </button>
                   </td></tr>
-                ) : payments.length === 0 ? (
-                  <tr><td colSpan="6" className="empty-cell">Nenhum pagamento encontrado.</td></tr>
+                ) : invoices.length === 0 ? (
+                  <tr><td colSpan="6" className="empty-cell">Nenhuma fatura encontrada.</td></tr>
                 ) : (
-                  payments.map((pay) => (
-                    <tr key={pay.id}>
-                      <td><strong>#{pay.id.slice(0, 8).toUpperCase()}</strong></td>
+                  invoices.map((inv) => (
+                    <tr key={inv.id}>
+                      <td><strong>#{inv.id.slice(0, 8).toUpperCase()}</strong></td>
                       <td>
                         <div className="invoice-group-info">
-                          {pay.service?.icon && (
-                            <span className="invoice-group-icon" style={{ backgroundColor: pay.service.color || '#4F46E5' }}>
-                              {pay.service.icon}
+                          {inv.group?.service?.icon && (
+                            <span className="invoice-group-icon" style={{ backgroundColor: inv.group.service.color || '#4F46E5' }}>
+                              {inv.group.service.icon}
                             </span>
                           )}
                           <div>
-                            <strong>{pay.group?.name || 'Grupo'}</strong>
-                            <span>{pay.service?.name || pay.service?.full_name || 'Serviço'}</span>
+                            <strong>{inv.group?.name || 'Grupo'}</strong>
+                            <span>{inv.group?.service?.name || inv.group?.service?.full_name || 'Serviço'}</span>
                           </div>
                         </div>
                       </td>
-                      <td>{pay.paid_at ? formatDate(pay.paid_at) : formatDate(pay.created_at)}</td>
-                      <td>{formatCurrency(pay.amount)}</td>
+                      <td>{formatDate(inv.due_date)}</td>
+                      <td>{formatCurrency(inv.amount)}</td>
                       <td>
                         <span className={`status-badge ${getStatusClass(pay.status)}`}>
                           {getStatusLabel(pay.status)}
