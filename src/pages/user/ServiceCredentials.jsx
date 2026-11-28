@@ -556,6 +556,13 @@ function ServiceCredentials() {
   const renewalDate = subscriptionRenewalDate(renewalSubscription);
   const renewalAmount = Number(accessSubscription?.amount || activeService.amount || 0);
 
+  // A ASSINATURA é a fonte da verdade do acesso — não o espelho
+  // `group_members.payment_status`, que pode ficar defasado (o job de faturas
+  // vencidas já marcou 'overdue' para gente que pagou o ciclo em dia). Quando
+  // a verificação da assinatura libera o acesso, o cartão de credenciais aparece
+  // mesmo com o espelho atrasado. (Caso Maysa, 28/11/2026.)
+  const acessoLiberado = verifiedAccess === true && !accessBlocked;
+
   return (
     <div key={serviceId} className="fade-in credentials-page">
       <button onClick={() => navigate(-1)} className="back-btn">
@@ -568,7 +575,7 @@ function ServiceCredentials() {
         <p>Dados de acesso do seu grupo {group.name}.</p>
       </div>
 
-      {paymentStatus && paymentStatus !== 'active' && (
+      {paymentStatus && paymentStatus !== 'active' && !acessoLiberado && !verifyingAccess && (
         <div className="access-blocked-card">
           <AlertTriangle size={32} />
           <h3>Acesso Bloqueado</h3>
@@ -591,7 +598,7 @@ function ServiceCredentials() {
         </div>
       )}
 
-      {(!paymentStatus || paymentStatus === 'active') && (
+      {(!paymentStatus || paymentStatus === 'active' || acessoLiberado) && (
       <div className="credential-card" style={{ '--service-color': service.color }}>
         <div className="credential-header" style={{ backgroundColor: `${service.color}15` }}>
           <div className="credential-service">

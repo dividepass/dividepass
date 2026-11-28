@@ -98,6 +98,40 @@ export default {
           .update({ status: "failed", updated_at: new Date().toISOString() })
           .eq("id", invoice.id);
 
+        // 1.5 A ASSINATURA EM DIA MANDA — não penalizar quem já pagou o ciclo.
+        //
+        // Uma fatura vencida pode ser resíduo de um ciclo antigo (cobrança
+        // que falhou e depois foi substituída por um pagamento aprovado). Se a
+        // renovação da assinatura ainda está no futuro, o membro NÃO está
+        // inadimplente: marcar 'overdue' aqui derrubava o acesso de quem estava
+        // em dia (caso Maysa, 28/11/2026 — assinatura ativa até 07/12, espelho
+        // 'overdue' por uma fatura de agosto que nunca foi paga).
+        const { data: subAtual } = await supabaseAdmin
+          .from("user_subscriptions")
+          .select("status, renewal_due_at, next_charge_at, expires_at")
+          .eq("user_id", userId)
+          .eq("group_id", groupId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const vencimento = subAtual?.renewal_due_at || subAtual?.next_charge_at || subAtual?.expires_at || null;
+        const assinaturaEmDia =
+          !!subAtual &&
+          subAtual.status === "active" &&
+          !!vencimento &&
+          new Date(vencimento).getTime() > now.getTime();
+
+        if (assinaturaEmDia) {
+          console.log(
+            `[process-overdue-invoices] fatura ${invoice.id} vencida em ${invoice.due_date}, ` +
+            `mas a assinatura de user=${userId} group=${groupId} está em dia (vence ${vencimento}). ` +
+            `Não marca o membro como inadimplente.`,
+          );
+          processed.push(invoice.id);
+          continue;
+        }
+
         // 2. O membro fica inadimplente (grupo visível, credencial bloqueada).
         await supabaseAdmin
           .from("group_members")

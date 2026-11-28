@@ -226,5 +226,33 @@ export async function applySubscriptionLifecycle(
     }
   }
 
+  // -------------------------------------------------------------------------
+  // REVERTER O ESPELHO DEFASADO
+  //
+  // Membro com `payment_status = 'overdue'` cuja assinatura está EM DIA (a
+  // renovação ainda está no futuro) volta para 'active'. Sem isto, um resíduo
+  // do job de faturas (ou uma fatura de ciclo antigo nunca paga) deixa o
+  // espelho travado em 'overdue' mesmo depois do pagamento aprovado — e a tela
+  // de credenciais bloqueia quem pagou. (Caso Maysa, 28/11/2026.)
+  // -------------------------------------------------------------------------
+  const { data: assinaturasEmDia, error: eDia } = await admin
+    .from("user_subscriptions")
+    .select("user_id, group_id")
+    .eq("status", "active")
+    .not("renewal_due_at", "is", null)
+    .gt("renewal_due_at", now.toISOString());
+
+  if (!eDia) {
+    for (const s of assinaturasEmDia || []) {
+      await admin
+        .from("group_members")
+        .update({ payment_status: "active", updated_at: now.toISOString() })
+        .eq("group_id", s.group_id)
+        .eq("user_id", s.user_id)
+        .eq("payment_status", "overdue")
+        .eq("status", "active");
+    }
+  }
+
   return result;
 }
