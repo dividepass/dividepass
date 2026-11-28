@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Wallet as WalletIcon, ArrowDownLeft, ArrowUpRight, Loader2, X, CheckCircle,
-  DollarSign, TrendingUp, Banknote, CreditCard, Info
+  DollarSign, TrendingUp, Banknote, CreditCard, Info, Clock
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { solicitarSaque } from '../../lib/walletApi';
@@ -60,7 +60,12 @@ function Wallet() {
         const txData = transactionsRes.data || [];
         setTransactions(txData);
 
-        const received = txData.filter(t => t.type === 'credit').reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+        // "Total recebido" conta só o que JÁ FOI LIBERADO (créditos concluídos).
+        // O que está em retenção (status 'pending') aparece na lista com a
+        // previsão de liberação, mas não entra no saldo — o saldo vem do banco.
+        const received = txData
+          .filter(t => t.type === 'credit' && t.status !== 'pending')
+          .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
         const withdrawnData = withdrawalsRes.data || [];
         const withdrawn = withdrawnData.filter(w => w.status !== 'cancelled').reduce((s, w) => s + (parseFloat(w.amount) || 0), 0);
 
@@ -273,15 +278,26 @@ function Wallet() {
                 </div>
                 <div className="wallet-tx-info">
                   <strong>{getFriendlyDescription(tx)}</strong>
-                  {tx.group?.name && (
-                    <span>{tx.group.name}</span>
+                  {/* Detalhe humano do repasse: quem pagou + período do ciclo.
+                      Sem isso (linhas antigas), cai no nome do grupo. */}
+                  {(tx.detail || tx.group?.name) && (
+                    <span>{tx.detail || tx.group?.name}</span>
+                  )}
+                  {tx.type === 'credit' && tx.status === 'pending' && tx.release_at && (
+                    <span className="wallet-tx-release">
+                      <Clock size={12} /> Previsão de liberação: {formatDate(tx.release_at)}
+                    </span>
                   )}
                 </div>
                 <div className="wallet-tx-amounts">
                   <span className={`wallet-tx-amount ${tx.type === 'credit' ? 'positive' : 'negative'}`}>
                     {tx.type === 'credit' ? '+' : '-'} {formatCurrency(tx.amount)}
                   </span>
-                  <span className="wallet-tx-date">{formatDate(tx.created_at)}</span>
+                  {tx.type === 'credit' && tx.status === 'pending' ? (
+                    <span className="status-badge pendente">Pendente</span>
+                  ) : (
+                    <span className="wallet-tx-date">{formatDate(tx.created_at)}</span>
+                  )}
                 </div>
               </div>
             ))}

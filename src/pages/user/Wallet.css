@@ -219,6 +219,17 @@
   white-space: nowrap;
 }
 
+/* Previsão de liberação do repasse (crédito em retenção de 25 dias). */
+.wallet-tx-release {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: normal !important;
+  margin-top: 0.2rem;
+  color: #F59E0B !important;
+  font-weight: 600;
+}
+
 .wallet-tx-amounts {
   display: flex;
   flex-direction: column;
