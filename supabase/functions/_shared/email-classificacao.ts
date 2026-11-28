@@ -97,6 +97,32 @@ const REGRAS: RegraRestricao[] = [
 ];
 
 /**
+ * Aprovação de LOGIN / atividade suspeita — o pedido é CONFIRMAR, não trocar
+ * dados. A dica condicional "se não foi você, altere sua senha" não torna o
+ * e-mail um pedido de troca de senha.
+ */
+const APROVACAO_LOGIN_ASSUNTO =
+  /(novo\s+login|novo\s+acesso|novo\s+dispositivo|login\s+suspeito|acesso\s+suspeito|atividade\s+de\s+login|notamos\s+(um\s+)?(novo\s+)?login|confirme\s+(seu|sua)\s+(novo\s+)?login|new\s+sign-?in|new\s+login|unusual\s+(sign-?in|login|activity)|approve\s+(the\s+)?login)/i;
+
+const APROVACAO_LOGIN_CORPO =
+  /(confirme\s+sua\s+atividade\s+de\s+login|notamos\s+(um\s+)?(novo\s+)?login|login\s+suspeito|aprovar\s+(o\s+)?(login|acesso)|confirme\s+que\s+foi\s+voc[eê]|was\s+this\s+(you|you\s+doing)|was\s+it\s+you|foi\s+voc[eê]\s*\?)/i;
+
+// Par de botões de aprovação/negação típico de confirmação de login.
+const CTA_APROVACAO =
+  /(\b(n[ãa]o\s+)?fui\s+eu\b|yes,?\s*(it|that)\s+was\s*me|no,?\s*(it|that)\s+wasn'?t|it\s+was\s+(me|you)|was\s+that\s+you)/i;
+
+/** O e-mail é um pedido de aprovação de login/dispositivo? */
+function ehAprovacaoDeLogin(subject: string, corpo: string): boolean {
+  const s = subject || "";
+  const c = corpo || "";
+  if (APROVACAO_LOGIN_ASSUNTO.test(s)) return true;
+  if (APROVACAO_LOGIN_CORPO.test(c)) return true;
+  // Botão "FUI EU / NÃO FUI EU" num e-mail que fala de login/acesso/dispositivo.
+  if (CTA_APROVACAO.test(c) && /(login|acesso|dispositivo|atividade|sign-?in|device|conta|account)/i.test(`${s} ${c}`)) return true;
+  return false;
+}
+
+/**
  * Decide se o e-mail é RESTRIÇÃO.
  *
  * Só o que o e-mail ESCREVE decide — a IA não tem poder de bloqueio aqui
@@ -111,6 +137,18 @@ export function classificarRestricao(
 ): Restricao | null {
   const s = subject || "";
   const c = corpo || "";
+
+  // 0) APROVAÇÃO DE LOGIN / SEGURANÇA NÃO É PEDIDO DE TROCA DE DADOS.
+  //
+  // O e-mail do Crunchyroll ("Notamos um novo login… confirme sua atividade de
+  // login") traz a dica "se não foi você, clique aqui para alterar sua senha".
+  // Isso é uma PRECAUÇÃO condicional, não o objetivo do e-mail: o pedido real é
+  // CONFIRMAR o login (botões "FUI EU" / "NÃO FUI EU"). Tratar isso como
+  // restrição de senha escondia o botão e bloqueava o código (caso 28/11/2026).
+  //
+  // Quando o e-mail é um pedido de aprovação de login/dispositivo, ele NÃO é
+  // restrição — segue para a extração de código/botão normalmente.
+  if (ehAprovacaoDeLogin(s, c)) return null;
 
   // 1) Assunto: o tema do e-mail.
   for (const regra of REGRAS) {
