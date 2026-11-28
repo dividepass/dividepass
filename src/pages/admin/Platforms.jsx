@@ -101,7 +101,7 @@ function PlatformsTab() {
   return (
     <>
       {error && <div className="error-banner">{error}</div>}
-{cloneNotice && <div className="success-banner">{cloneNotice}</div>}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
         <div className="platforms-search">
           <input
@@ -620,7 +620,7 @@ function GroupsTab() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
-{cloneNotice && <div className="success-banner">{cloneNotice}</div>}
+
 
       <div className="groups-tabs">
         <button className={`groups-tab ${groupTab === 'all' ? 'active' : ''}`} onClick={() => setGroupTab('all')}>
