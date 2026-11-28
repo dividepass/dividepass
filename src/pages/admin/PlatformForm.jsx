@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Loader2, Check, ImageIcon, Upload, Pin, Star, Trash2, MailCheck } from 'lucide-react';
+import { ArrowLeft, Loader2, Check, ImageIcon, Upload, Pin, Star, Trash2, MailCheck, AlertTriangle, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { optimizeImage } from '../../lib/imageOptimizer';
 import { fetchPlansForService, saveServicePlans } from '../../lib/platformPlans';
@@ -93,6 +93,10 @@ function PlatformForm() {
   const [plansError, setPlansError] = useState('');
   const [plansOk, setPlansOk] = useState('');
   const [iconFile, setIconFile] = useState(null);
+  /* Exclusão da plataforma. */
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
   const [iconPreview, setIconPreview] = useState('');
   /* Planos padrão da plataforma (service_plans). */
   const [plans, setPlans] = useState([]);
@@ -333,6 +337,30 @@ function PlatformForm() {
     }
   };
 
+  /* ───────────────────────────────────────────────────── EXCLUIR PLATAFORMA */
+  const handleDeletePlatform = async () => {
+    if (!platform?.id || !platform.name) return;
+    if (!deleteConfirmName.trim() || deleteConfirmName.trim() !== platform.name) {
+      setError('Digite o nome da plataforma para confirmar a exclusão.');
+      return;
+    }
+    setDeleting(true);
+    setError('');
+    try {
+      const { error } = await supabase
+        .from('streaming_services')
+        .delete()
+        .eq('id', platform.id);
+      if (error) throw error;
+      setError('');
+      navigate('/admin/platforms');
+    } catch (err) {
+      setError(err.message || 'Não foi possível excluir a plataforma.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   /* ───────────────────────────────────────────────────── SALVAR OS PLANOS */
   const handleSavePlans = async () => {
     if (!platform?.id) return;
@@ -406,6 +434,19 @@ function PlatformForm() {
           <p className="page-subtitle" title={`id no banco: ${platform?.id}`}>
             ID da plataforma: <code>{platformSlug}</code>
           </p>
+        )}
+        {isEditing && platform && platform.name && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => { setDeleteConfirmName(''); setShowDeleteModal(true); setError(''); }}
+              disabled={deleting}
+            >
+              {deleting ? <Loader2 size={14} className="spin" /> : <Trash2 size={16} />}
+              Excluir plataforma
+            </button>
+          </div>
         )}
       </div>
 
@@ -633,6 +674,81 @@ function PlatformForm() {
           </div>
         </section>
       </form>
+
+      {/* Modal de confirmação de exclusão */}
+      {showDeleteModal && (
+        <div
+          className="modal-overlay"
+          onClick={() => { if (!deleting) setShowDeleteModal(false); }}
+        >
+          <div
+            className="modal modal--danger"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-platform-title"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div className="modal-icon"><AlertTriangle size={22} /></div>
+              <div className="modal-headings">
+                <h3 id="delete-platform-title">Excluir a plataforma {platform?.name}?</h3>
+                <p>Esta ação não tem como ser desfeita. Os grupos e planos vinculados ficarão órfãos.</p>
+              </div>
+              <button
+                className="modal-close"
+                onClick={() => setShowDeleteModal(false)}
+                aria-label="Fechar"
+                disabled={deleting}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {error && (
+                <div className="modal-alert">
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>Não foi possível excluir</strong>
+                    <span>{error}</span>
+                  </div>
+                </div>
+              )}
+
+              <label className="modal-confirm-label" htmlFor="delete-platform-confirm">
+                Digite <strong>{platform?.name}</strong> para confirmar
+              </label>
+              <input
+                id="delete-platform-confirm"
+                type="text"
+                value={deleteConfirmName}
+                onChange={e => setDeleteConfirmName(e.target.value)}
+                placeholder={platform?.name}
+                className="modal-input"
+                autoFocus
+              />
+            </div>
+
+            <div className="modal-foot">
+              <button
+                className="btn btn-outline"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={handleDeletePlatform}
+                disabled={deleting || deleteConfirmName.trim() !== (platform?.name || '')}
+              >
+                {deleting ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
+                Excluir plataforma
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
